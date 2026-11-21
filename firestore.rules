@@ -1,0 +1,979 @@
+rules_version = '2';
+
+// ===============================================================
+// S.A.B.U.P.C — Reglas de seguridad de Cloud Firestore
+// Proyecto: sabupc-colima · Base de datos: (default)
+// ===============================================================
+//
+// PROTOTIPO: revisar y probar en el emulador antes de producción.
+//
+// Modelo de datos asumido
+// ---------------------------------------------------------------
+// Colección: usuarios/{uid}   (ID del documento = UID de Firebase Auth)
+//   Todos los documentos tienen EXACTAMENTE estos campos:
+//   - uid: string (== ID del documento, inmutable)
+//   - correo: string (== request.auth.token.email al crear, inmutable)
+//   - nombres: string 1..80
+//   - apellido_paterno: string 1..60
+//   - apellido_materno: string 0..60
+//   - fecha_nacimiento: string 'AAAA-MM-DD' (10 caracteres)
+//   - sexo: 'Mujer' | 'Hombre' | 'Prefiero no decir'
+//   - telefono_fijo: string 0..20
+//   - celular: string 1..20
+//   - celular_con_whatsapp: bool
+//   - nivel_academico: 'Media Superior' | 'Superior' | 'Egresado' | 'Estudiante externo UdeC'
+//   - escuela_carrera: string 1..120
+//   - numero_cuenta: string 1..12 ('0' si no aplica)
+//   - tipo_sangre: 'O+' | 'O-' | 'A+' | 'A-' | 'B+' | 'B-' | 'AB+' | 'AB-'
+//   - alergias: string 0..300
+//   - padecimientos_medicamentos: string 0..500
+//   - contacto_emergencia_nombre: string 1..120
+//   - contacto_emergencia_telefono: string 1..20
+//   - grupo_operativo: 'Alfa' | 'Omega' | 'Ninguno'                  (PRIVILEGIADO)
+//   - ayudantia_slot: 'Capacitación' | 'Administración de Personal' |
+//                     'Tesla' | 'Socorros' | 'Logística' | 'Ninguna'  (PRIVILEGIADO)
+//   - rol_sistema: 'Brigadista' | 'Encargado' | 'Administrador'      (PRIVILEGIADO)
+//   - autorizado_radio: bool                                         (PRIVILEGIADO)
+//   - clave_personal_radio: string 1..10 | null                      (PRIVILEGIADO)
+//   - estatus: 'Pendiente' | 'Activo' | 'Inactivo'                   (PRIVILEGIADO)
+//   - qr_codigo_unico: string 1..64 | null                           (PRIVILEGIADO)
+//   - tiene_foto: bool
+//   - creado_en: timestamp (inmutable)
+//   - actualizado_en: timestamp (== request.time en cada escritura)
+//
+// Colección: auditoria_eventos/{eventoId}   (bitácora inmutable)
+//   - tipo: 'APROBACION_USUARIO' | 'RECHAZO_USUARIO' | 'BAJA_USUARIO' | 'CAMBIO_ROL' |
+//           'CREACION_OPERATIVO' | 'CAMBIO_RECEPCION_OPERATIVO' | 'CAMBIO_MODO_QR' |
+//           'ASIGNACION_EQUIPO' | 'DEVOLUCION_EQUIPO' | 'ACTA_INCIDENCIA' |
+//           'SALIDA_MANUAL' | 'INTENTO_ACCESO_INACTIVO' |
+//           'CREACION_CANAL_RADIO' | 'EDICION_BITACORA_RADIO' | 'SEED_CLAVES_REBACE' |
+//           'EDICION_CATALOGO_CLAVES'
+//   - actor_uid: string (== request.auth.uid)
+//   - actor_nombre: string 1..200
+//   - objetivo_uid: string 1..128
+//   - objetivo_nombre: string 1..200
+//   - detalle: string 0..500
+//   - creado_en: timestamp (== request.time)
+//
+// Colección: fotos_perfiles/{uid}   (foto de perfil WebP en base64, sin Storage)
+//   - uid: string (== ID del documento, inmutable)
+//   - imagen_webp_base64: string 50..160000 (data:image/webp;base64,...)
+//   - actualizado_en: timestamp (== request.time)
+//
+// Colección: operativos/{operativoId}
+//   - id: string (== ID del documento, inmutable)
+//   - nombre: string 1..120
+//   - categoria: 'Operativos Masivos' | 'Proyectos y Soporte Técnico' |
+//                'Guardias Ordinarias' | 'Capacitaciones, Simulacros y Difusión'
+//   - sede: string 1..120
+//   - fecha_inicio: string 10..20
+//   - fecha_fin: string 0..20
+//   - descripcion: string 0..500
+//   - recepcion_abierta: bool
+//   - modo_qr: 'estatico' | 'dinamico'
+//   - qr_token_estatico: string 1..128
+//   - creado_por_uid: string 1..128 (== request.auth.uid al crear, inmutable)
+//   - creado_por_nombre: string 1..200 (inmutable)
+//   - creado_en: timestamp (== request.time al crear, inmutable)
+//   - actualizado_en: timestamp (== request.time en cada escritura)
+//
+// Subcolección: operativos/{operativoId}/secretos/totp
+//   - secreto_base32: string 16..128 (Base32 ^[A-Z2-7]+$)
+//   - periodo_segundos: int (== 30)
+//   - digitos: int (== 6)
+//   - actualizado_en: timestamp (== request.time)
+//
+// Colección: asistencias_personal/{asistenciaId}
+//   - id: string (== ID del documento, inmutable)
+//   - operativo_id: string 1..128 (inmutable)
+//   - operativo_nombre: string 1..120 (inmutable)
+//   - usuario_uid: string 1..128 (inmutable)
+//   - usuario_nombre: string 1..200 (inmutable)
+//   - usuario_cuenta: string 1..12 (inmutable)
+//   - grupo_operativo: 'Alfa' | 'Omega' | 'Ninguno' (inmutable)
+//   - ayudantia_slot: 'Capacitación' | 'Administración de Personal' |
+//                     'Tesla' | 'Socorros' | 'Logística' | 'Ninguna' (inmutable)
+//   - rol_en_turno: 'Primeros Auxilios' | 'Radiocomunicación' | 'Búsqueda y Rescate' |
+//                   'Evacuación' | 'Logística' | 'Encargado' | 'Sin asignar'
+//   - estado_operativo: 'En servicio' | 'En descanso' | 'Reserva' | 'Retirado'
+//   - signos_vitales: map { spo2, fc, fr, ta, temp, tomado_en, tomado_por } | null
+//   - metodo_entrada: 'QR_Operativo_TOTP' | 'QR_Operativo_Estatico' |
+//                     'QR_Credencial' | 'Manual' (inmutable)
+//   - hora_entrada: timestamp (== request.time al crear, inmutable)
+//   - hora_salida: timestamp | null (sujeto a Candado Duro de Salida)
+//   - horas_totales: number >= 0 | null
+//   - salida_cerrada_manual: bool
+//   - equipos_bupc_pendientes: int >= 0
+//   - registrado_por_uid: string 1..128 (== request.auth.uid al crear, inmutable)
+//   - creado_en: timestamp (== request.time al crear, inmutable)
+//   - actualizado_en: timestamp (== request.time en cada escritura)
+//
+// Colección: equipos_turno/{equipoId}
+//   - id: string (== ID del documento, inmutable)
+//   - asistencia_id: string 1..128 (inmutable)
+//   - operativo_id: string 1..128 (inmutable)
+//   - usuario_uid: string 1..128 (inmutable)
+//   - usuario_nombre: string 1..200 (inmutable)
+//   - nombre_articulo: string 1..120 (inmutable)
+//   - codigo_inventario: string 0..60 (inmutable)
+//   - origen_material: 'BUPC_Asignado' | 'Propio' (inmutable)
+//   - estado_reporte: 'OK' | 'Con_Falla' | 'Devuelto' | 'Incidencia'
+//   - falla_reportada: string 0..400
+//   - devuelto: bool
+//   - devuelto_en: timestamp | null
+//   - devuelto_por_uid: string 1..128 | null
+//   - acta_incidencia: map { motivo, evidencia_id, registrado_por_uid,
+//                            registrado_por_nombre, registrado_en } | null
+//   - creado_por_uid: string 1..128 (== request.auth.uid al crear, inmutable)
+//   - creado_en: timestamp (== request.time al crear, inmutable)
+//   - actualizado_en: timestamp (== request.time en cada escritura)
+//
+// Colección: evidencias_equipos/{evidenciaId}   (evidencia fotográfica WebP inmutable)
+//   - id: string (== ID del documento, inmutable)
+//   - equipo_id: string 1..128 (inmutable)
+//   - asistencia_id: string 1..128 (inmutable)
+//   - operativo_id: string 1..128 (inmutable)
+//   - imagen_webp_base64: string 50..160000 (data:image/webp;base64,...)
+//   - creado_por_uid: string (== request.auth.uid, inmutable)
+//   - creado_en: timestamp (== request.time, inmutable)
+//
+// Colección: canales_radio/{canalId}   (canales de radiocomunicación por operativo)
+//   - id: string (== ID del documento, inmutable)
+//   - operativo_id: string 1..128 (inmutable)
+//   - nombre_canal: string 1..80 (inmutable)
+//   - frecuencia_etiqueta: string 0..40
+//   - unidades_participantes: list (<= 50 elementos)
+//   - creado_por: string 1..200 (inmutable)
+//   - creado_por_uid: string 1..128 (== request.auth.uid al crear, inmutable)
+//   - creado_en: timestamp (== request.time al crear, inmutable)
+//   - actualizado_en: timestamp (== request.time en cada escritura)
+//
+// Colección: bitacora_radio_registros/{registroId}   (bitácora de radio con hora_original inmutable)
+//   - id: string (== ID del documento, inmutable)
+//   - canal_id: string 1..128 (inmutable)
+//   - operativo_id: string 1..128 (inmutable)
+//   - hora_original: string 'HH:MM:SS' (8 caracteres, inmutable)
+//   - origen: string 1..80 (inmutable)
+//   - destinos: list (1..30 elementos, inmutable)
+//   - actividades: string 1..1000
+//   - registrado_por: string 1..200 (inmutable)
+//   - registrado_por_uid: string 1..128 (== request.auth.uid al crear, inmutable)
+//   - fue_editado: bool (false al crear, true al editar)
+//   - actividad_original_respaldo: string 1..1000 | null (null al crear, obligatorio al editar)
+//   - editado_en: timestamp | null (null al crear, == request.time al editar)
+//   - editado_por: string 1..200 | null (null al crear, obligatorio al editar)
+//   - creado_en: timestamp (== request.time al crear, inmutable)
+//   - actualizado_en: timestamp (== request.time en cada escritura)
+//
+// Colección: catalogo_claves/{claveId}   (5 tablas del catálogo ReBaCE v2)
+//   - id: string (== ID del documento)
+//   - tabla: 'codigos_1_100' | 'claves_personales' | 'alfabeto_fonetico' |
+//            'codigo_q' | 'morse_banderolas'
+//   - codigo: string 1..30
+//   - significado: string 1..250
+//   - categoria: string 0..80
+//   - es_basico: bool
+//   - orden: int >= 0
+//
+// Los roles viven en el documento usuarios/{uid} (sin custom claims).
+// El primer Administrador debe asignarse manualmente desde la consola.
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // -------------------------------------------------------------
+    // Funciones auxiliares generales
+    // -------------------------------------------------------------
+
+    // ¿Hay una sesión iniciada?
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // ¿El usuario autenticado es el dueño del documento {uid}?
+    function esPropietario(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Perfil del usuario autenticado (una sola lectura get(), se reutiliza
+    // en caché dentro de la misma solicitud). Si no existe, la regla falla => denegado.
+    function perfilPropio() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data;
+    }
+
+    // ¿La cuenta del usuario autenticado está Activa?
+    function esActivo() {
+      return isSignedIn() && perfilPropio().estatus == 'Activo';
+    }
+
+    // ¿Es un Administrador con cuenta Activa?
+    function esAdminActivo() {
+      let p = perfilPropio();
+      return isSignedIn() && p.estatus == 'Activo' && p.rol_sistema == 'Administrador';
+    }
+
+    // ¿Es un Encargado o Administrador con cuenta Activa?
+    function esEncargadoOAdminActivo() {
+      let p = perfilPropio();
+      return isSignedIn()
+          && p.estatus == 'Activo'
+          && p.rol_sistema in ['Encargado', 'Administrador'];
+    }
+
+    // ¿Tiene permiso explícito de radiocomunicación y cuenta Activa?
+    function tienePermisoRadio() {
+      let p = perfilPropio();
+      return isSignedIn() && p.estatus == 'Activo' && p.autorizado_radio == true;
+    }
+
+    // ¿Puede operar el módulo de radiocomunicación?
+    // (cuenta Activa con autorizado_radio == true o rol Encargado/Administrador)
+    function puedeUsarRadio() {
+      let p = perfilPropio();
+      return isSignedIn()
+          && p.estatus == 'Activo'
+          && (p.autorizado_radio == true || p.rol_sistema in ['Encargado', 'Administrador']);
+    }
+
+    // Campos modificados en una actualización
+    function camposCambiados() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    // Cadena con longitud dentro de [min, max]
+    function cadena(valor, min, max) {
+      return valor is string && valor.size() >= min && valor.size() <= max;
+    }
+
+    // Cadena con longitud dentro de [min, max] o null
+    function cadenaONull(valor, min, max) {
+      return valor == null || cadena(valor, min, max);
+    }
+
+    // -------------------------------------------------------------
+    // Listas de campos de usuarios
+    // -------------------------------------------------------------
+
+    // Esquema completo (exacto) del documento de usuario
+    function camposUsuario() {
+      return ['uid', 'correo', 'nombres', 'apellido_paterno', 'apellido_materno',
+              'fecha_nacimiento', 'sexo', 'telefono_fijo', 'celular',
+              'celular_con_whatsapp', 'nivel_academico', 'escuela_carrera',
+              'numero_cuenta', 'tipo_sangre', 'alergias',
+              'padecimientos_medicamentos', 'contacto_emergencia_nombre',
+              'contacto_emergencia_telefono', 'grupo_operativo', 'ayudantia_slot',
+              'rol_sistema', 'autorizado_radio', 'clave_personal_radio', 'estatus',
+              'qr_codigo_unico', 'tiene_foto', 'creado_en', 'actualizado_en'];
+    }
+
+    // Campos que el dueño (Activo) puede modificar
+    function camposEditablesPorDueno() {
+      return ['nombres', 'apellido_paterno', 'apellido_materno', 'fecha_nacimiento',
+              'sexo', 'telefono_fijo', 'celular', 'celular_con_whatsapp',
+              'nivel_academico', 'escuela_carrera', 'numero_cuenta', 'tipo_sangre',
+              'alergias', 'padecimientos_medicamentos', 'contacto_emergencia_nombre',
+              'contacto_emergencia_telefono', 'tiene_foto', 'actualizado_en'];
+    }
+
+    // Campos que solo un Administrador Activo puede modificar
+    function camposEditablesPorAdmin() {
+      return ['grupo_operativo', 'ayudantia_slot', 'rol_sistema', 'autorizado_radio',
+              'clave_personal_radio', 'estatus', 'qr_codigo_unico', 'actualizado_en'];
+    }
+
+    // -------------------------------------------------------------
+    // Validador de dominio: usuarios (se usa en create Y en update)
+    // -------------------------------------------------------------
+    function esUsuarioValido(d, uid) {
+      return d.keys().hasAll(camposUsuario())
+          && d.keys().hasOnly(camposUsuario())
+          && d.uid == uid
+          && cadena(d.correo, 3, 254)
+          && cadena(d.nombres, 1, 80)
+          && cadena(d.apellido_paterno, 1, 60)
+          && cadena(d.apellido_materno, 0, 60)
+          && cadena(d.fecha_nacimiento, 10, 10)
+          && d.fecha_nacimiento.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+          && d.sexo in ['Mujer', 'Hombre', 'Prefiero no decir']
+          && cadena(d.telefono_fijo, 0, 20)
+          && cadena(d.celular, 1, 20)
+          && d.celular_con_whatsapp is bool
+          && d.nivel_academico in ['Media Superior', 'Superior', 'Egresado',
+                                   'Estudiante externo UdeC']
+          && cadena(d.escuela_carrera, 1, 120)
+          && cadena(d.numero_cuenta, 1, 12)
+          && d.tipo_sangre in ['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-']
+          && cadena(d.alergias, 0, 300)
+          && cadena(d.padecimientos_medicamentos, 0, 500)
+          && cadena(d.contacto_emergencia_nombre, 1, 120)
+          && cadena(d.contacto_emergencia_telefono, 1, 20)
+          && d.grupo_operativo in ['Alfa', 'Omega', 'Ninguno']
+          && d.ayudantia_slot in ['Capacitación', 'Administración de Personal', 'Tesla',
+                                  'Socorros', 'Logística', 'Ninguna']
+          && d.rol_sistema in ['Brigadista', 'Encargado', 'Administrador']
+          && d.autorizado_radio is bool
+          && cadenaONull(d.clave_personal_radio, 1, 10)
+          && d.estatus in ['Pendiente', 'Activo', 'Inactivo']
+          && cadenaONull(d.qr_codigo_unico, 1, 64)
+          && d.tiene_foto is bool
+          && d.creado_en is timestamp
+          && d.actualizado_en is timestamp;
+    }
+
+    // Valores iniciales obligatorios al registrarse (anti-escalamiento)
+    function tieneValoresIniciales(d) {
+      return d.correo == request.auth.token.email
+          && d.estatus == 'Pendiente'
+          && d.rol_sistema == 'Brigadista'
+          && d.autorizado_radio == false
+          && d.grupo_operativo == 'Ninguno'
+          && d.ayudantia_slot == 'Ninguna'
+          && d.clave_personal_radio == null
+          && d.qr_codigo_unico == null
+          && d.tiene_foto == false
+          && d.creado_en == request.time
+          && d.actualizado_en == request.time;
+    }
+
+    // -------------------------------------------------------------
+    // Validador de dominio: auditoria_eventos
+    // -------------------------------------------------------------
+    function esEventoValido(d) {
+      let campos = ['tipo', 'actor_uid', 'actor_nombre', 'objetivo_uid',
+                    'objetivo_nombre', 'detalle', 'creado_en'];
+      return d.keys().hasAll(campos)
+          && d.keys().hasOnly(campos)
+          && d.tipo in ['APROBACION_USUARIO', 'RECHAZO_USUARIO', 'BAJA_USUARIO',
+                        'CAMBIO_ROL', 'CREACION_OPERATIVO',
+                        'CAMBIO_RECEPCION_OPERATIVO', 'CAMBIO_MODO_QR',
+                        'ASIGNACION_EQUIPO', 'DEVOLUCION_EQUIPO', 'ACTA_INCIDENCIA',
+                        'SALIDA_MANUAL', 'INTENTO_ACCESO_INACTIVO',
+                        'CREACION_CANAL_RADIO', 'EDICION_BITACORA_RADIO',
+                        'SEED_CLAVES_REBACE', 'EDICION_CATALOGO_CLAVES']
+          && d.actor_uid == request.auth.uid
+          && cadena(d.actor_nombre, 1, 200)
+          && cadena(d.objetivo_uid, 1, 128)
+          && cadena(d.objetivo_nombre, 1, 200)
+          && cadena(d.detalle, 0, 500)
+          && d.creado_en == request.time;
+    }
+
+    // -------------------------------------------------------------
+    // Validador de dominio: fotos_perfiles (se usa en create Y update)
+    // -------------------------------------------------------------
+    function esFotoPerfilValida(d, uid) {
+      let campos = ['uid', 'imagen_webp_base64', 'actualizado_en'];
+      return d.keys().hasAll(campos)
+          && d.keys().hasOnly(campos)
+          && d.uid == uid
+          && d.imagen_webp_base64 is string
+          && d.imagen_webp_base64.size() >= 50
+          && d.imagen_webp_base64.size() <= 160000
+          && d.imagen_webp_base64.matches('^data:image/webp;base64,[A-Za-z0-9+/=]+$')
+          && d.actualizado_en == request.time;
+    }
+
+    // -------------------------------------------------------------
+    // Validador de dominio: operativos (se usa en create Y update)
+    // -------------------------------------------------------------
+    function esOperativoValido(d, operativoId) {
+      let campos = ['id', 'nombre', 'categoria', 'sede', 'fecha_inicio',
+                    'fecha_fin', 'descripcion', 'recepcion_abierta', 'modo_qr',
+                    'qr_token_estatico', 'creado_por_uid', 'creado_por_nombre',
+                    'creado_en', 'actualizado_en'];
+      return d.keys().hasAll(campos)
+          && d.keys().hasOnly(campos)
+          && d.id == operativoId
+          && cadena(d.nombre, 1, 120)
+          && d.categoria in ['Operativos Masivos', 'Proyectos y Soporte Técnico',
+                             'Guardias Ordinarias',
+                             'Capacitaciones, Simulacros y Difusión']
+          && cadena(d.sede, 1, 120)
+          && cadena(d.fecha_inicio, 10, 20)
+          && cadena(d.fecha_fin, 0, 20)
+          && cadena(d.descripcion, 0, 500)
+          && d.recepcion_abierta is bool
+          && d.modo_qr in ['estatico', 'dinamico']
+          && cadena(d.qr_token_estatico, 1, 128)
+          && cadena(d.creado_por_uid, 1, 128)
+          && cadena(d.creado_por_nombre, 1, 200)
+          && d.creado_en is timestamp
+          && d.actualizado_en is timestamp;
+    }
+
+    // -------------------------------------------------------------
+    // Validador de dominio: operativos/{operativoId}/secretos/totp
+    // -------------------------------------------------------------
+    function esSecretoTotpValido(d) {
+      let campos = ['secreto_base32', 'periodo_segundos', 'digitos', 'actualizado_en'];
+      return d.keys().hasAll(campos)
+          && d.keys().hasOnly(campos)
+          && d.secreto_base32 is string
+          && d.secreto_base32.size() >= 16
+          && d.secreto_base32.size() <= 128
+          && d.secreto_base32.matches('^[A-Z2-7]+$')
+          && d.periodo_segundos is int
+          && d.periodo_segundos == 30
+          && d.digitos is int
+          && d.digitos == 6
+          && d.actualizado_en == request.time;
+    }
+
+    // -------------------------------------------------------------
+    // Validador auxiliar: signos_vitales (mapa o null)
+    // -------------------------------------------------------------
+    function esSignosVitalesValidos(sv) {
+      let campos = ['spo2', 'fc', 'fr', 'ta', 'temp', 'tomado_en', 'tomado_por'];
+      return sv == null
+          || (sv is map
+              && sv.keys().hasAll(campos)
+              && sv.keys().hasOnly(campos)
+              && (sv.spo2 == null || sv.spo2 is number || cadena(sv.spo2, 0, 20))
+              && (sv.fc == null || sv.fc is number || cadena(sv.fc, 0, 20))
+              && (sv.fr == null || sv.fr is number || cadena(sv.fr, 0, 20))
+              && (sv.ta == null || sv.ta is number || cadena(sv.ta, 0, 20))
+              && (sv.temp == null || sv.temp is number || cadena(sv.temp, 0, 20))
+              && (sv.tomado_en == null || sv.tomado_en is timestamp || cadena(sv.tomado_en, 0, 40))
+              && cadenaONull(sv.tomado_por, 0, 200));
+    }
+
+    // -------------------------------------------------------------
+    // Validador de dominio: asistencias_personal (create Y update)
+    // -------------------------------------------------------------
+    function esAsistenciaValida(d, asistenciaId) {
+      let campos = ['id', 'operativo_id', 'operativo_nombre', 'usuario_uid',
+                    'usuario_nombre', 'usuario_cuenta', 'grupo_operativo',
+                    'ayudantia_slot', 'rol_en_turno', 'estado_operativo',
+                    'signos_vitales', 'metodo_entrada', 'hora_entrada',
+                    'hora_salida', 'horas_totales', 'salida_cerrada_manual',
+                    'equipos_bupc_pendientes', 'registrado_por_uid',
+                    'creado_en', 'actualizado_en'];
+      return d.keys().hasAll(campos)
+          && d.keys().hasOnly(campos)
+          && d.id == asistenciaId
+          && cadena(d.operativo_id, 1, 128)
+          && cadena(d.operativo_nombre, 1, 120)
+          && cadena(d.usuario_uid, 1, 128)
+          && cadena(d.usuario_nombre, 1, 200)
+          && cadena(d.usuario_cuenta, 1, 12)
+          && d.grupo_operativo in ['Alfa', 'Omega', 'Ninguno']
+          && d.ayudantia_slot in ['Capacitación', 'Administración de Personal',
+                                  'Tesla', 'Socorros', 'Logística', 'Ninguna']
+          && d.rol_en_turno in ['Primeros Auxilios', 'Radiocomunicación',
+                                'Búsqueda y Rescate', 'Evacuación', 'Logística',
+                                'Encargado', 'Sin asignar']
+          && d.estado_operativo in ['En servicio', 'En descanso', 'Reserva', 'Retirado']
+          && esSignosVitalesValidos(d.signos_vitales)
+          && d.metodo_entrada in ['QR_Operativo_TOTP', 'QR_Operativo_Estatico',
+                                  'QR_Credencial', 'Manual']
+          && d.hora_entrada is timestamp
+          && (d.hora_salida == null || d.hora_salida is timestamp)
+          && (d.horas_totales == null || (d.horas_totales is number && d.horas_totales >= 0))
+          && d.salida_cerrada_manual is bool
+          && d.equipos_bupc_pendientes is int
+          && d.equipos_bupc_pendientes >= 0
+          && cadena(d.registrado_por_uid, 1, 128)
+          && d.creado_en is timestamp
+          && d.actualizado_en is timestamp;
+    }
+
+    // Candado Duro de Salida (servidor): nadie puede registrar o modificar
+    // hora_salida mientras existan equipos BUPC pendientes de devolución.
+    function candadoDuroRespetado() {
+      return request.resource.data.hora_salida == resource.data.hora_salida
+          || (resource.data.equipos_bupc_pendientes == 0
+              && request.resource.data.equipos_bupc_pendientes == 0);
+    }
+
+    // -------------------------------------------------------------
+    // Validador auxiliar: acta_incidencia (mapa o null)
+    // -------------------------------------------------------------
+    function esActaIncidenciaValida(a) {
+      let campos = ['motivo', 'evidencia_id', 'registrado_por_uid',
+                    'registrado_por_nombre', 'registrado_en'];
+      return a == null
+          || (a is map
+              && a.keys().hasAll(campos)
+              && a.keys().hasOnly(campos)
+              && cadena(a.motivo, 1, 400)
+              && cadenaONull(a.evidencia_id, 0, 128)
+              && cadena(a.registrado_por_uid, 1, 128)
+              && cadena(a.registrado_por_nombre, 1, 200)
+              && (a.registrado_en is timestamp || cadena(a.registrado_en, 1, 40)));
+    }
+
+    // -------------------------------------------------------------
+    // Validador de dominio: equipos_turno (create Y update)
+    // -------------------------------------------------------------
+    function esEquipoTurnoValido(d, equipoId) {
+      let campos = ['id', 'asistencia_id', 'operativo_id', 'usuario_uid',
+                    'usuario_nombre', 'nombre_articulo', 'codigo_inventario',
+                    'origen_material', 'estado_reporte', 'falla_reportada',
+                    'devuelto', 'devuelto_en', 'devuelto_por_uid',
+                    'acta_incidencia', 'creado_por_uid', 'creado_en',
+                    'actualizado_en'];
+      return d.keys().hasAll(campos)
+          && d.keys().hasOnly(campos)
+          && d.id == equipoId
+          && cadena(d.asistencia_id, 1, 128)
+          && cadena(d.operativo_id, 1, 128)
+          && cadena(d.usuario_uid, 1, 128)
+          && cadena(d.usuario_nombre, 1, 200)
+          && cadena(d.nombre_articulo, 1, 120)
+          && cadena(d.codigo_inventario, 0, 60)
+          && d.origen_material in ['BUPC_Asignado', 'Propio']
+          && d.estado_reporte in ['OK', 'Con_Falla', 'Devuelto', 'Incidencia']
+          && cadena(d.falla_reportada, 0, 400)
+          && d.devuelto is bool
+          && (d.devuelto_en == null || d.devuelto_en is timestamp)
+          && cadenaONull(d.devuelto_por_uid, 1, 128)
+          && esActaIncidenciaValida(d.acta_incidencia)
+          && cadena(d.creado_por_uid, 1, 128)
+          && d.creado_en is timestamp
+          && d.actualizado_en is timestamp;
+    }
+
+    // -------------------------------------------------------------
+    // Validador de dominio: evidencias_equipos (solo create)
+    // -------------------------------------------------------------
+    function esEvidenciaEquipoValida(d, evidenciaId) {
+      let campos = ['id', 'equipo_id', 'asistencia_id', 'operativo_id',
+                    'imagen_webp_base64', 'creado_por_uid', 'creado_en'];
+      return d.keys().hasAll(campos)
+          && d.keys().hasOnly(campos)
+          && d.id == evidenciaId
+          && cadena(d.equipo_id, 1, 128)
+          && cadena(d.asistencia_id, 1, 128)
+          && cadena(d.operativo_id, 1, 128)
+          && d.imagen_webp_base64 is string
+          && d.imagen_webp_base64.size() >= 50
+          && d.imagen_webp_base64.size() <= 160000
+          && d.imagen_webp_base64.matches('^data:image/webp;base64,[A-Za-z0-9+/=]+$')
+          && d.creado_por_uid == request.auth.uid
+          && d.creado_en == request.time;
+    }
+
+    // -------------------------------------------------------------
+    // Validador de dominio: canales_radio (create Y update)
+    // -------------------------------------------------------------
+    function esCanalRadioValido(d, canalId) {
+      let campos = ['id', 'operativo_id', 'nombre_canal', 'frecuencia_etiqueta',
+                    'unidades_participantes', 'creado_por', 'creado_por_uid',
+                    'creado_en', 'actualizado_en'];
+      return d.keys().hasAll(campos)
+          && d.keys().hasOnly(campos)
+          && d.id == canalId
+          && cadena(d.operativo_id, 1, 128)
+          && cadena(d.nombre_canal, 1, 80)
+          && cadena(d.frecuencia_etiqueta, 0, 40)
+          && d.unidades_participantes is list
+          && d.unidades_participantes.size() <= 50
+          && cadena(d.creado_por, 1, 200)
+          && cadena(d.creado_por_uid, 1, 128)
+          && d.creado_en is timestamp
+          && d.actualizado_en is timestamp;
+    }
+
+    // -------------------------------------------------------------
+    // Validador de dominio: bitacora_radio_registros (create Y update)
+    // -------------------------------------------------------------
+    function esRegistroBitacoraRadioValido(d, registroId) {
+      let campos = ['id', 'canal_id', 'operativo_id', 'hora_original', 'origen',
+                    'destinos', 'actividades', 'registrado_por',
+                    'registrado_por_uid', 'fue_editado',
+                    'actividad_original_respaldo', 'editado_en', 'editado_por',
+                    'creado_en', 'actualizado_en'];
+      return d.keys().hasAll(campos)
+          && d.keys().hasOnly(campos)
+          && d.id == registroId
+          && cadena(d.canal_id, 1, 128)
+          && cadena(d.operativo_id, 1, 128)
+          && cadena(d.hora_original, 8, 8)
+          && d.hora_original.matches('^[0-2][0-9]:[0-5][0-9]:[0-5][0-9]$')
+          && cadena(d.origen, 1, 80)
+          && d.destinos is list
+          && d.destinos.size() >= 1
+          && d.destinos.size() <= 30
+          && cadena(d.actividades, 1, 1000)
+          && cadena(d.registrado_por, 1, 200)
+          && cadena(d.registrado_por_uid, 1, 128)
+          && d.fue_editado is bool
+          && cadenaONull(d.actividad_original_respaldo, 1, 1000)
+          && (d.editado_en == null || d.editado_en is timestamp)
+          && cadenaONull(d.editado_por, 1, 200)
+          && d.creado_en is timestamp
+          && d.actualizado_en is timestamp;
+    }
+
+    // -------------------------------------------------------------
+    // Validador de dominio: catalogo_claves (create Y update)
+    // -------------------------------------------------------------
+    function esClaveCatalogoValida(d, claveId) {
+      let campos = ['id', 'tabla', 'codigo', 'significado', 'categoria',
+                    'es_basico', 'orden'];
+      return d.keys().hasAll(campos)
+          && d.keys().hasOnly(campos)
+          && d.id == claveId
+          && d.tabla in ['codigos_1_100', 'claves_personales',
+                         'alfabeto_fonetico', 'codigo_q', 'morse_banderolas']
+          && cadena(d.codigo, 1, 30)
+          && cadena(d.significado, 1, 250)
+          && cadena(d.categoria, 0, 80)
+          && d.es_basico is bool
+          && d.orden is int
+          && d.orden >= 0;
+    }
+
+    // =============================================================
+    // usuarios/{uid}
+    // =============================================================
+    match /usuarios/{uid} {
+
+      // Lectura individual: el dueño siempre (sin importar su estatus, para
+      // ver su pantalla de estado) o un Encargado/Administrador Activo
+      // (p. ej. al escanear QR de credencial o registrar entrada manual).
+      // El dueño se evalúa primero para no gastar un get() innecesario.
+      allow get: if esPropietario(uid) || esEncargadoOAdminActivo();
+
+      // Consultas (list): solo un Encargado o Administrador Activo.
+      allow list: if esEncargadoOAdminActivo();
+
+      // Alta: solo el propio usuario, con esquema completo y valores iniciales
+      // forzados. "create" solo aplica si el documento NO existe; si ya existe,
+      // la escritura se evalúa como "update" y queda sujeta a esas reglas.
+      allow create: if esPropietario(uid)
+                    && esUsuarioValido(request.resource.data, uid)
+                    && tieneValoresIniciales(request.resource.data);
+
+      // Actualización por el dueño: solo si su cuenta está Activa
+      // (se lee de resource, sin get()), solo campos personales/académicos/
+      // médicos + tiene_foto, y actualizado_en == request.time.
+      // Nunca uid, correo, creado_en ni campos privilegiados.
+      allow update: if esPropietario(uid)
+                    && resource.data.estatus == 'Activo'
+                    && camposCambiados().hasOnly(camposEditablesPorDueno())
+                    && request.resource.data.actualizado_en == request.time
+                    && esUsuarioValido(request.resource.data, uid);
+
+      // Actualización por un Administrador Activo (cualquier documento):
+      // solo campos privilegiados + actualizado_en == request.time.
+      // Nunca uid, correo, creado_en ni datos personales.
+      allow update: if esAdminActivo()
+                    && camposCambiados().hasOnly(camposEditablesPorAdmin())
+                    && request.resource.data.actualizado_en == request.time
+                    && esUsuarioValido(request.resource.data, uid);
+
+      // Nunca se eliminan usuarios (se dan de baja con estatus 'Inactivo').
+      allow delete: if false;
+    }
+
+    // =============================================================
+    // auditoria_eventos/{eventoId} — bitácora inmutable
+    // =============================================================
+    match /auditoria_eventos/{eventoId} {
+
+      // Solo un Administrador Activo puede consultar la bitácora.
+      allow get, list: if esAdminActivo();
+
+      // Cualquier usuario con cuenta Activa puede registrar un evento propio.
+      allow create: if esActivo() && esEventoValido(request.resource.data);
+
+      // Inmutable: nunca se edita ni se borra.
+      allow update, delete: if false;
+    }
+
+    // =============================================================
+    // fotos_perfiles/{uid} — foto de perfil WebP en base64
+    // =============================================================
+    match /fotos_perfiles/{uid} {
+
+      // Lectura individual: el dueño (evaluado primero para evitar un get())
+      // o cualquier usuario con cuenta Activa.
+      allow get: if esPropietario(uid) || esActivo();
+
+      // No se permite listar fotos de perfil en bloque.
+      allow list: if false;
+
+      // Alta y actualización: el dueño Activo o un Administrador Activo,
+      // validando siempre el esquema completo y el formato WebP base64.
+      allow create, update: if ((esPropietario(uid) && esActivo()) || esAdminActivo())
+                            && esFotoPerfilValida(request.resource.data, uid);
+
+      // Eliminación: el dueño Activo o un Administrador Activo.
+      allow delete: if (esPropietario(uid) && esActivo()) || esAdminActivo();
+    }
+
+    // =============================================================
+    // operativos/{operativoId} — operativos y eventos
+    // =============================================================
+    match /operativos/{operativoId} {
+
+      // Lectura y listado: cualquier usuario con cuenta Activa.
+      allow get, list: if esActivo();
+
+      // Alta: Encargado o Administrador Activo, con esquema completo,
+      // autoría propia y marcas de tiempo del servidor.
+      allow create: if esEncargadoOAdminActivo()
+                    && esOperativoValido(request.resource.data, operativoId)
+                    && request.resource.data.creado_por_uid == request.auth.uid
+                    && request.resource.data.creado_en == request.time
+                    && request.resource.data.actualizado_en == request.time;
+
+      // Actualización: Encargado o Administrador Activo, esquema válido,
+      // campos inmutables intactos y actualizado_en == request.time.
+      allow update: if esEncargadoOAdminActivo()
+                    && esOperativoValido(request.resource.data, operativoId)
+                    && !camposCambiados().hasAny(['id', 'creado_por_uid',
+                                                  'creado_por_nombre', 'creado_en'])
+                    && request.resource.data.actualizado_en == request.time;
+
+      // Nunca se eliminan operativos.
+      allow delete: if false;
+
+      // -----------------------------------------------------------
+      // operativos/{operativoId}/secretos/totp — secreto TOTP
+      // -----------------------------------------------------------
+      match /secretos/totp {
+
+        // Lectura individual: cualquier usuario con cuenta Activa.
+        allow get: if esActivo();
+
+        // No se permite listar secretos.
+        allow list: if false;
+
+        // Alta y actualización: Encargado o Administrador Activo,
+        // compatible con writeBatch junto al alta del operativo.
+        allow create, update: if esEncargadoOAdminActivo()
+                              && esSecretoTotpValido(request.resource.data);
+
+        // Nunca se elimina el secreto TOTP.
+        allow delete: if false;
+      }
+    }
+
+    // =============================================================
+    // asistencias_personal/{asistenciaId} — pase de lista y turnos
+    // =============================================================
+    match /asistencias_personal/{asistenciaId} {
+
+      // Lectura y listado: el propio brigadista Activo (solo sus asistencias)
+      // o un Encargado/Administrador Activo.
+      allow get, list: if (esActivo() && resource.data.usuario_uid == request.auth.uid)
+                       || esEncargadoOAdminActivo();
+
+      // Alta: Encargado/Administrador Activo (cualquier brigadista y método)
+      // o el propio brigadista Activo por auto-registro QR de operativo.
+      allow create: if esAsistenciaValida(request.resource.data, asistenciaId)
+                    && request.resource.data.equipos_bupc_pendientes == 0
+                    && request.resource.data.hora_salida == null
+                    && request.resource.data.horas_totales == null
+                    && request.resource.data.hora_entrada == request.time
+                    && request.resource.data.creado_en == request.time
+                    && request.resource.data.actualizado_en == request.time
+                    && request.resource.data.registrado_por_uid == request.auth.uid
+                    && (esEncargadoOAdminActivo()
+                        || (esActivo()
+                            && request.resource.data.usuario_uid == request.auth.uid
+                            && request.resource.data.rol_en_turno == 'Sin asignar'
+                            && request.resource.data.estado_operativo == 'En servicio'
+                            && request.resource.data.salida_cerrada_manual == false
+                            && request.resource.data.signos_vitales == null
+                            && request.resource.data.metodo_entrada in ['QR_Operativo_TOTP',
+                                                                        'QR_Operativo_Estatico']));
+
+      // Actualización por el dueño (brigadista Activo): solo puede cerrar su
+      // propia salida si aún no la cierra y no tiene equipos BUPC pendientes.
+      allow update: if esActivo()
+                    && resource.data.usuario_uid == request.auth.uid
+                    && resource.data.hora_salida == null
+                    && resource.data.equipos_bupc_pendientes == 0
+                    && camposCambiados().hasOnly(['hora_salida', 'horas_totales',
+                                                  'estado_operativo', 'actualizado_en'])
+                    && request.resource.data.hora_salida == request.time
+                    && request.resource.data.estado_operativo == 'Retirado'
+                    && request.resource.data.actualizado_en == request.time
+                    && esAsistenciaValida(request.resource.data, asistenciaId);
+
+      // Actualización por Encargado/Administrador Activo: rol, estado, signos
+      // vitales, contador de equipos (en transacciones atómicas) y cierre de
+      // salida respetando el Candado Duro de Salida.
+      allow update: if esEncargadoOAdminActivo()
+                    && camposCambiados().hasOnly(['rol_en_turno', 'estado_operativo',
+                                                  'signos_vitales', 'equipos_bupc_pendientes',
+                                                  'hora_salida', 'horas_totales',
+                                                  'salida_cerrada_manual', 'actualizado_en'])
+                    && candadoDuroRespetado()
+                    && request.resource.data.actualizado_en == request.time
+                    && esAsistenciaValida(request.resource.data, asistenciaId);
+
+      // Nunca se eliminan registros de asistencia.
+      allow delete: if false;
+    }
+
+    // =============================================================
+    // equipos_turno/{equipoId} — equipo BUPC asignado y propio
+    // =============================================================
+    match /equipos_turno/{equipoId} {
+
+      // Lectura y listado: el propio brigadista Activo o Encargado/Admin Activo.
+      allow get, list: if (esActivo() && resource.data.usuario_uid == request.auth.uid)
+                       || esEncargadoOAdminActivo();
+
+      // Alta por Encargado/Administrador Activo (p. ej. dentro de runTransaction
+      // junto con incremento de equipos_bupc_pendientes y auditoria_eventos).
+      allow create: if esEncargadoOAdminActivo()
+                    && esEquipoTurnoValido(request.resource.data, equipoId)
+                    && request.resource.data.devuelto == false
+                    && request.resource.data.acta_incidencia == null
+                    && request.resource.data.creado_por_uid == request.auth.uid
+                    && request.resource.data.creado_en == request.time
+                    && request.resource.data.actualizado_en == request.time;
+
+      // Alta por brigadista Activo: solo material propio, sin devolución ni acta.
+      allow create: if esActivo()
+                    && request.resource.data.usuario_uid == request.auth.uid
+                    && esEquipoTurnoValido(request.resource.data, equipoId)
+                    && request.resource.data.origen_material == 'Propio'
+                    && request.resource.data.devuelto == false
+                    && request.resource.data.acta_incidencia == null
+                    && request.resource.data.estado_reporte in ['OK', 'Con_Falla']
+                    && request.resource.data.creado_por_uid == request.auth.uid
+                    && request.resource.data.creado_en == request.time
+                    && request.resource.data.actualizado_en == request.time;
+
+      // Actualización por Encargado/Administrador Activo: reporte, devolución
+      // o acta de incidencia (compatible con runTransaction).
+      allow update: if esEncargadoOAdminActivo()
+                    && camposCambiados().hasOnly(['estado_reporte', 'falla_reportada',
+                                                  'devuelto', 'devuelto_en',
+                                                  'devuelto_por_uid', 'acta_incidencia',
+                                                  'actualizado_en'])
+                    && request.resource.data.actualizado_en == request.time
+                    && esEquipoTurnoValido(request.resource.data, equipoId);
+
+      // Actualización por brigadista Activo: solo puede reportar estado OK o
+      // Con_Falla mientras el equipo no esté devuelto ni tenga acta.
+      // Nunca puede auto-devolver equipo BUPC.
+      allow update: if esActivo()
+                    && resource.data.usuario_uid == request.auth.uid
+                    && resource.data.devuelto == false
+                    && resource.data.acta_incidencia == null
+                    && camposCambiados().hasOnly(['estado_reporte', 'falla_reportada',
+                                                  'actualizado_en'])
+                    && request.resource.data.estado_reporte in ['OK', 'Con_Falla']
+                    && request.resource.data.actualizado_en == request.time
+                    && esEquipoTurnoValido(request.resource.data, equipoId);
+
+      // Nunca se eliminan registros de equipo en turno.
+      allow delete: if false;
+    }
+
+    // =============================================================
+    // evidencias_equipos/{evidenciaId} — fotos WebP de actas (inmutable)
+    // =============================================================
+    match /evidencias_equipos/{evidenciaId} {
+
+      // Lectura individual: solo Encargado o Administrador Activo.
+      allow get: if esEncargadoOAdminActivo();
+
+      // No se permite listar evidencias en bloque.
+      allow list: if false;
+
+      // Alta: solo Encargado o Administrador Activo (compatible con runTransaction).
+      allow create: if esEncargadoOAdminActivo()
+                    && esEvidenciaEquipoValida(request.resource.data, evidenciaId);
+
+      // Inmutable: nunca se edita ni se elimina.
+      allow update, delete: if false;
+    }
+
+    // =============================================================
+    // canales_radio/{canalId} — canales de radiocomunicación
+    // =============================================================
+    match /canales_radio/{canalId} {
+
+      // Lectura y listado: personal autorizado de radio o Encargado/Admin Activo.
+      allow get, list: if puedeUsarRadio();
+
+      // Alta: usuario con permiso de radio, esquema completo, autoría propia
+      // y marcas de tiempo del servidor.
+      allow create: if puedeUsarRadio()
+                    && esCanalRadioValido(request.resource.data, canalId)
+                    && request.resource.data.creado_por_uid == request.auth.uid
+                    && request.resource.data.creado_en == request.time
+                    && request.resource.data.actualizado_en == request.time;
+
+      // Actualización: solo unidades_participantes, frecuencia_etiqueta y
+      // actualizado_en == request.time; el resto permanece inmutable.
+      allow update: if puedeUsarRadio()
+                    && camposCambiados().hasOnly(['unidades_participantes',
+                                                  'frecuencia_etiqueta',
+                                                  'actualizado_en'])
+                    && request.resource.data.actualizado_en == request.time
+                    && esCanalRadioValido(request.resource.data, canalId);
+
+      // Nunca se eliminan canales de radio.
+      allow delete: if false;
+    }
+
+    // =============================================================
+    // bitacora_radio_registros/{registroId} — bitácora de radio
+    // =============================================================
+    match /bitacora_radio_registros/{registroId} {
+
+      // Lectura y listado: personal autorizado de radio o Encargado/Admin Activo.
+      allow get, list: if puedeUsarRadio();
+
+      // Alta: usuario con permiso de radio, esquema válido, autoría propia,
+      // sin marcas de edición previa y marcas de tiempo del servidor.
+      allow create: if puedeUsarRadio()
+                    && esRegistroBitacoraRadioValido(request.resource.data, registroId)
+                    && request.resource.data.registrado_por_uid == request.auth.uid
+                    && request.resource.data.fue_editado == false
+                    && request.resource.data.actividad_original_respaldo == null
+                    && request.resource.data.editado_en == null
+                    && request.resource.data.editado_por == null
+                    && request.resource.data.creado_en == request.time
+                    && request.resource.data.actualizado_en == request.time;
+
+      // Actualización controlada (INMUTABILIDAD CRÍTICA):
+      // hora_original nunca cambia; solo puede corregirse actividades dejando
+      // respaldo obligatorio y rastro de auditoría de edición.
+      allow update: if puedeUsarRadio()
+                    && esRegistroBitacoraRadioValido(request.resource.data, registroId)
+                    && request.resource.data.hora_original == resource.data.hora_original
+                    && camposCambiados().hasOnly(['actividades', 'fue_editado',
+                                                  'actividad_original_respaldo',
+                                                  'editado_en', 'editado_por',
+                                                  'actualizado_en'])
+                    && request.resource.data.fue_editado == true
+                    && request.resource.data.actividad_original_respaldo != null
+                    && request.resource.data.editado_en == request.time
+                    && request.resource.data.editado_por is string
+                    && request.resource.data.editado_por.size() >= 1
+                    && request.resource.data.actualizado_en == request.time;
+
+      // Inmutable: nunca se eliminan registros de bitácora de radio.
+      allow delete: if false;
+    }
+
+    // =============================================================
+    // catalogo_claves/{claveId} — 5 tablas del catálogo ReBaCE v2
+    // =============================================================
+    match /catalogo_claves/{claveId} {
+
+      // Lectura y listado: personal autorizado de radio o Encargado/Admin Activo.
+      allow get, list: if puedeUsarRadio();
+
+      // Alta y actualización: solo Administrador Activo con esquema completo.
+      allow create, update: if esAdminActivo()
+                            && esClaveCatalogoValida(request.resource.data, claveId);
+
+      // Eliminación: solo Administrador Activo.
+      allow delete: if esAdminActivo();
+    }
+
+    // Todo lo demás está denegado por defecto (no hay más reglas "allow").
+  }
+}
