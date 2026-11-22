@@ -24,12 +24,21 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore'
 import { auth, db } from '../lib/firebase'
+import {
+  etapaDesdeGrupo,
+  grupoDesdeEtapa,
+  normalizarClaveRadio,
+  normalizarUsuario,
+  puedeAsignarRadio,
+  puedeGestionarBrigadista,
+} from '../lib/permisos'
 import type {
   AyudantiaSlot,
   DatosAcademicos,
   DatosMedicos,
   DatosPersonales,
   EstatusUsuario,
+  EtapaBrigadista,
   GrupoOperativo,
   RolSistema,
   TipoEventoAuditoria,
@@ -116,9 +125,14 @@ export async function registrarBrigadista(datos: DatosRegistro): Promise<void> {
       // Valores iniciales forzados también por firestore.rules
       grupo_operativo: 'Ninguno',
       ayudantia_slot: 'Ninguna',
+      etapa: 'Alfa',
+      subgrupo: '',
+      ayudantia: 'Ninguna',
+      grupos_a_cargo: [],
       rol_sistema: 'Brigadista',
       autorizado_radio: false,
       clave_personal_radio: null,
+      clave_radio: '',
       estatus: 'Pendiente',
       qr_codigo_unico: null,
       tiene_foto: false,
@@ -156,9 +170,14 @@ export async function completarRegistroGoogle(
     ...datos.medico,
     grupo_operativo: 'Ninguno',
     ayudantia_slot: 'Ninguna',
+    etapa: 'Alfa',
+    subgrupo: '',
+    ayudantia: 'Ninguna',
+    grupos_a_cargo: [],
     rol_sistema: 'Brigadista',
     autorizado_radio: false,
     clave_personal_radio: null,
+    clave_radio: '',
     estatus: 'Pendiente',
     qr_codigo_unico: null,
     tiene_foto: false,
@@ -182,7 +201,7 @@ export function escucharPerfil(
     doc(usuariosRef, uid),
     { includeMetadataChanges: true },
     (snap) => {
-      if (snap.exists()) alCambiar(snap.data() as Usuario)
+      if (snap.exists()) alCambiar(normalizarUsuario(snap.data() as Usuario))
       else alCambiar(snap.metadata.fromCache ? undefined : null)
     },
     alFallar,
@@ -204,7 +223,7 @@ export function escucharUsuariosPorEstatus(
   return onSnapshot(
     query(usuariosRef, where('estatus', 'in', estatus)),
     (snap) => {
-      const lista = snap.docs.map((d) => d.data() as Usuario)
+      const lista = snap.docs.map((d) => normalizarUsuario(d.data() as Usuario))
       lista.sort((a, b) => (a.creado_en?.toMillis() ?? 0) - (b.creado_en?.toMillis() ?? 0))
       alCambiar(lista)
     },
@@ -238,19 +257,139 @@ function nuevoLoteConAuditoria(
 export interface AsignacionAlta {
   grupo_operativo: GrupoOperativo
   ayudantia_slot: AyudantiaSlot
-  autorizado_radio: boolean
-  clave_personal_radio: string | null
+  etapa?: EtapaBrigadista
+  subgrupo?: string
+  ayudantia?: AyudantiaSlot
+  autorizado_radio?: boolean
+  clave_personal_radio?: string | null
+  clave_radio?: string
 }
 
 export function aprobarUsuario(admin: Usuario, objetivo: Usuario, asignacion: AsignacionAlta): Promise<void> {
-  const detalle = `Alta aprobada · Grupo ${asignacion.grupo_operativo} · Ayudantía ${asignacion.ayudantia_slot}${
-    asignacion.autorizado_radio ? ` · Radio autorizado (${asignacion.clave_personal_radio ?? 'sin clave'})` : ''
-  }`
-  return nuevoLoteConAuditoria(admin, objetivo, 'APROBACION_USUARIO', detalle, {
-    ...asignacion,
+  const etapa = asignacion.etapa ?? etapaDesdeGrupo(asignacion.grupo_operativo)
+  const subgrupo = (asignacion.subgrupo ?? '').trim()
+  const ayudantia = asignacion.ayudantia ?? asignacion.ayudantia_slot
+  const cambios: Record<string, unknown> = {
+    grupo_operativo: asignacion.grupo_operativo,
+    ayudantia_slot: ayudantia,
+    etapa,
+    subgrupo,
+    ayudantia,
     estatus: 'Activo',
-    qr_codigo_unico: crypto.randomUUID(),
+    qr_codigo_unico: objetivo.qr_codigo_unico ?? crypto.randomUUID(),
+  }
+
+  let detalleRadio = ''
+  if (puedeAsignarRadio(admin, objetivo) && typeof asignacion.autorizado_radio === 'boolean') {
+    const clave = normalizarClaveRadio(asignacion.clave_radio ?? asignacion.clave_personal_radio)
+    cambios.autorizado_radio = asignacion.autorizado_radio
+    cambios.clave_radio = clave
+    cambios.clave_personal_radio = clave ? clave.slice(0, 10) : null
+    if (asignacion.autorizado_radio) {
+      detalleRadio = ` · Radio autorizado (${clave || 'sin clave'})`
+    }
+  }
+
+  const detalle = `Alta aprobada · Etapa ${etapa}${subgrupo ? ` (${subgrupo})` : ''} · Ayudantía ${ayudantia}${detalleRadio}`
+  return nuevoLoteConAuditoria(admin, objetivo, 'APROBACION_USUARIO', detalle, cambios)
+}
+
+export interface DatosRadioUsuario {
+  autorizado_radio: boolean
+  clave_radio: string
+}
+
+/**
+ * Dominio exclusivo de TESLA (solo cuentas ajenas) o Administrador.
+ * Normaliza `clave_radio` a mayúsculas y sincroniza `clave_personal_radio`.
+ */
+export function actualizarRadioUsuario(
+  actor: Usuario,
+  objetivo: Usuario,
+  datos: DatosRadioUsuario,
+): Promise<void> {
+  if (!puedeAsignarRadio(actor, objetivo)) {
+    return Promise.reject(
+      new Error('Solo un Encargado de Tesla (en cuentas ajenas) o un Administrador puede asignar radio.'),
+    )
+  }
+  const clave = normalizarClaveRadio(datos.clave_radio)
+  const detalle = datos.autorizado_radio
+    ? `Radio autorizado · Clave ${clave || 'sin clave'}`
+    : 'Autorización de radio revocada'
+
+  return nuevoLoteConAuditoria(actor, objetivo, 'ASIGNACION_RADIO', detalle, {
+    autorizado_radio: datos.autorizado_radio,
+    clave_radio: clave,
+    clave_personal_radio: clave ? clave.slice(0, 10) : null,
   })
+}
+
+export interface DatosOperativosPersonal {
+  etapa?: EtapaBrigadista
+  subgrupo?: string
+  ayudantia?: AyudantiaSlot
+  estatus?: EstatusUsuario
+}
+
+/**
+ * Actualiza campos operativos de un brigadista (Admin, AP o Encargado Opción B).
+ * Nunca modifica `rol_sistema`, `grupos_a_cargo` ni campos de radio.
+ */
+export function actualizarPersonalOperativo(
+  actor: Usuario,
+  objetivo: Usuario,
+  cambios: DatosOperativosPersonal,
+): Promise<void> {
+  if (!puedeGestionarBrigadista(actor, objetivo)) {
+    return Promise.reject(new Error('No tienes permiso para editar el perfil de este brigadista.'))
+  }
+  const payload: Record<string, unknown> = {}
+  const resumen: string[] = []
+
+  if (cambios.etapa !== undefined) {
+    payload.etapa = cambios.etapa
+    payload.grupo_operativo = grupoDesdeEtapa(cambios.etapa)
+    resumen.push(`Etapa: ${cambios.etapa}`)
+  }
+  if (cambios.subgrupo !== undefined) {
+    const sg = cambios.subgrupo.trim()
+    payload.subgrupo = sg
+    resumen.push(`Subgrupo: ${sg || 'Ninguno'}`)
+  }
+  if (cambios.ayudantia !== undefined) {
+    payload.ayudantia = cambios.ayudantia
+    payload.ayudantia_slot = cambios.ayudantia
+    resumen.push(`Ayudantía: ${cambios.ayudantia}`)
+  }
+  if (cambios.estatus !== undefined) {
+    payload.estatus = cambios.estatus
+    resumen.push(`Estatus: ${cambios.estatus}`)
+  }
+
+  return nuevoLoteConAuditoria(
+    actor,
+    objetivo,
+    'ACTUALIZACION_PERSONAL',
+    resumen.join(' · ') || 'Actualización operativa',
+    payload,
+  )
+}
+
+/** Exclusivo Administrador: asigna los subgrupos/ayudantías a cargo de un Encargado. */
+export function actualizarGruposACargo(
+  admin: Usuario,
+  objetivo: Usuario,
+  gruposACargo: string[],
+): Promise<void> {
+  const limpios = Array.from(new Set(gruposACargo.map((g) => g.trim()).filter(Boolean))).slice(0, 30)
+  return nuevoLoteConAuditoria(
+    admin,
+    objetivo,
+    'ACTUALIZACION_PERSONAL',
+    `Grupos a cargo: ${limpios.length > 0 ? limpios.join(', ') : 'Ninguno'}`,
+    { grupos_a_cargo: limpios },
+  )
 }
 
 export function rechazarUsuario(admin: Usuario, objetivo: Usuario): Promise<void> {

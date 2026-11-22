@@ -1,8 +1,25 @@
 import { onAuthStateChanged, signOut, type User } from 'firebase/auth'
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { auth } from '../lib/firebase'
+import {
+  esAdmin,
+  esEncargado,
+  esEncargadoAP,
+  esEncargadoTesla,
+  puedeOperarEnCampo,
+  puedeUsarRadio,
+} from '../lib/permisos'
 import { escucharPerfil } from '../services/authService'
 import type { Usuario } from '../types'
+
+export interface PermisosSesion {
+  esAdmin: boolean
+  esEncargado: boolean
+  esEncargadoAP: boolean
+  esEncargadoTesla: boolean
+  puedeUsarRadio: boolean
+  puedeOperarEnCampo: boolean
+}
 
 interface EstadoSesion {
   /** `undefined` = resolviendo sesión. */
@@ -12,6 +29,8 @@ interface EstadoSesion {
   /** Perfil que fue dado de baja mientras tenía sesión (pantalla roja). */
   perfilBloqueado: Usuario | null
   limpiarBloqueo: () => void
+  /** Permisos RBAC aditivos derivados del perfil actual. */
+  permisos: PermisosSesion
 }
 
 const SesionContext = createContext<EstadoSesion | null>(null)
@@ -55,9 +74,27 @@ export function SesionProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  const permisos = useMemo<PermisosSesion>(
+    () => ({
+      esAdmin: esAdmin(perfil),
+      esEncargado: esEncargado(perfil),
+      esEncargadoAP: esEncargadoAP(perfil),
+      esEncargadoTesla: esEncargadoTesla(perfil),
+      puedeUsarRadio: puedeUsarRadio(perfil),
+      puedeOperarEnCampo: puedeOperarEnCampo(perfil),
+    }),
+    [perfil],
+  )
+
   return (
     <SesionContext.Provider
-      value={{ usuarioAuth, perfil, perfilBloqueado, limpiarBloqueo: () => setPerfilBloqueado(null) }}
+      value={{
+        usuarioAuth,
+        perfil,
+        perfilBloqueado,
+        limpiarBloqueo: () => setPerfilBloqueado(null),
+        permisos,
+      }}
     >
       {children}
     </SesionContext.Provider>

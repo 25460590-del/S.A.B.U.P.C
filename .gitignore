@@ -1,0 +1,18 @@
+# Dependencias (raíz, frontend y pruebas de reglas)
+**/node_modules/
+firestore-tests/node_modules/
+
+# Compilados y caché de Firebase
+**/dist/
+.firebase/
+
+# Variables locales y credenciales
+.env
+.env.local
+*.local
+
+# Logs del emulador y npm
+*.log
+firestore-debug.log
+firebase-debug.log
+ui-debug.log

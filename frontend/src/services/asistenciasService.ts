@@ -14,6 +14,7 @@ import {
 } from 'firebase/firestore'
 import * as OTPAuth from 'otpauth'
 import { db } from '../lib/firebase'
+import { esEncargado, normalizarOperativo, normalizarUsuario } from '../lib/permisos'
 import type {
   AsistenciaPersonal,
   EquipoTurno,
@@ -269,9 +270,9 @@ export async function registrarAsistenciaQR(
     if (!opSnap.exists()) {
       throw new Error('El operativo indicado por el QR no existe.')
     }
-    const operativo = opSnap.data() as Operativo
-    if (!operativo.recepcion_abierta) {
-      throw new Error(`La recepción de "${operativo.nombre}" está cerrada.`)
+    const operativo = normalizarOperativo(opSnap.data() as Operativo)
+    if (operativo.estatus === 'Finalizado') {
+      throw new Error(`El operativo "${operativo.nombre}" ya fue finalizado.`)
     }
 
     if (qr.tipo === 'operativo_estatico') {
@@ -295,6 +296,7 @@ export async function registrarAsistenciaQR(
       }
     }
 
+    // Recepción Cerrada: permite registrar salida a quien ya tiene entrada abierta.
     const abierta = await buscarAsistenciaAbierta(actor.uid, operativo.id)
     if (abierta) {
       const resSalida = await cerrarSalidaConCandado(abierta.id, actor, false)
@@ -314,6 +316,10 @@ export async function registrarAsistenciaQR(
       }
     }
 
+    if (!operativo.recepcion_abierta) {
+      throw new Error(`La recepción de "${operativo.nombre}" está cerrada para nuevas entradas.`)
+    }
+
     const metodo: MetodoEntrada =
       qr.tipo === 'operativo_totp' ? 'QR_Operativo_TOTP' : 'QR_Operativo_Estatico'
     const asistenciaId = await crearEntradaAtomica(actor, actor, operativo, metodo)
@@ -326,21 +332,22 @@ export async function registrarAsistenciaQR(
   }
 
   // VÍA 2: Encargado / Administrador escanea la Credencial QR de un Brigadista
-  if (actor.rol_sistema !== 'Encargado' && actor.rol_sistema !== 'Administrador') {
+  if (!esEncargado(actor)) {
     throw new Error('Solo un Encargado o Administrador puede escanear credenciales de personal.')
   }
   if (!operativoActual) {
     throw new Error('Selecciona primero un operativo activo antes de escanear una credencial.')
   }
-  if (!operativoActual.recepcion_abierta) {
-    throw new Error(`La recepción de "${operativoActual.nombre}" está cerrada.`)
+  const opNormalizado = normalizarOperativo(operativoActual)
+  if (opNormalizado.estatus === 'Finalizado') {
+    throw new Error(`El operativo "${opNormalizado.nombre}" ya fue finalizado.`)
   }
 
   const userSnap = await getDoc(doc(usuariosRef, qr.uid))
   if (!userSnap.exists()) {
     throw new Error('La credencial escaneada no corresponde a un usuario registrado.')
   }
-  const brigadista = userSnap.data() as Usuario
+  const brigadista = normalizarUsuario(userSnap.data() as Usuario)
 
   if (brigadista.estatus === 'Inactivo') {
     await runTransaction(db, async (tx) => {
@@ -350,7 +357,7 @@ export async function registrarAsistenciaQR(
         actor_nombre: nombreCompleto(actor),
         objetivo_uid: brigadista.uid,
         objetivo_nombre: nombreCompleto(brigadista),
-        detalle: `Intento de escaneo bloqueado en ${operativoActual.nombre}`,
+        detalle: `Intento de escaneo bloqueado en ${opNormalizado.nombre}`,
         creado_en: serverTimestamp(),
       })
     })
@@ -365,7 +372,8 @@ export async function registrarAsistenciaQR(
     throw new Error('La credencial QR escaneada no está vigente.')
   }
 
-  const abierta = await buscarAsistenciaAbierta(brigadista.uid, operativoActual.id)
+  // Recepción Cerrada: permite registrar salida a quien ya tiene entrada abierta.
+  const abierta = await buscarAsistenciaAbierta(brigadista.uid, opNormalizado.id)
   if (abierta) {
     const resSalida = await cerrarSalidaConCandado(abierta.id, actor, false)
     if (resSalida.bloqueado) {
@@ -378,22 +386,26 @@ export async function registrarAsistenciaQR(
     return {
       accion: 'salida',
       asistenciaId: abierta.id,
-      operativoNombre: operativoActual.nombre,
+      operativoNombre: opNormalizado.nombre,
       usuarioNombre: nombreCompleto(brigadista),
       horasTotales: resSalida.horasTotales,
     }
   }
 
+  if (!opNormalizado.recepcion_abierta) {
+    throw new Error(`La recepción de "${opNormalizado.nombre}" está cerrada para nuevas entradas.`)
+  }
+
   const asistenciaId = await crearEntradaAtomica(
     actor,
     brigadista,
-    operativoActual,
+    opNormalizado,
     'QR_Credencial',
   )
   return {
     accion: 'entrada',
     asistenciaId,
-    operativoNombre: operativoActual.nombre,
+    operativoNombre: opNormalizado.nombre,
     usuarioNombre: nombreCompleto(brigadista),
   }
 }
@@ -516,7 +528,7 @@ export function escucharUsuariosParaBitacora(
   return onSnapshot(
     query(usuariosRef, where('estatus', 'in', ['Activo', 'Inactivo'])),
     (snap) => {
-      const lista = snap.docs.map((d) => d.data() as Usuario)
+      const lista = snap.docs.map((d) => normalizarUsuario(d.data() as Usuario))
       lista.sort((a, b) => nombreCompleto(a).localeCompare(nombreCompleto(b), 'es-MX'))
       alCambiar(lista)
     },

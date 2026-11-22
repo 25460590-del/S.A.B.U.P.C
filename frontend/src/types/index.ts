@@ -4,6 +4,8 @@ import type { Timestamp } from 'firebase/firestore'
 
 export type GrupoOperativo = 'Alfa' | 'Omega' | 'Ninguno'
 
+export type EtapaBrigadista = 'Alfa' | 'Omega' | 'Grupo Operativo'
+
 export type AyudantiaSlot =
   | 'Capacitación'
   | 'Administración de Personal'
@@ -55,13 +57,23 @@ export interface DatosMedicos {
   contacto_emergencia_telefono: string
 }
 
-/** Campos que solo un Administrador activo puede modificar. */
+/** Campos privilegiados / operativos (con retrocompatibilidad v1.0 -> v1.1). */
 export interface CamposPrivilegiados {
   grupo_operativo: GrupoOperativo
   ayudantia_slot: AyudantiaSlot
+  /** Etapa jerárquica v1.1 ('Alfa' | 'Omega' | 'Grupo Operativo'). */
+  etapa: EtapaBrigadista
+  /** Subgrupo dinámico del catálogo (ej. 'Alfa 1', 'Omega 2', o '' en Grupo Operativo). */
+  subgrupo: string
+  /** Ayudantía asignada (espejo normalizado de `ayudantia_slot`). */
+  ayudantia: AyudantiaSlot
+  /** Subgrupos o ayudantías que un Encargado dirige en Administración de Personal. */
+  grupos_a_cargo: string[]
   rol_sistema: RolSistema
   autorizado_radio: boolean
   clave_personal_radio: string | null
+  /** Clave de radio normalizada en mayúsculas (ej. 'TESLA-205', 'LINCE', '42'). */
+  clave_radio: string
   estatus: EstatusUsuario
   qr_codigo_unico: string | null
 }
@@ -95,6 +107,8 @@ export type CategoriaOperativo =
 
 export type ModoQrOperativo = 'estatico' | 'dinamico'
 
+export type EstatusOperativo = 'Activo' | 'Finalizado'
+
 export interface Operativo {
   id: string
   nombre: string
@@ -103,6 +117,7 @@ export interface Operativo {
   fecha_inicio: string
   fecha_fin: string
   descripcion: string
+  estatus: EstatusOperativo
   recepcion_abierta: boolean
   modo_qr: ModoQrOperativo
   qr_token_estatico: string
@@ -268,6 +283,58 @@ export interface ClaveRebace {
   orden: number
 }
 
+// ── Colección `catalogos/{id}` (catálogos dinámicos administrables) ──────────
+
+export interface CatalogoDinamico {
+  id: string
+  nombre: string
+  items: string[]
+  actualizado_en: Timestamp
+  actualizado_por_uid: string
+}
+
+// ── Colección `perfiles_operativos/{uid}` (proyección mínima sin datos médicos)
+
+export interface PerfilOperativoMinimo {
+  uid: string
+  nombre_completo: string
+  numero_cuenta: string
+  estatus: EstatusUsuario
+  etapa: EtapaBrigadista
+  subgrupo: string
+  ayudantia: AyudantiaSlot
+  grupo_operativo: GrupoOperativo
+  ayudantia_slot: AyudantiaSlot
+  qr_codigo_unico: string | null
+  clave_radio: string
+  actualizado_en: Timestamp
+}
+
+// ── Colección `incidencias_personal/{id}` (inmutable para auditoría) ─────────
+
+export type TipoIncidenciaPersonal =
+  | 'Falta'
+  | 'Retardo'
+  | 'Conducta'
+  | 'Incumplimiento'
+  | 'Reconocimiento'
+  | 'Observación'
+
+export type GravedadIncidencia = 'Baja' | 'Media' | 'Alta'
+
+export interface IncidenciaPersonal {
+  id: string
+  usuario_uid: string
+  usuario_nombre: string
+  operativo_id: string | null
+  tipo: TipoIncidenciaPersonal
+  gravedad: GravedadIncidencia
+  descripcion: string
+  creado_por_uid: string
+  creado_por_nombre: string
+  creado_en: Timestamp
+}
+
 // ── Colección `auditoria_eventos/{id}` (inmutable) ───────────────────────────
 
 export type TipoEventoAuditoria =
@@ -275,18 +342,24 @@ export type TipoEventoAuditoria =
   | 'RECHAZO_USUARIO'
   | 'BAJA_USUARIO'
   | 'CAMBIO_ROL'
+  | 'ACTUALIZACION_PERSONAL'
+  | 'ASIGNACION_RADIO'
   | 'CREACION_OPERATIVO'
   | 'CAMBIO_RECEPCION_OPERATIVO'
   | 'CAMBIO_MODO_QR'
+  | 'FINALIZACION_OPERATIVO'
+  | 'ELIMINACION_OPERATIVO'
   | 'ASIGNACION_EQUIPO'
   | 'DEVOLUCION_EQUIPO'
   | 'ACTA_INCIDENCIA'
+  | 'INCIDENCIA_PERSONAL'
   | 'SALIDA_MANUAL'
   | 'INTENTO_ACCESO_INACTIVO'
   | 'CREACION_CANAL_RADIO'
   | 'EDICION_BITACORA_RADIO'
   | 'SEED_CLAVES_REBACE'
   | 'EDICION_CATALOGO_CLAVES'
+  | 'EDICION_CATALOGO_SUBGRUPOS'
 
 export interface AuditoriaEvento {
   id: string

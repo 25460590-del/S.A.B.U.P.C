@@ -2,11 +2,14 @@ import type {
   AyudantiaSlot,
   CategoriaOperativo,
   EstadoOperativo,
+  EtapaBrigadista,
+  GravedadIncidencia,
   GrupoOperativo,
   NivelAcademico,
   RolEnTurno,
   RolSistema,
   Sexo,
+  TipoIncidenciaPersonal,
   TipoSangre,
 } from '../types'
 
@@ -43,6 +46,29 @@ export const CATEGORIAS_OPERATIVO: CategoriaOperativo[] = [
 ]
 
 export const GRUPOS_OPERATIVOS: GrupoOperativo[] = ['Alfa', 'Omega', 'Ninguno']
+
+export const ETAPAS_BRIGADISTA: EtapaBrigadista[] = ['Alfa', 'Omega', 'Grupo Operativo']
+
+/** Semilla inicial para `catalogos/subgrupos` (respaldo si aún no existe en Firestore). */
+export const SUBGRUPOS_POR_DEFECTO: string[] = [
+  'Alfa 1',
+  'Alfa 2',
+  'Alfa 3',
+  'Alfa 4',
+  'Omega 1',
+  'Omega 2',
+]
+
+export const TIPOS_INCIDENCIA_PERSONAL: TipoIncidenciaPersonal[] = [
+  'Falta',
+  'Retardo',
+  'Conducta',
+  'Incumplimiento',
+  'Reconocimiento',
+  'Observación',
+]
+
+export const GRAVEDADES_INCIDENCIA: GravedadIncidencia[] = ['Baja', 'Media', 'Alta']
 
 export const AYUDANTIAS: AyudantiaSlot[] = [
   'Capacitación',

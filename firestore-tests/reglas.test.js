@@ -39,9 +39,14 @@ function usuarioBase(uid, extra = {}) {
     contacto_emergencia_telefono: '3127654321',
     grupo_operativo: 'Ninguno',
     ayudantia_slot: 'Ninguna',
+    etapa: 'Grupo Operativo',
+    subgrupo: '',
+    ayudantia: 'Ninguna',
+    grupos_a_cargo: [],
     rol_sistema: 'Brigadista',
     autorizado_radio: false,
     clave_personal_radio: null,
+    clave_radio: '',
     estatus: 'Pendiente',
     qr_codigo_unico: null,
     tiene_foto: false,
@@ -96,9 +101,122 @@ beforeEach(async () => {
     await setDoc(doc(f, 'usuarios/admin1'), usuarioBase('admin1', { estatus: 'Activo', rol_sistema: 'Administrador' }));
     await setDoc(doc(f, 'usuarios/adminInactivo'), usuarioBase('adminInactivo', { estatus: 'Inactivo', rol_sistema: 'Administrador' }));
     await setDoc(doc(f, 'usuarios/activo1'), usuarioBase('activo1', { estatus: 'Activo' }));
+    await setDoc(doc(f, 'usuarios/brigRadio'), usuarioBase('brigRadio', { estatus: 'Activo', autorizado_radio: true, clave_radio: 'TESLA-102' }));
+    await setDoc(doc(f, 'usuarios/brigAlfa1'), usuarioBase('brigAlfa1', { estatus: 'Activo', etapa: 'Alfa', grupo_operativo: 'Alfa', subgrupo: 'Alfa 1' }));
+    await setDoc(doc(f, 'usuarios/brigOmega1'), usuarioBase('brigOmega1', { estatus: 'Activo', etapa: 'Omega', grupo_operativo: 'Omega', subgrupo: 'Omega 1' }));
     await setDoc(doc(f, 'usuarios/encargado1'), usuarioBase('encargado1', { estatus: 'Activo', rol_sistema: 'Encargado' }));
+    await setDoc(doc(f, 'usuarios/encRadio'), usuarioBase('encRadio', { estatus: 'Activo', rol_sistema: 'Encargado', autorizado_radio: true, clave_radio: 'LINCE' }));
+    await setDoc(doc(f, 'usuarios/encAlfa1'), usuarioBase('encAlfa1', { estatus: 'Activo', rol_sistema: 'Encargado', grupos_a_cargo: ['Alfa 1'] }));
+    await setDoc(doc(f, 'usuarios/encAP'), usuarioBase('encAP', { estatus: 'Activo', rol_sistema: 'Encargado', ayudantia: 'Administración de Personal', ayudantia_slot: 'Administración de Personal' }));
+    await setDoc(doc(f, 'usuarios/encTesla'), usuarioBase('encTesla', { estatus: 'Activo', rol_sistema: 'Encargado', ayudantia: 'Tesla', ayudantia_slot: 'Tesla' }));
     await setDoc(doc(f, 'usuarios/pendiente1'), usuarioBase('pendiente1'));
     await setDoc(doc(f, 'auditoria_eventos/e1'), { ...eventoValido('admin1'), creado_en: Timestamp.now() });
+
+    await setDoc(doc(f, 'perfiles_operativos/brigOmega1'), {
+      uid: 'brigOmega1',
+      nombre_completo: 'Ana Pérez',
+      numero_cuenta: '20201234',
+      estatus: 'Activo',
+      etapa: 'Omega',
+      subgrupo: 'Omega 1',
+      ayudantia: 'Ninguna',
+      grupo_operativo: 'Omega',
+      ayudantia_slot: 'Ninguna',
+      qr_codigo_unico: 'qr-omega-1',
+      clave_radio: '',
+      actualizado_en: Timestamp.now(),
+    });
+
+    await setDoc(doc(f, 'catalogos/subgrupos'), {
+      id: 'subgrupos',
+      nombre: 'Subgrupos operativos',
+      items: ['Alfa 1', 'Alfa 2', 'Omega 1', 'Omega 2'],
+      actualizado_en: Timestamp.now(),
+      actualizado_por_uid: 'admin1',
+    });
+
+    const opBase = (id, extra = {}) => ({
+      id,
+      nombre: `Operativo ${id}`,
+      categoria: 'Guardias Ordinarias',
+      sede: 'Campus Central',
+      fecha_inicio: '2026-11-22',
+      fecha_fin: '2026-11-22',
+      descripcion: 'Prueba',
+      estatus: 'Activo',
+      recepcion_abierta: true,
+      modo_qr: 'estatico',
+      qr_token_estatico: `tok-${id}`,
+      creado_por_uid: 'admin1',
+      creado_por_nombre: 'Admin Uno',
+      creado_en: Timestamp.now(),
+      actualizado_en: Timestamp.now(),
+      ...extra,
+    });
+    await setDoc(doc(f, 'operativos/opAbierto'), opBase('opAbierto'));
+    await setDoc(doc(f, 'operativos/opCerrado'), opBase('opCerrado', { recepcion_abierta: false }));
+    await setDoc(doc(f, 'operativos/opFinalizado'), opBase('opFinalizado', { estatus: 'Finalizado', recepcion_abierta: false }));
+
+    const asisBase = (id, operativoId, usuarioUid, extra = {}) => ({
+      id,
+      operativo_id: operativoId,
+      operativo_nombre: `Operativo ${operativoId}`,
+      usuario_uid: usuarioUid,
+      usuario_nombre: 'Ana Pérez',
+      usuario_cuenta: '20201234',
+      grupo_operativo: 'Omega',
+      ayudantia_slot: 'Ninguna',
+      rol_en_turno: 'Sin asignar',
+      estado_operativo: 'En servicio',
+      signos_vitales: null,
+      metodo_entrada: 'QR_Operativo_Estatico',
+      hora_entrada: Timestamp.now(),
+      hora_salida: null,
+      horas_totales: null,
+      salida_cerrada_manual: false,
+      equipos_bupc_pendientes: 0,
+      registrado_por_uid: usuarioUid,
+      creado_en: Timestamp.now(),
+      actualizado_en: Timestamp.now(),
+      ...extra,
+    });
+    await setDoc(doc(f, 'asistencias_personal/asisAbierto'), asisBase('asisAbierto', 'opAbierto', 'brigOmega1'));
+    await setDoc(doc(f, 'asistencias_personal/asisCerradoOk'), asisBase('asisCerradoOk', 'opCerrado', 'activo1'));
+    await setDoc(doc(f, 'asistencias_personal/asisCerradoPend'), asisBase('asisCerradoPend', 'opCerrado', 'brigAlfa1', { equipos_bupc_pendientes: 1 }));
+    await setDoc(doc(f, 'asistencias_personal/asisFinalizado'), asisBase('asisFinalizado', 'opFinalizado', 'activo1'));
+
+    await setDoc(doc(f, 'equipos_turno/eqFinalizado'), {
+      id: 'eqFinalizado',
+      asistencia_id: 'asisFinalizado',
+      operativo_id: 'opFinalizado',
+      usuario_uid: 'activo1',
+      usuario_nombre: 'Ana Pérez',
+      nombre_articulo: 'Radio portátil',
+      codigo_inventario: 'RAD-01',
+      origen_material: 'BUPC_Asignado',
+      estado_reporte: 'OK',
+      falla_reportada: '',
+      devuelto: false,
+      devuelto_en: null,
+      devuelto_por_uid: null,
+      acta_incidencia: null,
+      creado_por_uid: 'encargado1',
+      creado_en: Timestamp.now(),
+      actualizado_en: Timestamp.now(),
+    });
+
+    await setDoc(doc(f, 'incidencias_personal/inc1'), {
+      id: 'inc1',
+      usuario_uid: 'brigAlfa1',
+      usuario_nombre: 'Ana Pérez',
+      operativo_id: null,
+      tipo: 'Observación',
+      gravedad: 'Baja',
+      descripcion: 'Registro previo',
+      creado_por_uid: 'encAlfa1',
+      creado_por_nombre: 'Encargado Alfa 1',
+      creado_en: Timestamp.now(),
+    });
   });
 });
 
@@ -186,3 +304,297 @@ test('Admin no borra auditoría', () => assertFails(deleteDoc(doc(db('admin1'), 
 // ---------------- otras rutas ----------------
 test('ruta desconocida denegada (Admin)', () => assertFails(setDoc(doc(db('admin1'), 'otra/x'), { a: 1 })));
 test('subcolección de usuario denegada', () => assertFails(getDoc(doc(db('activo1'), 'usuarios/activo1/privado/x'))));
+
+// ============================================================================
+// PRUEBAS v1.1: RBAC ADITIVO, TESLA, AP, OPCIÓN B, OPERATIVOS Y CONCURRENCIA
+// ============================================================================
+
+// ---------------- RBAC aditivo: herencia de Radio ----------------
+test('Admin hereda acceso a Radio sin autorizado_radio=true', () => assertSucceeds(
+  setDoc(doc(db('admin1'), 'canales_radio/c1'), {
+    id: 'c1',
+    operativo_id: 'opAbierto',
+    nombre_canal: 'Canal Alfa',
+    frecuencia_etiqueta: 'CH-1',
+    unidades_participantes: ['BASE'],
+    creado_por: 'Admin Uno',
+    creado_por_uid: 'admin1',
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  }),
+));
+test('Encargado sin autorizado_radio NO accede a Radio', () => assertFails(
+  getDocs(collection(db('encargado1'), 'canales_radio')),
+));
+test('Encargado con autorizado_radio=true accede a Radio', () => assertSucceeds(
+  getDocs(collection(db('encRadio'), 'canales_radio')),
+));
+test('Brigadista sin autorizado_radio no accede a Radio', () => assertFails(
+  getDocs(collection(db('activo1'), 'canales_radio')),
+));
+test('Brigadista con autorizado_radio=true accede a Radio', () => assertSucceeds(
+  getDocs(collection(db('brigRadio'), 'canales_radio')),
+));
+
+// ---------------- Dominio exclusivo de TESLA + cero autoasignación ----------------
+test('Encargado Tesla asigna clave_radio y autorizado_radio a otro usuario', () => assertSucceeds(
+  updateDoc(doc(db('encTesla'), 'usuarios/activo1'), {
+    clave_radio: 'TESLA-205',
+    clave_personal_radio: 'TESLA-205',
+    autorizado_radio: true,
+    actualizado_en: serverTimestamp(),
+  }),
+));
+test('Encargado Tesla NO puede autoasignarse clave_radio ni autorizado_radio', () => assertFails(
+  updateDoc(doc(db('encTesla'), 'usuarios/encTesla'), {
+    clave_radio: 'TESLA-001',
+    autorizado_radio: true,
+    actualizado_en: serverTimestamp(),
+  }),
+));
+test('Encargado Tesla NO puede cambiar estatus ni rol de otro usuario', () => assertFails(
+  updateDoc(doc(db('encTesla'), 'usuarios/activo1'), {
+    estatus: 'Inactivo',
+    actualizado_en: serverTimestamp(),
+  }),
+));
+test('Encargado Tesla puede listar perfiles para asignar claves', () => assertSucceeds(
+  getDocs(collection(db('encTesla'), 'usuarios')),
+));
+
+// ---------------- Encargado Administración de Personal (AP) ----------------
+test('Encargado AP aprueba ingreso y asigna etapa/subgrupo/ayudantía a Brigadista', () => assertSucceeds(
+  updateDoc(doc(db('encAP'), 'usuarios/pendiente1'), {
+    estatus: 'Activo',
+    etapa: 'Alfa',
+    grupo_operativo: 'Alfa',
+    subgrupo: 'Alfa 2',
+    ayudantia: 'Socorros',
+    ayudantia_slot: 'Socorros',
+    qr_codigo_unico: 'qr-ap-1',
+    actualizado_en: serverTimestamp(),
+  }),
+));
+test('Encargado AP NO puede editar clave_radio ni autorizado_radio', () => assertFails(
+  updateDoc(doc(db('encAP'), 'usuarios/activo1'), {
+    clave_radio: 'LINCE',
+    autorizado_radio: true,
+    actualizado_en: serverTimestamp(),
+  }),
+));
+test('Encargado AP NO puede promover rol_sistema ni editar grupos_a_cargo', () => assertFails(
+  updateDoc(doc(db('encAP'), 'usuarios/activo1'), {
+    rol_sistema: 'Encargado',
+    grupos_a_cargo: ['Alfa 1'],
+    actualizado_en: serverTimestamp(),
+  }),
+));
+test('Encargado AP NO puede modificar cuenta de Encargado o Administrador', () => assertFails(
+  updateDoc(doc(db('encAP'), 'usuarios/encargado1'), {
+    estatus: 'Inactivo',
+    actualizado_en: serverTimestamp(),
+  }),
+));
+
+// ---------------- Encargado normal (Opción B) ----------------
+test('Encargado Opción B lee y edita campos operativos de Brigadista en su grupo a cargo', async () => {
+  await assertSucceeds(getDoc(doc(db('encAlfa1'), 'usuarios/brigAlfa1')));
+  await assertSucceeds(updateDoc(doc(db('encAlfa1'), 'usuarios/brigAlfa1'), {
+    etapa: 'Omega',
+    grupo_operativo: 'Omega',
+    subgrupo: 'Omega 1',
+    actualizado_en: serverTimestamp(),
+  }));
+});
+test('Encargado Opción B NO lee expediente completo de Brigadista fuera de sus grupos_a_cargo', () => assertFails(
+  getDoc(doc(db('encAlfa1'), 'usuarios/brigOmega1')),
+));
+test('Encargado Opción B sí lee proyección mínima perfiles_operativos en campo', () => assertSucceeds(
+  getDoc(doc(db('encAlfa1'), 'perfiles_operativos/brigOmega1')),
+));
+test('Encargado Opción B NO edita Brigadista fuera de sus grupos_a_cargo', () => assertFails(
+  updateDoc(doc(db('encAlfa1'), 'usuarios/brigOmega1'), {
+    subgrupo: 'Alfa 1',
+    actualizado_en: serverTimestamp(),
+  }),
+));
+test('Encargado Opción B NO puede dar de baja (estatus) ni editar radio/rol', async () => {
+  await assertFails(updateDoc(doc(db('encAlfa1'), 'usuarios/brigAlfa1'), {
+    estatus: 'Inactivo',
+    actualizado_en: serverTimestamp(),
+  }));
+  await assertFails(updateDoc(doc(db('encAlfa1'), 'usuarios/brigAlfa1'), {
+    clave_radio: '42',
+    actualizado_en: serverTimestamp(),
+  }));
+  await assertFails(updateDoc(doc(db('encAlfa1'), 'usuarios/brigAlfa1'), {
+    rol_sistema: 'Encargado',
+    actualizado_en: serverTimestamp(),
+  }));
+});
+
+// ---------------- Operativos: Recepción Cerrada + Candado Duro ----------------
+test('Recepción Cerrada BLOQUEA creación de nuevas entradas', () => assertFails(
+  setDoc(doc(db('encargado1'), 'asistencias_personal/nuevaEnCerrado'), {
+    id: 'nuevaEnCerrado',
+    operativo_id: 'opCerrado',
+    operativo_nombre: 'Operativo opCerrado',
+    usuario_uid: 'brigOmega1',
+    usuario_nombre: 'Ana Pérez',
+    usuario_cuenta: '20201234',
+    grupo_operativo: 'Omega',
+    ayudantia_slot: 'Ninguna',
+    rol_en_turno: 'Sin asignar',
+    estado_operativo: 'En servicio',
+    signos_vitales: null,
+    metodo_entrada: 'Manual',
+    hora_entrada: serverTimestamp(),
+    hora_salida: null,
+    horas_totales: null,
+    salida_cerrada_manual: false,
+    equipos_bupc_pendientes: 0,
+    registrado_por_uid: 'encargado1',
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  }),
+));
+test('Recepción Cerrada PERMITE registrar hora_salida si equipos_bupc_pendientes == 0', () => assertSucceeds(
+  updateDoc(doc(db('activo1'), 'asistencias_personal/asisCerradoOk'), {
+    hora_salida: serverTimestamp(),
+    horas_totales: 2,
+    estado_operativo: 'Retirado',
+    actualizado_en: serverTimestamp(),
+  }),
+));
+test('Recepción Cerrada mantiene Candado Duro de Salida si equipos_bupc_pendientes > 0', () => assertFails(
+  updateDoc(doc(db('encargado1'), 'asistencias_personal/asisCerradoPend'), {
+    hora_salida: serverTimestamp(),
+    horas_totales: 2,
+    estado_operativo: 'Retirado',
+    salida_cerrada_manual: true,
+    actualizado_en: serverTimestamp(),
+  }),
+));
+
+// ---------------- Operativo Finalizado (irreversible) y borrado controlado ----------------
+test('Operativo Finalizado es irreversible: ni Admin puede reabrirlo', () => assertFails(
+  updateDoc(doc(db('admin1'), 'operativos/opFinalizado'), {
+    estatus: 'Activo',
+    recepcion_abierta: true,
+    actualizado_en: serverTimestamp(),
+  }),
+));
+test('Operativo Finalizado bloquea salidas y devoluciones de equipo', async () => {
+  await assertFails(updateDoc(doc(db('encargado1'), 'asistencias_personal/asisFinalizado'), {
+    hora_salida: serverTimestamp(),
+    horas_totales: 1,
+    estado_operativo: 'Retirado',
+    actualizado_en: serverTimestamp(),
+  }));
+  await assertFails(updateDoc(doc(db('encargado1'), 'equipos_turno/eqFinalizado'), {
+    devuelto: true,
+    estado_reporte: 'Devuelto',
+    devuelto_en: serverTimestamp(),
+    devuelto_por_uid: 'encargado1',
+    actualizado_en: serverTimestamp(),
+  }));
+});
+test('Borrado de operativos: prohibido para Encargado, permitido solo para Admin', async () => {
+  await assertFails(deleteDoc(doc(db('encargado1'), 'operativos/opAbierto')));
+  await assertSucceeds(deleteDoc(doc(db('admin1'), 'operativos/opAbierto')));
+});
+
+// ---------------- Concurrencia multi-encargado en materiales ----------------
+test('Dos encargados distintos asignan material independiente y actualizan contador en campo', async () => {
+  const f1 = db('encargado1');
+  const b1 = writeBatch(f1);
+  b1.set(doc(f1, 'equipos_turno/eqConc1'), {
+    id: 'eqConc1',
+    asistencia_id: 'asisAbierto',
+    operativo_id: 'opAbierto',
+    usuario_uid: 'brigOmega1',
+    usuario_nombre: 'Ana Pérez',
+    nombre_articulo: 'Radio portátil',
+    codigo_inventario: 'R-10',
+    origen_material: 'BUPC_Asignado',
+    estado_reporte: 'OK',
+    falla_reportada: '',
+    devuelto: false,
+    devuelto_en: null,
+    devuelto_por_uid: null,
+    acta_incidencia: null,
+    creado_por_uid: 'encargado1',
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  });
+  b1.update(doc(f1, 'asistencias_personal/asisAbierto'), {
+    equipos_bupc_pendientes: 1,
+    actualizado_en: serverTimestamp(),
+  });
+  await assertSucceeds(b1.commit());
+
+  const f2 = db('encAlfa1');
+  const b2 = writeBatch(f2);
+  b2.set(doc(f2, 'equipos_turno/eqConc2'), {
+    id: 'eqConc2',
+    asistencia_id: 'asisAbierto',
+    operativo_id: 'opAbierto',
+    usuario_uid: 'brigOmega1',
+    usuario_nombre: 'Ana Pérez',
+    nombre_articulo: 'Botiquín de trauma',
+    codigo_inventario: 'BOT-03',
+    origen_material: 'BUPC_Asignado',
+    estado_reporte: 'OK',
+    falla_reportada: '',
+    devuelto: false,
+    devuelto_en: null,
+    devuelto_por_uid: null,
+    acta_incidencia: null,
+    creado_por_uid: 'encAlfa1',
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  });
+  b2.update(doc(f2, 'asistencias_personal/asisAbierto'), {
+    equipos_bupc_pendientes: 2,
+    actualizado_en: serverTimestamp(),
+  });
+  await assertSucceeds(b2.commit());
+});
+
+// ---------------- Catálogos dinámicos e Incidencias de personal ----------------
+test('Catálogos dinámicos: lectura por Activo, escritura exclusiva de Admin', async () => {
+  await assertSucceeds(getDoc(doc(db('activo1'), 'catalogos/subgrupos')));
+  await assertFails(setDoc(doc(db('encAP'), 'catalogos/subgrupos'), {
+    id: 'subgrupos',
+    nombre: 'Subgrupos operativos',
+    items: ['Alfa 1'],
+    actualizado_en: serverTimestamp(),
+    actualizado_por_uid: 'encAP',
+  }));
+  await assertSucceeds(setDoc(doc(db('admin1'), 'catalogos/subgrupos'), {
+    id: 'subgrupos',
+    nombre: 'Subgrupos operativos',
+    items: ['Alfa 1', 'Alfa 2', 'Alfa 3', 'Alfa 4', 'Omega 1', 'Omega 2'],
+    actualizado_en: serverTimestamp(),
+    actualizado_por_uid: 'admin1',
+  }));
+});
+
+test('Incidencias de personal: creación controlada e inmutabilidad', async () => {
+  const incDoc = (id, uid, opId, actor) => ({
+    id,
+    usuario_uid: uid,
+    usuario_nombre: 'Ana Pérez',
+    operativo_id: opId,
+    tipo: 'Retardo',
+    gravedad: 'Baja',
+    descripcion: 'Llegada 15 min tarde',
+    creado_por_uid: actor,
+    creado_por_nombre: 'Encargado',
+    creado_en: serverTimestamp(),
+  });
+  await assertSucceeds(setDoc(doc(db('encAlfa1'), 'incidencias_personal/incAlfaOk'), incDoc('incAlfaOk', 'brigAlfa1', null, 'encAlfa1')));
+  await assertFails(setDoc(doc(db('encAlfa1'), 'incidencias_personal/incAjenoFail'), incDoc('incAjenoFail', 'brigOmega1', null, 'encAlfa1')));
+  await assertSucceeds(setDoc(doc(db('encAlfa1'), 'incidencias_personal/incOpOk'), incDoc('incOpOk', 'brigOmega1', 'opAbierto', 'encAlfa1')));
+  await assertFails(deleteDoc(doc(db('admin1'), 'incidencias_personal/inc1')));
+});

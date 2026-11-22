@@ -9,6 +9,7 @@ import {
 } from 'firebase/firestore'
 import * as OTPAuth from 'otpauth'
 import { db } from '../lib/firebase'
+import { normalizarOperativo, puedeEliminarOperativo } from '../lib/permisos'
 import type {
   CategoriaOperativo,
   ModoQrOperativo,
@@ -62,6 +63,7 @@ export async function crearYConfigurarOperativo(
     fecha_inicio: datos.fecha_inicio.trim(),
     fecha_fin: datos.fecha_fin.trim(),
     descripcion: datos.descripcion.trim(),
+    estatus: 'Activo',
     recepcion_abierta: datos.recepcion_abierta,
     modo_qr: datos.modo_qr,
     qr_token_estatico: qrTokenEstatico,
@@ -99,7 +101,7 @@ export function escucharOperativos(
   return onSnapshot(
     operativosRef,
     (snap) => {
-      const lista = snap.docs.map((d) => d.data() as Operativo)
+      const lista = snap.docs.map((d) => normalizarOperativo(d.data() as Operativo))
       lista.sort((a, b) => (b.creado_en?.toMillis() ?? 0) - (a.creado_en?.toMillis() ?? 0))
       alCambiar(lista)
     },
@@ -160,6 +162,53 @@ export async function cambiarModoQrOperativo(
     objetivo_uid: operativo.id,
     objetivo_nombre: operativo.nombre,
     detalle: `Modo QR cambiado a ${modoQr === 'dinamico' ? 'Dinámico TOTP (30s)' : 'Estático (PNG)'}`,
+    creado_en: serverTimestamp(),
+  })
+  await lote.commit()
+}
+
+/**
+ * Cierre irreversible del operativo (`estatus: 'Finalizado'`, `recepcion_abierta: false`).
+ * Blindado también en `firestore.rules` para impedir reaperturas o escrituras posteriores.
+ */
+export async function finalizarOperativo(actor: Usuario, operativo: Operativo): Promise<void> {
+  if (operativo.estatus === 'Finalizado') {
+    throw new Error('Este operativo ya se encuentra finalizado.')
+  }
+  const lote = writeBatch(db)
+  lote.update(doc(operativosRef, operativo.id), {
+    estatus: 'Finalizado',
+    recepcion_abierta: false,
+    actualizado_en: serverTimestamp(),
+  })
+  lote.set(doc(auditoriaRef), {
+    tipo: 'FINALIZACION_OPERATIVO',
+    actor_uid: actor.uid,
+    actor_nombre: nombreCompleto(actor),
+    objetivo_uid: operativo.id,
+    objetivo_nombre: operativo.nombre,
+    detalle: 'Operativo finalizado de forma irreversible',
+    creado_en: serverTimestamp(),
+  })
+  await lote.commit()
+}
+
+/**
+ * Eliminación controlada de un operativo (exclusivo Administrador activo).
+ */
+export async function eliminarOperativo(admin: Usuario, operativo: Operativo): Promise<void> {
+  if (!puedeEliminarOperativo(admin)) {
+    throw new Error('Solo un Administrador activo puede eliminar operativos.')
+  }
+  const lote = writeBatch(db)
+  lote.delete(doc(operativosRef, operativo.id))
+  lote.set(doc(auditoriaRef), {
+    tipo: 'ELIMINACION_OPERATIVO',
+    actor_uid: admin.uid,
+    actor_nombre: nombreCompleto(admin),
+    objetivo_uid: operativo.id,
+    objetivo_nombre: operativo.nombre,
+    detalle: `Operativo eliminado (${operativo.categoria} · ${operativo.sede})`,
     creado_en: serverTimestamp(),
   })
   await lote.commit()

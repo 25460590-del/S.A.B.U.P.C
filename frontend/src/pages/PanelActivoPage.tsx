@@ -2,6 +2,7 @@ import { History, Home, IdCard, LogOut, Megaphone, Radio, Shield } from 'lucide-
 import { useState } from 'react'
 import { BarraEstado } from '../components/BarraEstado'
 import { BupcLogo } from '../components/BupcLogo'
+import { esEncargado as tieneRolEncargado, puedeUsarRadio } from '../lib/permisos'
 import { cerrarSesion, nombreCompleto } from '../services/authService'
 import type { Usuario } from '../types'
 import { BrigadistaDashboardPage } from './BrigadistaDashboardPage'
@@ -22,8 +23,8 @@ type SeccionActiva = 'inicio' | 'operativos' | 'radio' | 'historial' | 'credenci
  * - Brigadista: abre en Dashboard Brigadista (Escáner QR, Último registro, Reportar equipo).
  */
 export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
-  const esEncargado = perfil.rol_sistema === 'Encargado'
-  const puedeRadio = esEncargado || perfil.autorizado_radio
+  const esEncargado = tieneRolEncargado(perfil)
+  const puedeRadio = puedeUsarRadio(perfil)
   const [seccion, setSeccion] = useState<SeccionActiva>(
     esEncargado ? 'operativos' : 'inicio',
   )
