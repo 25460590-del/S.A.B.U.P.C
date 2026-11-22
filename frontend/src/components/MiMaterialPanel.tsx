@@ -159,7 +159,7 @@ export function MiMaterialPanel({ perfil }: MiMaterialPanelProps) {
                   return (
                     <article
                       key={eq.id}
-                      className="tarjeta flex flex-col gap-2.5 border-l-4 border-l-naranja p-3.5"
+                      className="tarjeta flex flex-col gap-2.5 border-naranja/45 p-3.5 dark:border-naranja/40"
                     >
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div className="min-w-0 flex-1">

@@ -71,8 +71,8 @@ export function RebacePanel({
             </h3>
           </div>
           <div className="flex items-center gap-2">
-            <span className="rounded bg-salvia px-2 py-0.5 text-[11px] font-bold text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
-              Offline · {filtradas.length}
+            <span className="rounded bg-salvia px-2 py-0.5 text-[11px] font-bold tabular-nums text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
+              Local · {filtradas.length}
             </span>
             {alCerrarMovil && (
               <button

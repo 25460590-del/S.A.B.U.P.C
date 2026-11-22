@@ -135,7 +135,9 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
         setCargando(false)
       },
     )
-    const cancelarEq = escucharEquiposDeOperativo(operativo.id, setEquipos)
+    const cancelarEq = escucharEquiposDeOperativo(operativo.id, setEquipos, (err) =>
+      setError(mensajeDeError(err)),
+    )
     const cancelarUsr = escucharUsuariosParaBitacora(setUsuarios, () => undefined)
 
     return () => {

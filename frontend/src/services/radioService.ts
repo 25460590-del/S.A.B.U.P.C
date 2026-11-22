@@ -252,7 +252,10 @@ export function escucharCatalogoRebace(
       lista.sort((a, b) => a.orden - b.orden)
       alCambiar(lista)
     },
-    alFallar,
+    (err) => {
+      if (alFallar) alFallar(err)
+      else console.warn('[SABUPC] Error al leer catálogo ReBaCE:', err.code)
+    },
   )
 }
 

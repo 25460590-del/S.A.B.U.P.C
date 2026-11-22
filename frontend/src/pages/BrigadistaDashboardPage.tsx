@@ -73,7 +73,9 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
         setCargando(false)
       },
     )
-    const cancelarBupc = escucharMisEquiposBupc(perfil.uid, setMisEquiposBupc)
+    const cancelarBupc = escucharMisEquiposBupc(perfil.uid, setMisEquiposBupc, (err) =>
+      setError(mensajeDeError(err)),
+    )
     return () => {
       cancelar()
       cancelarBupc()
@@ -86,9 +88,13 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
 
   useEffect(() => {
     if (!turnoAbiertoId) return
-    const cancelar = escucharEquiposDeAsistencia(turnoAbiertoId, (lista) => {
-      setEquiposPorAsistencia({ asistenciaId: turnoAbiertoId, lista })
-    })
+    const cancelar = escucharEquiposDeAsistencia(
+      turnoAbiertoId,
+      (lista) => {
+        setEquiposPorAsistencia({ asistenciaId: turnoAbiertoId, lista })
+      },
+      (err) => setError(mensajeDeError(err)),
+    )
     return cancelar
   }, [turnoAbiertoId])
 
@@ -164,12 +170,10 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/20 px-4 py-2.5">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="rounded-full bg-white px-2.5 py-0.5 text-xs font-bold text-udec-oscuro">
-              {perfil.grupo_operativo === 'Ninguno'
-                ? 'Sin grupo'
-                : `Grupo ${perfil.grupo_operativo}`}
+              {perfil.subgrupo || perfil.etapa}
             </span>
             <span className="rounded-full bg-naranja px-2.5 py-0.5 text-xs font-bold text-tinta">
-              {perfil.ayudantia_slot}
+              {perfil.ayudantia}
             </span>
           </div>
           <span className="text-xs font-semibold tabular-nums text-white/90">

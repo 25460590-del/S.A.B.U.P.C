@@ -36,7 +36,10 @@ export function escucharCatalogoSubgrupos(
         : []
       alCambiar(items.length > 0 ? items : SUBGRUPOS_POR_DEFECTO)
     },
-    alFallar,
+    (err) => {
+      if (alFallar) alFallar(err)
+      else console.warn('[SABUPC] Error en catálogo de subgrupos:', err.code)
+    },
   )
 }
 
@@ -61,7 +64,10 @@ export function escucharSubgruposArchivados(
         : []
       alCambiar(items)
     },
-    alFallar,
+    (err) => {
+      if (alFallar) alFallar(err)
+      else console.warn('[SABUPC] Error en subgrupos archivados:', err.code)
+    },
   )
 }
 

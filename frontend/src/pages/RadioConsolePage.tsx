@@ -338,9 +338,9 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
             >
               <Sun size={14} strokeWidth={2} />
               <span className="hidden sm:inline">
-                Pantalla {wakeLock.activo ? '(ON)' : wakeLock.soportado ? '(OFF)' : '(N/D)'}
+                Pantalla {wakeLock.activo ? 'activa' : wakeLock.soportado ? 'normal' : 'no disp.'}
               </span>
-              <span className="sm:hidden">{wakeLock.activo ? 'ON' : 'OFF'}</span>
+              <span className="sm:hidden">{wakeLock.activo ? 'Activa' : 'Normal'}</span>
             </button>
 
             <button

@@ -346,10 +346,10 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
           className="fixed inset-0 z-50 flex lg:hidden"
         >
           <div
-            className="fixed inset-0 bg-black/60 backdrop-blur-[1px]"
+            className="fixed inset-0 bg-black/65"
             onClick={() => setDrawerAbierto(false)}
           />
-          <aside className="relative z-10 flex h-full w-72 max-w-[84vw] flex-col justify-between gap-4 bg-udec-oscuro p-4 text-white shadow-xl dark:border-r dark:border-noche-borde dark:bg-noche-sidebar">
+          <aside className="relative z-10 flex h-full w-72 max-w-[84vw] flex-col justify-between gap-4 border-r border-white/15 bg-udec-oscuro p-4 text-white dark:border-noche-borde dark:bg-noche-sidebar">
             <div className="flex min-h-0 flex-1 flex-col gap-4">
               <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/15 pb-3 dark:border-noche-borde">
                 <div className="flex items-center gap-2.5">
@@ -530,7 +530,7 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
       {/* Barra inferior limpia en móvil (< lg) con accesos rápidos prioritarios */}
       <nav
         aria-label="Navegación rápida móvil"
-        className={`fixed right-0 bottom-0 left-0 z-30 grid border-t border-borde bg-tarjeta px-1 py-1 lg:hidden dark:border-noche-borde dark:bg-noche-tarjeta ${
+        className={`fixed right-0 bottom-0 left-0 z-30 grid border-t border-borde bg-tarjeta px-1 pt-1 pb-[max(0.25rem,env(safe-area-inset-bottom))] lg:hidden dark:border-noche-borde dark:bg-noche-tarjeta ${
           puedoRadio ? 'grid-cols-5' : 'grid-cols-4'
         }`}
       >

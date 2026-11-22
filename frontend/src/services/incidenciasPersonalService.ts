@@ -85,7 +85,10 @@ export function escucharIncidenciasPorUsuario(
       lista.sort((a, b) => (b.creado_en?.toMillis() ?? 0) - (a.creado_en?.toMillis() ?? 0))
       alCambiar(lista)
     },
-    alFallar,
+    (err) => {
+      if (alFallar) alFallar(err)
+      else console.warn('[SABUPC] Error al leer incidencias del usuario:', err.code)
+    },
   )
 }
 
@@ -101,7 +104,10 @@ export function escucharIncidenciasPorOperativo(
       lista.sort((a, b) => (b.creado_en?.toMillis() ?? 0) - (a.creado_en?.toMillis() ?? 0))
       alCambiar(lista)
     },
-    alFallar,
+    (err) => {
+      if (alFallar) alFallar(err)
+      else console.warn('[SABUPC] Error al leer incidencias del operativo:', err.code)
+    },
   )
 }
 
@@ -127,6 +133,9 @@ export function escucharIncidenciasPersonalSegunRol(
       lista.sort((a, b) => (b.creado_en?.toMillis() ?? 0) - (a.creado_en?.toMillis() ?? 0))
       alCambiar(lista)
     },
-    alFallar,
+    (err) => {
+      if (alFallar) alFallar(err)
+      else console.warn('[SABUPC] Error al leer incidencias de personal:', err.code)
+    },
   )
 }

@@ -234,7 +234,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
       setDescripcion('')
       setFechaInicio(valorDatetimeLocalActual())
       setFechaFin('')
-      setAviso('Operativo creado y configurado con QR dual (Estático + TOTP offline).')
+      setAviso('Operativo creado y configurado con QR dual (Estático + TOTP sin internet).')
     } catch (err) {
       setError(mensajeDeError(err))
     } finally {
@@ -273,7 +273,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
       await cambiarModoQrOperativo(usuario, operativoActivo, modo)
       setAviso(
         modo === 'dinamico'
-          ? 'Modo QR cambiado a Dinámico TOTP (rotación cada 30 s offline).'
+          ? 'Modo QR cambiado a Dinámico TOTP (rotación cada 30 s sin internet).'
           : 'Modo QR cambiado a Estático (listo para descarga PNG).',
       )
     } catch (err) {
@@ -437,7 +437,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                   Iniciar Nuevo Operativo o Actividad
                 </h3>
                 <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-                  Genera automáticamente el token estático y el secreto TOTP de 30 s offline.
+                  Genera automáticamente el token estático y el secreto TOTP de 30 s sin internet.
                 </p>
               </div>
               <button
@@ -512,7 +512,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                     onChange={(e) => setModoQrInicial(e.target.value as ModoQrOperativo)}
                     className="campo"
                   >
-                    <option value="dinamico">QR Dinámico TOTP (rotación cada 30 s offline)</option>
+                    <option value="dinamico">QR Dinámico TOTP (rotación cada 30 s sin internet)</option>
                     <option value="estatico">QR Estático (descargable en PNG)</option>
                   </select>
                 </div>
@@ -1003,7 +1003,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
               <div className="flex flex-col items-center gap-5 sm:flex-row">
                 <div
                   ref={qrOperativoRef}
-                  className="flex shrink-0 items-center justify-center rounded-xl border border-borde-fuerte bg-[#FFFFFF] p-5"
+                  className="flex shrink-0 items-center justify-center rounded-xl border border-borde-fuerte bg-[#FFFFFF] p-4"
                 >
                   {payloadQrActual ? (
                     <QRCodeCanvas
@@ -1012,7 +1012,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                       bgColor="#FFFFFF"
                       fgColor="#18181B"
                       level="M"
-                      includeMargin={false}
+                      includeMargin
                     />
                   ) : (
                     <div className="flex h-[180px] w-[180px] items-center justify-center text-xs font-semibold text-tinta-suave">

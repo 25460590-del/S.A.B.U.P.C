@@ -23,7 +23,10 @@ export function escucharFotoPerfil(
     (snap) => {
       alCambiar(snap.exists() ? (snap.data() as FotoPerfil) : null)
     },
-    alFallar,
+    (err) => {
+      if (alFallar) alFallar(err)
+      else console.warn('[SABUPC] Error al leer foto de perfil:', err.code)
+    },
   )
 }
 

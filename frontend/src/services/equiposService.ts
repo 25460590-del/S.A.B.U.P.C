@@ -424,7 +424,10 @@ export function escucharEquiposDeAsistencia(
       lista.sort((a, b) => (b.creado_en?.toMillis() ?? 0) - (a.creado_en?.toMillis() ?? 0))
       alCambiar(lista)
     },
-    alFallar,
+    (err) => {
+      if (alFallar) alFallar(err)
+      else console.warn('[SABUPC] Error al leer equipos de asistencia:', err.code)
+    },
   )
 }
 
@@ -440,7 +443,10 @@ export function escucharEquiposDeOperativo(
       lista.sort((a, b) => (b.creado_en?.toMillis() ?? 0) - (a.creado_en?.toMillis() ?? 0))
       alCambiar(lista)
     },
-    alFallar,
+    (err) => {
+      if (alFallar) alFallar(err)
+      else console.warn('[SABUPC] Error al leer equipos de operativo:', err.code)
+    },
   )
 }
 
@@ -461,7 +467,10 @@ export function escucharMisEquiposBupc(
       lista.sort((a, b) => (b.creado_en?.toMillis() ?? 0) - (a.creado_en?.toMillis() ?? 0))
       alCambiar(lista)
     },
-    alFallar,
+    (err) => {
+      if (alFallar) alFallar(err)
+      else console.warn('[SABUPC] Error al leer Mi Material BUPC:', err.code)
+    },
   )
 }
 
@@ -486,7 +495,10 @@ export function escucharResguardoGlobalBupc(
       lista.sort((a, b) => (b.creado_en?.toMillis() ?? 0) - (a.creado_en?.toMillis() ?? 0))
       alCambiar(lista)
     },
-    alFallar,
+    (err) => {
+      if (alFallar) alFallar(err)
+      else console.warn('[SABUPC] Error al leer Resguardo Global:', err.code)
+    },
   )
 }
 
@@ -507,7 +519,10 @@ export function escucharActasMaterialBupc(
       lista.sort((a, b) => (b.actualizado_en?.toMillis() ?? 0) - (a.actualizado_en?.toMillis() ?? 0))
       alCambiar(lista)
     },
-    alFallar,
+    (err) => {
+      if (alFallar) alFallar(err)
+      else console.warn('[SABUPC] Error al leer actas de material:', err.code)
+    },
   )
 }
 
@@ -528,7 +543,10 @@ export function escucharActasMaterialDeUsuario(
       lista.sort((a, b) => (b.actualizado_en?.toMillis() ?? 0) - (a.actualizado_en?.toMillis() ?? 0))
       alCambiar(lista)
     },
-    alFallar,
+    (err) => {
+      if (alFallar) alFallar(err)
+      else console.warn('[SABUPC] Error al leer actas del usuario:', err.code)
+    },
   )
 }
 

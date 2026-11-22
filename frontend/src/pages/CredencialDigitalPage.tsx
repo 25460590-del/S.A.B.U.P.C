@@ -36,7 +36,9 @@ export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
   const contenedorQrRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    const cancelar = escucharFotoPerfil(perfil.uid, setFoto)
+    const cancelar = escucharFotoPerfil(perfil.uid, setFoto, (err) =>
+      setErrorFoto(mensajeDeError(err)),
+    )
     return cancelar
   }, [perfil.uid])
 
@@ -172,20 +174,18 @@ export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
                   Cuenta: {perfil.numero_cuenta}
                 </span>
                 <span className="text-udec-oscuro dark:text-activo-claro">
-                  Clave: {perfil.clave_personal_radio ?? 'Sin clave'}
+                  Clave: {perfil.clave_radio || perfil.clave_personal_radio || 'Sin clave'}
                 </span>
               </div>
             </div>
 
-            {/* Badges simultáneos: Grupo + Ayudantía + Estatus */}
+            {/* Badges simultáneos: Etapa/Subgrupo + Ayudantía + Estatus */}
             <div className="flex flex-wrap items-center justify-center gap-2">
               <span className="rounded-full bg-udec px-3 py-1 text-xs font-semibold text-white">
-                {perfil.grupo_operativo === 'Ninguno'
-                  ? 'Sin grupo'
-                  : `Grupo ${perfil.grupo_operativo}`}
+                {perfil.subgrupo || perfil.etapa}
               </span>
               <span className="rounded-full border border-naranja bg-naranja-suave px-3 py-1 text-xs font-semibold text-naranja-oscuro dark:bg-noche-campo dark:text-naranja">
-                {perfil.ayudantia_slot}
+                {perfil.ayudantia}
               </span>
               <span className="inline-flex items-center gap-1.5 rounded-full border border-activo bg-activo-suave px-3 py-1 text-xs font-bold text-activo dark:border-activo-claro dark:bg-noche-campo dark:text-activo-claro">
                 <span className="h-2 w-2 rounded-full bg-activo dark:bg-activo-claro" />
@@ -197,7 +197,7 @@ export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
             <div className="flex w-full flex-col items-center gap-3 pt-1">
               <div
                 ref={contenedorQrRef}
-                className="flex items-center justify-center rounded-xl border border-borde-fuerte bg-[#FFFFFF] p-5"
+                className="flex items-center justify-center rounded-xl border border-borde-fuerte bg-[#FFFFFF] p-4"
               >
                 <QRCodeCanvas
                   value={payloadQrCredencial}
@@ -205,7 +205,7 @@ export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
                   bgColor="#FFFFFF"
                   fgColor="#18181B"
                   level="M"
-                  includeMargin={false}
+                  includeMargin
                 />
               </div>
 
@@ -245,7 +245,7 @@ export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
           <header className="flex items-center gap-2.5 bg-alerta px-4 py-4 text-white">
             <HeartPulse size={22} strokeWidth={2} className="shrink-0" />
             <h2 className="text-sm font-bold tracking-wide">
-              EXPEDIENTE MÉDICO DE EMERGENCIA · OFFLINE
+              EXPEDIENTE MÉDICO DE EMERGENCIA · SIN CONEXIÓN
             </h2>
           </header>
 

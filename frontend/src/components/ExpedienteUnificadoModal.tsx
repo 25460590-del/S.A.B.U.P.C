@@ -137,12 +137,16 @@ export function ExpedienteUnificadoModal({
 
   useEffect(() => {
     if (pestana !== 'incidencias') return
-    const cMat = escucharActasMaterialDeUsuario(usuario.uid, setActasMaterial)
+    const manejarErr = (err: Parameters<typeof mensajeDeError>[0]) =>
+      setError(mensajeDeError(err))
+    const cMat = escucharActasMaterialDeUsuario(usuario.uid, setActasMaterial, manejarErr)
     const cPers =
       soyAdmin || soyAP
-        ? escucharIncidenciasPorUsuario(usuario.uid, setIncidenciasPers)
-        : escucharIncidenciasPersonalSegunRol(actor, (lista) =>
-            setIncidenciasPers(lista.filter((i) => i.usuario_uid === usuario.uid)),
+        ? escucharIncidenciasPorUsuario(usuario.uid, setIncidenciasPers, manejarErr)
+        : escucharIncidenciasPersonalSegunRol(
+            actor,
+            (lista) => setIncidenciasPers(lista.filter((i) => i.usuario_uid === usuario.uid)),
+            manejarErr,
           )
     return () => {
       cMat()
@@ -476,7 +480,7 @@ export function ExpedienteUnificadoModal({
                 <div className="grid grid-cols-1 gap-3 border-t border-borde pt-3 sm:grid-cols-2 dark:border-noche-borde">
                   <div className="flex flex-col gap-1">
                     <label htmlFor="exp-rol" className="etiqueta">
-                      Rol del sistema {soyAdmin ? '' : '(solo Admin)'}
+                      Rol del sistema {soyAdmin ? '' : '(solo Administrador)'}
                     </label>
                     <select
                       id="exp-rol"
@@ -495,7 +499,7 @@ export function ExpedienteUnificadoModal({
 
                   <div className="flex flex-col gap-1">
                     <label htmlFor="exp-radio" className="etiqueta">
-                      Clave de Radio {soyAdmin ? '' : '(dominio TESLA / Admin)'}
+                      Clave de Radio {soyAdmin ? '' : '(dominio TESLA / Administrador)'}
                     </label>
                     <div className="flex items-center gap-2">
                       <input
@@ -529,7 +533,7 @@ export function ExpedienteUnificadoModal({
                     <span className="text-xs font-bold text-tinta dark:text-noche-tinta">
                       Grupos o ayudantías a cargo (Opción B){' '}
                       {!soyAdmin && (
-                        <span className="font-normal text-tinta-suave">(solo Admin)</span>
+                        <span className="font-normal text-tinta-suave">(solo Administrador)</span>
                       )}
                     </span>
                     <div className="flex flex-wrap gap-1.5">

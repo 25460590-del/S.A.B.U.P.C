@@ -129,7 +129,10 @@ export function escucharSecretoTotp(
     (snap) => {
       alCambiar(snap.exists() ? (snap.data() as SecretoTotpOperativo) : null)
     },
-    alFallar,
+    (err) => {
+      if (alFallar) alFallar(err)
+      else console.warn('[SABUPC] Error al leer secreto TOTP:', err.code)
+    },
   )
 }
 
