@@ -173,6 +173,10 @@ rules_version = '2';
 //   - creado_por_uid: string 1..128 (== request.auth.uid al crear, inmutable)
 //   - creado_en: timestamp (== request.time al crear, inmutable)
 //   - actualizado_en: timestamp (== request.time en cada escritura)
+//   Campos opcionales (retrocompatibles con v1.0, inmutables tras creación):
+//   - creado_por_nombre: string 0..200 (opcional)
+//   - operativo_nombre: string 0..120 (opcional)
+//   - cantidad: int 1..99 (opcional, por defecto 1)
 //
 // Colección: evidencias_equipos/{evidenciaId}   (evidencia fotográfica WebP inmutable)
 //   - id: string (== ID del documento, inmutable)
@@ -761,14 +765,16 @@ service cloud.firestore {
     // Validador de dominio: equipos_turno (create Y update)
     // -------------------------------------------------------------
     function esEquipoTurnoValido(d, equipoId) {
-      let campos = ['id', 'asistencia_id', 'operativo_id', 'usuario_uid',
-                    'usuario_nombre', 'nombre_articulo', 'codigo_inventario',
-                    'origen_material', 'estado_reporte', 'falla_reportada',
-                    'devuelto', 'devuelto_en', 'devuelto_por_uid',
-                    'acta_incidencia', 'creado_por_uid', 'creado_en',
-                    'actualizado_en'];
-      return d.keys().hasAll(campos)
-          && d.keys().hasOnly(campos)
+      let camposBase = ['id', 'asistencia_id', 'operativo_id', 'usuario_uid',
+                        'usuario_nombre', 'nombre_articulo', 'codigo_inventario',
+                        'origen_material', 'estado_reporte', 'falla_reportada',
+                        'devuelto', 'devuelto_en', 'devuelto_por_uid',
+                        'acta_incidencia', 'creado_por_uid', 'creado_en',
+                        'actualizado_en'];
+      return d.keys().hasAll(camposBase)
+          && d.keys().hasOnly(camposBase.concat(['creado_por_nombre',
+                                                 'operativo_nombre',
+                                                 'cantidad']))
           && d.id == equipoId
           && cadena(d.asistencia_id, 1, 128)
           && cadena(d.operativo_id, 1, 128)
@@ -785,7 +791,11 @@ service cloud.firestore {
           && esActaIncidenciaValida(d.acta_incidencia)
           && cadena(d.creado_por_uid, 1, 128)
           && d.creado_en is timestamp
-          && d.actualizado_en is timestamp;
+          && d.actualizado_en is timestamp
+          && (!('creado_por_nombre' in d) || cadena(d.creado_por_nombre, 0, 200))
+          && (!('operativo_nombre' in d) || cadena(d.operativo_nombre, 0, 120))
+          && (!('cantidad' in d)
+              || (d.cantidad is int && d.cantidad >= 1 && d.cantidad <= 99));
     }
 
     // -------------------------------------------------------------

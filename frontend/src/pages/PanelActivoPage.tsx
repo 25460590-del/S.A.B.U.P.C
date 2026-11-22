@@ -26,6 +26,8 @@ import { BupcLogo } from '../components/BupcLogo'
 import { CatalogosAuditoriaTab } from '../components/CatalogosAuditoriaTab'
 import { GestionTeslaPanel } from '../components/GestionTeslaPanel'
 import { IncidenciasPersonalPanel } from '../components/IncidenciasPersonalPanel'
+import { MiMaterialPanel } from '../components/MiMaterialPanel'
+import { ResguardoGlobalPanel } from '../components/ResguardoGlobalPanel'
 import { useTema } from '../context/TemaContext'
 import {
   esAdmin,
@@ -419,15 +421,15 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
           {destino === 'escaner' && (
             <BrigadistaDashboardPage key="escaner" perfil={perfil} enfoque="escaner" />
           )}
-          {destino === 'material' && (
-            <BrigadistaDashboardPage key="material" perfil={perfil} enfoque="material" />
-          )}
+          {destino === 'material' && <MiMaterialPanel perfil={perfil} />}
           {destino === 'mi-historial' && (
             <HistorialDualPage key="mi-historial" usuario={perfil} pestanaInicial="personal" />
           )}
 
-          {(destino === 'operativos' || destino === 'resguardo') && soyEncargado && (
-            <OperativosPanelPage usuario={perfil} />
+          {destino === 'operativos' && soyEncargado && <OperativosPanelPage usuario={perfil} />}
+
+          {destino === 'resguardo' && soyEncargado && (
+            <ResguardoGlobalPanel encargado={perfil} />
           )}
 
           {destino === 'radio' && puedoRadio && <RadioConsolePage usuario={perfil} />}

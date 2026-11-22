@@ -17,7 +17,10 @@ import {
   registrarAsistenciaQR,
 } from '../services/asistenciasService'
 import { mensajeDeError, nombreCompleto } from '../services/authService'
-import { escucharEquiposDeAsistencia } from '../services/equiposService'
+import {
+  escucharEquiposDeAsistencia,
+  escucharMisEquiposBupc,
+} from '../services/equiposService'
 import type { AsistenciaPersonal, EquipoTurno, Usuario } from '../types'
 
 interface BrigadistaDashboardPageProps {
@@ -48,6 +51,7 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
     asistenciaId: string
     lista: EquipoTurno[]
   } | null>(null)
+  const [misEquiposBupc, setMisEquiposBupc] = useState<EquipoTurno[]>([])
   const [ahoraMs, setAhoraMs] = useState(() => Date.now())
 
   const [abriendoEscaner, setAbriendoEscaner] = useState(false)
@@ -69,7 +73,11 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
         setCargando(false)
       },
     )
-    return cancelar
+    const cancelarBupc = escucharMisEquiposBupc(perfil.uid, setMisEquiposBupc)
+    return () => {
+      cancelar()
+      cancelarBupc()
+    }
   }, [perfil.uid])
 
   const turnoAbierto = asistencias.find((a) => a.hora_salida === null) ?? null
@@ -92,6 +100,9 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
 
   const equiposTurnoActual =
     equiposPorAsistencia?.asistenciaId === turnoAbiertoId ? equiposPorAsistencia.lista : []
+  const bupcPendientesActivos = misEquiposBupc.filter(
+    (e) => !e.devuelto && e.acta_incidencia === null,
+  )
 
   // Acumulado real de horas del mes actual
   const ahoraFecha = new Date(ahoraMs)
@@ -273,24 +284,40 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
             </div>
           </div>
 
-          <div className="flex items-center justify-between gap-2 border-t border-borde pt-3 dark:border-noche-borde">
+          <div className="flex flex-col gap-2 border-t border-borde pt-3 dark:border-noche-borde">
             <div className="flex items-center gap-2">
               <Package
                 size={18}
                 strokeWidth={2}
                 className={
-                  ultimoRegistro.equipos_bupc_pendientes > 0
+                  bupcPendientesActivos.length > 0
                     ? 'text-naranja-oscuro dark:text-naranja'
                     : 'text-activo dark:text-activo-claro'
                 }
               />
               <span className="text-sm font-semibold tabular-nums text-tinta dark:text-noche-tinta">
-                {ultimoRegistro.equipos_bupc_pendientes}{' '}
-                {ultimoRegistro.equipos_bupc_pendientes === 1
+                {bupcPendientesActivos.length}{' '}
+                {bupcPendientesActivos.length === 1
                   ? 'artículo BUPC bajo resguardo'
                   : 'artículos BUPC bajo resguardo'}
               </span>
             </div>
+            {bupcPendientesActivos.length > 0 && (
+              <ul className="flex flex-col gap-1 rounded-lg bg-superficie-suave p-2.5 text-xs dark:bg-noche-campo">
+                {bupcPendientesActivos.map((eq) => (
+                  <li key={eq.id} className="flex items-center justify-between gap-2">
+                    <span className="truncate font-semibold text-tinta dark:text-noche-tinta">
+                      {eq.cantidad && eq.cantidad > 1 ? `${eq.cantidad}× ` : ''}
+                      {eq.nombre_articulo}
+                      {eq.codigo_inventario ? ` (${eq.codigo_inventario})` : ''}
+                    </span>
+                    <span className="shrink-0 text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
+                      {eq.creado_por_nombre || 'Encargado'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </article>
       ) : (

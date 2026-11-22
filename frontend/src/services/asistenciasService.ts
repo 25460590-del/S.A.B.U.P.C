@@ -317,7 +317,9 @@ export async function registrarAsistenciaQR(
     }
 
     if (!operativo.recepcion_abierta) {
-      throw new Error(`La recepción de "${operativo.nombre}" está cerrada para nuevas entradas.`)
+      throw new Error(
+        `La recepción de "${operativo.nombre}" está cerrada. No se admiten nuevas entradas; solo salidas de personal ya registrado.`,
+      )
     }
 
     const metodo: MetodoEntrada =
@@ -393,7 +395,9 @@ export async function registrarAsistenciaQR(
   }
 
   if (!opNormalizado.recepcion_abierta) {
-    throw new Error(`La recepción de "${opNormalizado.nombre}" está cerrada para nuevas entradas.`)
+    throw new Error(
+      `La recepción de "${opNormalizado.nombre}" está cerrada. No se admiten nuevas entradas; solo salidas de personal ya registrado.`,
+    )
   }
 
   const asistenciaId = await crearEntradaAtomica(
@@ -418,6 +422,15 @@ export async function registrarAsistenciaManual(
   brigadista: Usuario,
   rolEnTurno: RolEnTurno,
 ): Promise<ResultadoRegistroQR> {
+  const opNorm = normalizarOperativo(operativo)
+  if (opNorm.estatus === 'Finalizado') {
+    throw new Error(`El operativo "${opNorm.nombre}" ya fue finalizado.`)
+  }
+  if (!opNorm.recepcion_abierta) {
+    throw new Error(
+      `La recepción de "${opNorm.nombre}" está cerrada. Reábrela si deseas registrar nuevas entradas.`,
+    )
+  }
   if (brigadista.estatus === 'Inactivo') {
     return { accion: 'perfil_inactivo', usuario: brigadista }
   }

@@ -1,6 +1,8 @@
 import {
   collection,
   doc,
+  getDocs,
+  increment,
   onSnapshot,
   query,
   runTransaction,
@@ -8,6 +10,7 @@ import {
   setDoc,
   updateDoc,
   where,
+  writeBatch,
   type FirestoreError,
   type Unsubscribe,
 } from 'firebase/firestore'
@@ -21,75 +24,206 @@ const asistenciasRef = collection(db, 'asistencias_personal')
 const evidenciasRef = collection(db, 'evidencias_equipos')
 const auditoriaRef = collection(db, 'auditoria_eventos')
 
+/** Máximo seguro por `writeBatch` (límite Firestore = 500 operaciones). */
+const MAX_OPS_LOTE = 400
+
 export interface DatosNuevoEquipo {
   nombre_articulo: string
   codigo_inventario: string
+  cantidad?: number
 }
 
 /**
  * Encargado/Admin asigna material BUPC a un brigadista en turno:
- * crea `equipos_turno` e incrementa atómicamente `equipos_bupc_pendientes` (+1).
+ * - Crea un documento independiente en `equipos_turno/{id}` (cero sobrescritura de arrays).
+ * - Actualiza `equipos_bupc_pendientes` con `increment(1)` (seguro ante concurrencia multi-encargado).
+ * - Si incluye número de serie/folio (`codigo_inventario`), verifica que no esté prestado
+ *   simultáneamente en el mismo operativo y ejecuta dentro de `runTransaction`.
  */
 export async function asignarEquipoBupc(
   encargado: Usuario,
   asistencia: AsistenciaPersonal,
   datos: DatosNuevoEquipo,
 ): Promise<string> {
+  const nombreArticulo = datos.nombre_articulo.trim()
+  const codigoInventario = datos.codigo_inventario.trim()
+  const cantidad = Math.min(99, Math.max(1, Math.floor(datos.cantidad ?? 1)))
+
+  if (!nombreArticulo) {
+    throw new Error('Indica el nombre del artículo BUPC.')
+  }
+
   const nuevoEquipo = doc(equiposRef)
   const asistenciaDoc = doc(asistenciasRef, asistencia.id)
+  const encargadoNombre = nombreCompleto(encargado)
 
-  await runTransaction(db, async (tx) => {
-    const snap = await tx.get(asistenciaDoc)
-    if (!snap.exists()) throw new Error('No se encontró la asistencia seleccionada.')
-    const actual = snap.data() as AsistenciaPersonal
-    if (actual.hora_salida !== null) {
-      throw new Error('No se puede asignar material a un turno que ya fue cerrado.')
+  const payloadEquipo = {
+    id: nuevoEquipo.id,
+    asistencia_id: asistencia.id,
+    operativo_id: asistencia.operativo_id,
+    operativo_nombre: asistencia.operativo_nombre,
+    usuario_uid: asistencia.usuario_uid,
+    usuario_nombre: asistencia.usuario_nombre,
+    nombre_articulo: nombreArticulo,
+    codigo_inventario: codigoInventario,
+    cantidad,
+    origen_material: 'BUPC_Asignado' as const,
+    estado_reporte: 'OK' as const,
+    falla_reportada: '',
+    devuelto: false,
+    devuelto_en: null,
+    devuelto_por_uid: null,
+    acta_incidencia: null,
+    creado_por_uid: encargado.uid,
+    creado_por_nombre: encargadoNombre,
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  }
+
+  const payloadAuditoria = {
+    tipo: 'ASIGNACION_EQUIPO' as const,
+    actor_uid: encargado.uid,
+    actor_nombre: encargadoNombre,
+    objetivo_uid: asistencia.usuario_uid,
+    objetivo_nombre: asistencia.usuario_nombre,
+    detalle: `Asignado: ${cantidad > 1 ? `${cantidad}× ` : ''}${nombreArticulo}${
+      codigoInventario ? ` (${codigoInventario})` : ''
+    }`,
+    creado_en: serverTimestamp(),
+  }
+
+  if (codigoInventario) {
+    // Validación anti-doble préstamo simultáneo para equipo serializado
+    const dupSnap = await getDocs(
+      query(
+        equiposRef,
+        where('operativo_id', '==', asistencia.operativo_id),
+        where('codigo_inventario', '==', codigoInventario),
+      ),
+    )
+    const yaPrestado = dupSnap.docs
+      .map((d) => d.data() as EquipoTurno)
+      .find(
+        (eq) =>
+          eq.origen_material === 'BUPC_Asignado' && !eq.devuelto && eq.acta_incidencia === null,
+      )
+    if (yaPrestado) {
+      throw new Error(
+        `El folio/serie "${codigoInventario}" ya está asignado actualmente a ${yaPrestado.usuario_nombre}.`,
+      )
     }
 
-    tx.set(nuevoEquipo, {
-      id: nuevoEquipo.id,
-      asistencia_id: actual.id,
-      operativo_id: actual.operativo_id,
-      usuario_uid: actual.usuario_uid,
-      usuario_nombre: actual.usuario_nombre,
-      nombre_articulo: datos.nombre_articulo.trim(),
-      codigo_inventario: datos.codigo_inventario.trim(),
-      origen_material: 'BUPC_Asignado',
-      estado_reporte: 'OK',
-      falla_reportada: '',
-      devuelto: false,
-      devuelto_en: null,
-      devuelto_por_uid: null,
-      acta_incidencia: null,
-      creado_por_uid: encargado.uid,
-      creado_en: serverTimestamp(),
-      actualizado_en: serverTimestamp(),
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(asistenciaDoc)
+      if (!snap.exists()) throw new Error('No se encontró la asistencia seleccionada.')
+      const actual = snap.data() as AsistenciaPersonal
+      if (actual.hora_salida !== null) {
+        throw new Error('No se puede asignar material a un turno que ya fue cerrado.')
+      }
+
+      tx.set(nuevoEquipo, payloadEquipo)
+      tx.update(asistenciaDoc, {
+        equipos_bupc_pendientes: increment(1),
+        actualizado_en: serverTimestamp(),
+      })
+      tx.set(doc(auditoriaRef), payloadAuditoria)
     })
 
-    tx.update(asistenciaDoc, {
-      equipos_bupc_pendientes: actual.equipos_bupc_pendientes + 1,
-      actualizado_en: serverTimestamp(),
-    })
+    return nuevoEquipo.id
+  }
 
-    tx.set(doc(auditoriaRef), {
-      tipo: 'ASIGNACION_EQUIPO',
-      actor_uid: encargado.uid,
-      actor_nombre: nombreCompleto(encargado),
-      objetivo_uid: actual.usuario_uid,
-      objetivo_nombre: actual.usuario_nombre,
-      detalle: `Asignado: ${datos.nombre_articulo.trim()}${
-        datos.codigo_inventario.trim() ? ` (${datos.codigo_inventario.trim()})` : ''
-      }`,
-      creado_en: serverTimestamp(),
-    })
+  // Material genérico sin serie: writeBatch atómico con increment(1) seguro ante concurrencia
+  const lote = writeBatch(db)
+  lote.set(nuevoEquipo, payloadEquipo)
+  lote.update(asistenciaDoc, {
+    equipos_bupc_pendientes: increment(1),
+    actualizado_en: serverTimestamp(),
   })
+  lote.set(doc(auditoriaRef), payloadAuditoria)
+  await lote.commit()
 
   return nuevoEquipo.id
 }
 
 /**
+ * Asignación rápida de material repetitivo (chalecos, lámparas, radios genéricos) a
+ * múltiples brigadistas seleccionados en lotes seguros de ≤ 400 operaciones.
+ */
+export async function asignarEquipoBupcMultiple(
+  encargado: Usuario,
+  asistenciasObjetivo: AsistenciaPersonal[],
+  datos: DatosNuevoEquipo,
+): Promise<number> {
+  const nombreArticulo = datos.nombre_articulo.trim()
+  const codigoInventario = datos.codigo_inventario.trim()
+  const cantidad = Math.min(99, Math.max(1, Math.floor(datos.cantidad ?? 1)))
+
+  if (!nombreArticulo) throw new Error('Indica el nombre del artículo BUPC.')
+  const abiertas = asistenciasObjetivo.filter((a) => a.hora_salida === null)
+  if (abiertas.length === 0) {
+    throw new Error('Selecciona al menos un brigadista con turno abierto.')
+  }
+
+  const encargadoNombre = nombreCompleto(encargado)
+  // Cada brigadista consume 3 operaciones (equipo + asistencia increment + auditoría)
+  const personasPorLote = Math.floor(MAX_OPS_LOTE / 3)
+
+  for (let i = 0; i < abiertas.length; i += personasPorLote) {
+    const segmento = abiertas.slice(i, i + personasPorLote)
+    const lote = writeBatch(db)
+
+    for (const asis of segmento) {
+      const nuevoEquipo = doc(equiposRef)
+      lote.set(nuevoEquipo, {
+        id: nuevoEquipo.id,
+        asistencia_id: asis.id,
+        operativo_id: asis.operativo_id,
+        operativo_nombre: asis.operativo_nombre,
+        usuario_uid: asis.usuario_uid,
+        usuario_nombre: asis.usuario_nombre,
+        nombre_articulo: nombreArticulo,
+        codigo_inventario: codigoInventario,
+        cantidad,
+        origen_material: 'BUPC_Asignado',
+        estado_reporte: 'OK',
+        falla_reportada: '',
+        devuelto: false,
+        devuelto_en: null,
+        devuelto_por_uid: null,
+        acta_incidencia: null,
+        creado_por_uid: encargado.uid,
+        creado_por_nombre: encargadoNombre,
+        creado_en: serverTimestamp(),
+        actualizado_en: serverTimestamp(),
+      })
+
+      lote.update(doc(asistenciasRef, asis.id), {
+        equipos_bupc_pendientes: increment(1),
+        actualizado_en: serverTimestamp(),
+      })
+
+      lote.set(doc(auditoriaRef), {
+        tipo: 'ASIGNACION_EQUIPO',
+        actor_uid: encargado.uid,
+        actor_nombre: encargadoNombre,
+        objetivo_uid: asis.usuario_uid,
+        objetivo_nombre: asis.usuario_nombre,
+        detalle: `Asignación rápida: ${cantidad > 1 ? `${cantidad}× ` : ''}${nombreArticulo}${
+          codigoInventario ? ` (${codigoInventario})` : ''
+        }`,
+        creado_en: serverTimestamp(),
+      })
+    }
+
+    await lote.commit()
+  }
+
+  return abiertas.length
+}
+
+/**
  * Válvula de escape 1 del Candado Duro:
- * marca un artículo BUPC como Devuelto OK y decrementa `equipos_bupc_pendientes` (-1).
+ * marca un artículo BUPC como Devuelto OK y decrementa `equipos_bupc_pendientes` con `increment(-1)`.
  */
 export async function marcarEquipoDevueltoOk(
   encargado: Usuario,
@@ -123,7 +257,8 @@ export async function marcarEquipoDevueltoOk(
     })
 
     tx.update(asistenciaDoc, {
-      equipos_bupc_pendientes: Math.max(0, asisActual.equipos_bupc_pendientes - 1),
+      equipos_bupc_pendientes:
+        asisActual.equipos_bupc_pendientes > 0 ? increment(-1) : 0,
       actualizado_en: serverTimestamp(),
     })
 
@@ -144,7 +279,7 @@ export async function marcarEquipoDevueltoOk(
 /**
  * Válvula de escape 2 del Candado Duro:
  * levanta un Acta de Incidencia (motivo obligatorio + foto WebP opcional en `evidencias_equipos`)
- * y decrementa `equipos_bupc_pendientes` (-1) atómicamente.
+ * y decrementa `equipos_bupc_pendientes` con `increment(-1)` atómicamente.
  */
 export async function levantarActaIncidencia(
   encargado: Usuario,
@@ -213,7 +348,8 @@ export async function levantarActaIncidencia(
     })
 
     tx.update(asistenciaDoc, {
-      equipos_bupc_pendientes: Math.max(0, asisActual.equipos_bupc_pendientes - 1),
+      equipos_bupc_pendientes:
+        asisActual.equipos_bupc_pendientes > 0 ? increment(-1) : 0,
       actualizado_en: serverTimestamp(),
     })
 
@@ -237,14 +373,17 @@ export async function registrarEquipoPropio(
   datos: DatosNuevoEquipo,
 ): Promise<string> {
   const nuevoDoc = doc(equiposRef)
+  const nombreBrig = nombreCompleto(brigadista)
   await setDoc(nuevoDoc, {
     id: nuevoDoc.id,
     asistencia_id: asistencia.id,
     operativo_id: asistencia.operativo_id,
+    operativo_nombre: asistencia.operativo_nombre,
     usuario_uid: brigadista.uid,
-    usuario_nombre: nombreCompleto(brigadista),
+    usuario_nombre: nombreBrig,
     nombre_articulo: datos.nombre_articulo.trim(),
     codigo_inventario: datos.codigo_inventario.trim(),
+    cantidad: Math.min(99, Math.max(1, Math.floor(datos.cantidad ?? 1))),
     origen_material: 'Propio',
     estado_reporte: 'OK',
     falla_reportada: '',
@@ -253,6 +392,7 @@ export async function registrarEquipoPropio(
     devuelto_por_uid: null,
     acta_incidencia: null,
     creado_por_uid: brigadista.uid,
+    creado_por_nombre: nombreBrig,
     creado_en: serverTimestamp(),
     actualizado_en: serverTimestamp(),
   })
@@ -296,6 +436,52 @@ export function escucharEquiposDeOperativo(
     query(equiposRef, where('operativo_id', '==', operativoId)),
     (snap) => {
       const lista = snap.docs.map((d) => d.data() as EquipoTurno)
+      lista.sort((a, b) => (b.creado_en?.toMillis() ?? 0) - (a.creado_en?.toMillis() ?? 0))
+      alCambiar(lista)
+    },
+    alFallar,
+  )
+}
+
+/**
+ * Suscripción en tiempo real acotada al `uid` del brigadista para la vista "Mi Material".
+ */
+export function escucharMisEquiposBupc(
+  usuarioUid: string,
+  alCambiar: (lista: EquipoTurno[]) => void,
+  alFallar?: (error: FirestoreError) => void,
+): Unsubscribe {
+  return onSnapshot(
+    query(equiposRef, where('usuario_uid', '==', usuarioUid)),
+    (snap) => {
+      const lista = snap.docs
+        .map((d) => d.data() as EquipoTurno)
+        .filter((e) => e.origen_material === 'BUPC_Asignado')
+      lista.sort((a, b) => (b.creado_en?.toMillis() ?? 0) - (a.creado_en?.toMillis() ?? 0))
+      alCambiar(lista)
+    },
+    alFallar,
+  )
+}
+
+/**
+ * Suscripción en tiempo real para Encargados/Admin en "Resguardo Global de Material":
+ * concentra todo el material BUPC que aún no ha sido devuelto ni cerrado por acta.
+ */
+export function escucharResguardoGlobalBupc(
+  alCambiar: (lista: EquipoTurno[]) => void,
+  alFallar?: (error: FirestoreError) => void,
+): Unsubscribe {
+  return onSnapshot(
+    query(
+      equiposRef,
+      where('origen_material', '==', 'BUPC_Asignado'),
+      where('devuelto', '==', false),
+    ),
+    (snap) => {
+      const lista = snap.docs
+        .map((d) => d.data() as EquipoTurno)
+        .filter((e) => e.acta_incidencia === null)
       lista.sort((a, b) => (b.creado_en?.toMillis() ?? 0) - (a.creado_en?.toMillis() ?? 0))
       alCambiar(lista)
     },

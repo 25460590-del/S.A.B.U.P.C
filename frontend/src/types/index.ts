@@ -205,10 +205,12 @@ export interface EquipoTurno {
   id: string
   asistencia_id: string
   operativo_id: string
+  operativo_nombre?: string
   usuario_uid: string
   usuario_nombre: string
   nombre_articulo: string
   codigo_inventario: string
+  cantidad?: number
   origen_material: OrigenMaterial
   estado_reporte: EstadoReporteEquipo
   falla_reportada: string
@@ -217,6 +219,7 @@ export interface EquipoTurno {
   devuelto_por_uid: string | null
   acta_incidencia: ActaIncidencia | null
   creado_por_uid: string
+  creado_por_nombre?: string
   creado_en: Timestamp
   actualizado_en: Timestamp
 }

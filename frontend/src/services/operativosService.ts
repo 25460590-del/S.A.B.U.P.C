@@ -1,8 +1,11 @@
 import {
   collection,
   doc,
+  getDocs,
   onSnapshot,
+  query,
   serverTimestamp,
+  where,
   writeBatch,
   type FirestoreError,
   type Unsubscribe,
@@ -11,7 +14,9 @@ import * as OTPAuth from 'otpauth'
 import { db } from '../lib/firebase'
 import { normalizarOperativo, puedeEliminarOperativo } from '../lib/permisos'
 import type {
+  AsistenciaPersonal,
   CategoriaOperativo,
+  EquipoTurno,
   ModoQrOperativo,
   Operativo,
   SecretoTotpOperativo,
@@ -20,7 +25,12 @@ import type {
 import { nombreCompleto } from './authService'
 
 const operativosRef = collection(db, 'operativos')
+const asistenciasRef = collection(db, 'asistencias_personal')
+const equiposRef = collection(db, 'equipos_turno')
 const auditoriaRef = collection(db, 'auditoria_eventos')
+
+/** Máximo seguro de operaciones por writeBatch (límite Firestore = 500). */
+const MAX_OPS_LOTE = 400
 
 const PERIODO_TOTP = 30
 const DIGITOS_TOTP = 6
@@ -167,34 +177,131 @@ export async function cambiarModoQrOperativo(
   await lote.commit()
 }
 
+export interface DeudorOperativo {
+  asistencia: AsistenciaPersonal
+  equiposPendientes: EquipoTurno[]
+}
+
+export interface ResultadoPreCierreOperativo {
+  deudores: DeudorOperativo[]
+  asistenciasAbiertas: AsistenciaPersonal[]
+  totalAsistencias: number
+}
+
 /**
- * Cierre irreversible del operativo (`estatus: 'Finalizado'`, `recepcion_abierta: false`).
- * Blindado también en `firestore.rules` para impedir reaperturas o escrituras posteriores.
+ * Pre-verificación en vivo antes de finalizar un operativo:
+ * detecta cualquier asistente con `equipos_bupc_pendientes > 0` y devuelve
+ * el desglose exacto de su material pendiente para bloquear el cierre.
  */
-export async function finalizarOperativo(actor: Usuario, operativo: Operativo): Promise<void> {
+export async function verificarPreCierreOperativo(
+  operativoId: string,
+): Promise<ResultadoPreCierreOperativo> {
+  const [asisSnap, eqSnap] = await Promise.all([
+    getDocs(query(asistenciasRef, where('operativo_id', '==', operativoId))),
+    getDocs(query(equiposRef, where('operativo_id', '==', operativoId))),
+  ])
+
+  const asistencias = asisSnap.docs.map((d) => d.data() as AsistenciaPersonal)
+  const equiposPendientesOp = eqSnap.docs
+    .map((d) => d.data() as EquipoTurno)
+    .filter(
+      (eq) =>
+        eq.origen_material === 'BUPC_Asignado' && !eq.devuelto && eq.acta_incidencia === null,
+    )
+
+  const porAsistencia = new Map<string, EquipoTurno[]>()
+  for (const eq of equiposPendientesOp) {
+    const lista = porAsistencia.get(eq.asistencia_id) ?? []
+    lista.push(eq)
+    porAsistencia.set(eq.asistencia_id, lista)
+  }
+
+  const deudores: DeudorOperativo[] = asistencias
+    .filter((a) => a.equipos_bupc_pendientes > 0 || (porAsistencia.get(a.id)?.length ?? 0) > 0)
+    .map((a) => ({
+      asistencia: a,
+      equiposPendientes: porAsistencia.get(a.id) ?? [],
+    }))
+
+  const asistenciasAbiertas = asistencias.filter((a) => a.hora_salida === null)
+
+  return {
+    deudores,
+    asistenciasAbiertas,
+    totalAsistencias: asistencias.length,
+  }
+}
+
+/**
+ * Cierre definitivo e irreversible del operativo (escala hasta 300+ personas):
+ * 1. Verifica en vivo que ningún asistente tenga `equipos_bupc_pendientes > 0`.
+ * 2. Cierra automáticamente todas las asistencias abiertas en bloques de ≤ 400 operaciones.
+ * 3. Marca el operativo como `estatus: 'Finalizado'`, `recepcion_abierta: false` y registra auditoría.
+ */
+export async function finalizarOperativoConCierreAsistencias(
+  actor: Usuario,
+  operativo: Operativo,
+): Promise<{ salidasCerradas: number }> {
   if (operativo.estatus === 'Finalizado') {
     throw new Error('Este operativo ya se encuentra finalizado.')
   }
-  const lote = writeBatch(db)
-  lote.update(doc(operativosRef, operativo.id), {
+
+  const pre = await verificarPreCierreOperativo(operativo.id)
+  if (pre.deudores.length > 0) {
+    throw new Error(
+      `No se puede finalizar: ${pre.deudores.length} brigadista(s) aún tienen material BUPC pendiente de devolución.`,
+    )
+  }
+
+  const ahoraMs = Date.now()
+  // 1. Cerrar primero todas las asistencias abiertas en lotes seguros ≤ 400 ops
+  //    (antes de marcar el operativo como Finalizado para cumplir firestore.rules).
+  for (let i = 0; i < pre.asistenciasAbiertas.length; i += MAX_OPS_LOTE) {
+    const segmento = pre.asistenciasAbiertas.slice(i, i + MAX_OPS_LOTE)
+    const loteAsis = writeBatch(db)
+    for (const a of segmento) {
+      const entradaMs = a.hora_entrada?.toMillis() ?? ahoraMs
+      const horasTotales = Math.max(0, Number(((ahoraMs - entradaMs) / 3_600_000).toFixed(2)))
+      loteAsis.update(doc(asistenciasRef, a.id), {
+        hora_salida: serverTimestamp(),
+        horas_totales: horasTotales,
+        estado_operativo: 'Retirado',
+        salida_cerrada_manual: true,
+        actualizado_en: serverTimestamp(),
+      })
+    }
+    await loteAsis.commit()
+  }
+
+  // 2. Marcar operativo como Finalizado de forma irreversible + evento de auditoría
+  const loteCierre = writeBatch(db)
+  loteCierre.update(doc(operativosRef, operativo.id), {
     estatus: 'Finalizado',
     recepcion_abierta: false,
     actualizado_en: serverTimestamp(),
   })
-  lote.set(doc(auditoriaRef), {
+  loteCierre.set(doc(auditoriaRef), {
     tipo: 'FINALIZACION_OPERATIVO',
     actor_uid: actor.uid,
     actor_nombre: nombreCompleto(actor),
     objetivo_uid: operativo.id,
     objetivo_nombre: operativo.nombre,
-    detalle: 'Operativo finalizado de forma irreversible',
+    detalle: `Operativo finalizado de forma irreversible · ${pre.asistenciasAbiertas.length} salida(s) cerrada(s) automáticamente · ${pre.totalAsistencias} asistente(s) totales`,
     creado_en: serverTimestamp(),
   })
-  await lote.commit()
+  await loteCierre.commit()
+
+  return { salidasCerradas: pre.asistenciasAbiertas.length }
+}
+
+/** Alias retrocompatible para cierre rápido sin asistencias abiertas. */
+export async function finalizarOperativo(actor: Usuario, operativo: Operativo): Promise<void> {
+  await finalizarOperativoConCierreAsistencias(actor, operativo)
 }
 
 /**
- * Eliminación controlada de un operativo (exclusivo Administrador activo).
+ * Eliminación controlada de un operativo (exclusivo Administrador activo)
+ * con metadatos completos en `auditoria_eventos`.
  */
 export async function eliminarOperativo(admin: Usuario, operativo: Operativo): Promise<void> {
   if (!puedeEliminarOperativo(admin)) {
@@ -208,7 +315,7 @@ export async function eliminarOperativo(admin: Usuario, operativo: Operativo): P
     actor_nombre: nombreCompleto(admin),
     objetivo_uid: operativo.id,
     objetivo_nombre: operativo.nombre,
-    detalle: `Operativo eliminado (${operativo.categoria} · ${operativo.sede})`,
+    detalle: `Operativo eliminado · ${operativo.categoria} · Sede: ${operativo.sede} · Inicio: ${operativo.fecha_inicio} · Estatus previo: ${operativo.estatus}`,
     creado_en: serverTimestamp(),
   })
   await lote.commit()
