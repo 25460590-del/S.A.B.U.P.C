@@ -21,10 +21,10 @@ function PantallaCarga() {
       </header>
       <main className="flex flex-1 flex-col gap-4 p-4">
         <div className="tarjeta flex flex-col gap-4 p-6">
-          <div className="h-6 w-44 animate-pulse rounded bg-slate-200 dark:bg-noche-borde" />
-          <div className="h-12 w-full animate-pulse rounded-lg bg-slate-200 dark:bg-noche-borde" />
-          <div className="h-12 w-full animate-pulse rounded-lg bg-slate-200 dark:bg-noche-borde" />
-          <div className="h-12 w-full animate-pulse rounded-lg bg-slate-200 dark:bg-noche-borde" />
+          <div className="h-6 w-44 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
+          <div className="h-12 w-full animate-pulse rounded-lg bg-esqueleto dark:bg-noche-borde" />
+          <div className="h-12 w-full animate-pulse rounded-lg bg-esqueleto dark:bg-noche-borde" />
+          <div className="h-12 w-full animate-pulse rounded-lg bg-esqueleto dark:bg-noche-borde" />
         </div>
       </main>
     </div>

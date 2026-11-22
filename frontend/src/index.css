@@ -4,7 +4,7 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 /*
- * Paleta oficial Verde Universidad de Colima (PROHIBIDO azul marino).
+ * Paleta oficial Verde Universidad de Colima (PROHIBIDO azul marino y tonos slate azulados).
  */
 @theme {
   --font-sans: 'Montserrat', sans-serif;
@@ -14,6 +14,7 @@
   --color-udec-oscuro: #1e5631;
   --color-udec-brillo: #3f8f4f;
   --color-salvia: #edf5eb;
+  --color-salvia-hover: #dfeedc;
   --color-naranja: #ea580c;
   --color-naranja-oscuro: #c2410c;
   --color-naranja-suave: #fff7ed;
@@ -26,10 +27,13 @@
   --color-ambar-texto: #b45309;
   --color-ambar-suave: #fffbeb;
 
-  /* Modo Día */
+  /* Modo Día (neutros limpios sin matiz azulado) */
   --color-fondo: #f8fafc;
   --color-tarjeta: #ffffff;
-  --color-borde: #e2e8f0;
+  --color-superficie-suave: #f2f5f2;
+  --color-borde: #dce3dc;
+  --color-borde-fuerte: #c5d0c5;
+  --color-esqueleto: #e2e8e2;
   --color-tinta: #18181b;
   --color-tinta-suave: #4b5563;
 
@@ -59,6 +63,30 @@
 
   body {
     @apply bg-fondo font-sans text-tinta antialiased dark:bg-noche dark:text-noche-tinta;
+    caret-color: var(--color-udec);
+  }
+
+  .dark body {
+    caret-color: var(--color-activo-claro);
+  }
+
+  ::selection {
+    background-color: #2e5a27;
+    color: #ffffff;
+  }
+
+  .dark ::selection {
+    background-color: #10b981;
+    color: #0b120e;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-udec);
+    outline-offset: 2px;
+  }
+
+  .dark :focus-visible {
+    outline-color: var(--color-activo-claro);
   }
 
   input[type='date']::-webkit-calendar-picker-indicator,
@@ -83,11 +111,11 @@
 }
 
 @utility campo {
-  @apply min-h-12 w-full rounded-lg border border-slate-300 bg-fondo px-3 text-[15px] text-tinta outline-none focus:border-udec focus:ring-2 focus:ring-udec/30 dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta dark:focus:border-activo-claro dark:focus:ring-activo-claro/30;
+  @apply min-h-12 w-full rounded-lg border border-borde-fuerte bg-fondo px-3 text-[15px] text-tinta outline-none focus:border-udec focus:ring-2 focus:ring-udec/25 dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta dark:focus:border-activo-claro dark:focus:ring-activo-claro/25;
 }
 
 @utility btn {
-  @apply inline-flex min-h-12 cursor-pointer items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60;
+  @apply inline-flex min-h-12 cursor-pointer items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-55;
 }
 
 @utility btn-verde {
@@ -100,7 +128,7 @@
 }
 
 @utility btn-salvia {
-  @apply btn border border-slate-300 bg-salvia text-udec-oscuro hover:bg-emerald-100/60 dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta dark:hover:bg-noche-tarjeta;
+  @apply btn border border-borde-fuerte bg-salvia text-udec-oscuro hover:bg-salvia-hover dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta dark:hover:bg-noche-tarjeta;
 }
 
 @utility btn-rojo {

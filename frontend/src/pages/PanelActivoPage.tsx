@@ -234,11 +234,11 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
         </main>
       </div>
 
-      {/* Barra inferior fija en móvil */}
+      {/* Barra inferior fija en móvil (máximo 5 destinos holgados con áreas táctiles ≥ 48px) */}
       <nav
         aria-label="Navegación móvil"
         className={`fixed right-0 bottom-0 left-0 z-30 grid border-t border-borde bg-tarjeta px-1 py-1.5 md:hidden dark:border-noche-borde dark:bg-noche-tarjeta ${
-          puedeRadio ? 'grid-cols-6' : 'grid-cols-5'
+          puedeRadio ? 'grid-cols-5' : 'grid-cols-4'
         }`}
       >
         <button
@@ -284,19 +284,6 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
 
         <button
           type="button"
-          onClick={() => setSeccion('historial')}
-          className={`flex min-h-12 cursor-pointer flex-col items-center justify-center gap-0.5 text-[11px] font-semibold ${
-            seccion === 'historial'
-              ? 'text-udec dark:text-activo-claro'
-              : 'text-tinta-suave dark:text-noche-tinta-suave'
-          }`}
-        >
-          <History size={20} strokeWidth={2} />
-          <span>Historial</span>
-        </button>
-
-        <button
-          type="button"
           onClick={() => setSeccion('credencial')}
           className={`flex min-h-12 cursor-pointer flex-col items-center justify-center gap-0.5 text-[11px] font-semibold ${
             seccion === 'credencial'
@@ -310,15 +297,15 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
 
         <button
           type="button"
-          onClick={() => setSeccion('perfil')}
+          onClick={() => setSeccion(seccion === 'historial' ? 'perfil' : 'historial')}
           className={`flex min-h-12 cursor-pointer flex-col items-center justify-center gap-0.5 text-[11px] font-semibold ${
-            seccion === 'perfil'
+            seccion === 'historial' || seccion === 'perfil'
               ? 'text-udec dark:text-activo-claro'
               : 'text-tinta-suave dark:text-noche-tinta-suave'
           }`}
         >
-          <Shield size={20} strokeWidth={2} />
-          <span>Perfil</span>
+          <History size={20} strokeWidth={2} />
+          <span>{seccion === 'historial' ? 'Perfil' : 'Historial'}</span>
         </button>
       </nav>
     </div>

@@ -64,42 +64,42 @@ export function CuentaEnRevisionPage({ perfil }: CuentaEnRevisionPageProps) {
             </p>
           </div>
 
-          <div className="flex w-full flex-col gap-2.5 rounded-lg border border-borde bg-tarjeta p-4 text-left dark:border-noche-borde dark:bg-noche-tarjeta">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+          <dl className="flex w-full flex-col divide-y divide-ambar/30 border-y border-ambar/35 py-1 text-left">
+            <div className="flex items-center justify-between gap-2 py-2.5">
+              <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
                 Solicitante
-              </span>
-              <span className="text-sm font-semibold text-tinta dark:text-noche-tinta">
+              </dt>
+              <dd className="text-sm font-semibold text-tinta dark:text-noche-tinta">
                 {nombreCompleto(perfil)}
-              </span>
+              </dd>
             </div>
-            <div className="flex items-center justify-between gap-2 border-t border-borde pt-2 dark:border-noche-borde">
-              <span className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+            <div className="flex items-center justify-between gap-2 py-2.5">
+              <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
                 Grupo
-              </span>
-              <span className="text-sm font-semibold text-tinta dark:text-noche-tinta">
+              </dt>
+              <dd className="text-sm font-semibold text-tinta dark:text-noche-tinta">
                 {perfil.grupo_operativo === 'Ninguno'
-                  ? 'Alfa / Omega (pendiente)'
+                  ? 'Por asignar'
                   : `Grupo ${perfil.grupo_operativo}`}
-              </span>
+              </dd>
             </div>
-            <div className="flex items-center justify-between gap-2 border-t border-borde pt-2 dark:border-noche-borde">
-              <span className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+            <div className="flex items-center justify-between gap-2 py-2.5">
+              <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
                 Ayudantía
-              </span>
-              <span className="text-sm font-semibold text-tinta dark:text-noche-tinta">
+              </dt>
+              <dd className="text-sm font-semibold text-tinta dark:text-noche-tinta">
                 {perfil.ayudantia_slot === 'Ninguna' ? 'Por asignar' : perfil.ayudantia_slot}
-              </span>
+              </dd>
             </div>
-            <div className="flex items-center justify-between gap-2 border-t border-borde pt-2 dark:border-noche-borde">
-              <span className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+            <div className="flex items-center justify-between gap-2 py-2.5">
+              <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
                 No. de Cuenta
-              </span>
-              <span className="text-sm font-bold tabular-nums text-tinta dark:text-noche-tinta">
+              </dt>
+              <dd className="text-sm font-bold tabular-nums text-tinta dark:text-noche-tinta">
                 {perfil.numero_cuenta}
-              </span>
+              </dd>
             </div>
-          </div>
+          </dl>
 
           {mensaje && (
             <p role="status" className="text-xs font-semibold text-ambar-texto dark:text-noche-ambar-texto">

@@ -194,7 +194,7 @@ export function BrigadistaDashboardPage({ perfil }: BrigadistaDashboardPageProps
           setAviso(null)
           setAbriendoEscaner(true)
         }}
-        className="btn-naranja min-h-14 w-full text-sm shadow-xs"
+        className="btn-naranja min-h-14 w-full text-sm"
       >
         <QrCode size={22} strokeWidth={2} className="shrink-0" />
         <span>Escanear QR para Registrar Entrada / Salida</span>
@@ -203,9 +203,9 @@ export function BrigadistaDashboardPage({ perfil }: BrigadistaDashboardPageProps
       {/* Tarjeta "Último registro confirmado" */}
       {cargando ? (
         <div className="tarjeta flex flex-col gap-3 p-4">
-          <div className="h-5 w-40 animate-pulse rounded bg-slate-200 dark:bg-noche-borde" />
-          <div className="h-10 w-full animate-pulse rounded bg-slate-200 dark:bg-noche-borde" />
-          <div className="h-12 w-full animate-pulse rounded bg-slate-200 dark:bg-noche-borde" />
+          <div className="h-5 w-40 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
+          <div className="h-10 w-full animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
+          <div className="h-12 w-full animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
         </div>
       ) : ultimoRegistro ? (
         <article className="tarjeta flex flex-col gap-4 p-4">
@@ -222,7 +222,7 @@ export function BrigadistaDashboardPage({ perfil }: BrigadistaDashboardPageProps
               className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold ${
                 ultimoRegistro.hora_salida === null
                   ? 'border-activo bg-activo-suave text-activo dark:border-activo-claro dark:bg-noche-campo dark:text-activo-claro'
-                  : 'border-borde bg-slate-100 text-tinta-suave dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta-suave'
+                  : 'border-borde bg-superficie-suave text-tinta-suave dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta-suave'
               }`}
             >
               {ultimoRegistro.hora_salida === null && (
@@ -254,7 +254,7 @@ export function BrigadistaDashboardPage({ perfil }: BrigadistaDashboardPageProps
             </div>
 
             {/* Rol asignado en turno (solo lectura con candado) */}
-            <div className="col-span-2 flex items-center justify-between gap-2 rounded-lg bg-slate-100 px-3 py-2.5 dark:bg-noche-campo">
+            <div className="col-span-2 flex items-center justify-between gap-2 rounded-lg bg-superficie-suave px-3 py-2.5 dark:bg-noche-campo">
               <div>
                 <span className="block text-[11px] font-semibold text-tinta-suave dark:text-noche-tinta-suave">
                   Rol asignado en turno (solo lectura)

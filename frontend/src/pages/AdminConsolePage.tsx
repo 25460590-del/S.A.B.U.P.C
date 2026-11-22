@@ -470,7 +470,7 @@ export function AdminConsolePage({ admin }: AdminConsolePageProps) {
                   </p>
                 </div>
 
-                <div className="inline-flex flex-wrap gap-1.5 rounded-lg border border-borde bg-slate-100 p-1 dark:border-noche-borde dark:bg-noche-campo">
+                <div className="inline-flex flex-wrap gap-1.5 rounded-lg border border-borde bg-superficie-suave p-1 dark:border-noche-borde dark:bg-noche-campo">
                   <button
                     type="button"
                     onClick={() => setPestana('pendientes')}
@@ -534,13 +534,13 @@ export function AdminConsolePage({ admin }: AdminConsolePageProps) {
             <section aria-label="Solicitudes pendientes" className="flex flex-col gap-4">
               {cargandoPendientes ? (
                 <div className="tarjeta flex flex-col gap-3 p-4">
-                  <div className="h-5 w-48 animate-pulse rounded bg-slate-200 dark:bg-noche-borde" />
-                  <div className="h-4 w-72 animate-pulse rounded bg-slate-200 dark:bg-noche-borde" />
+                  <div className="h-5 w-48 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
+                  <div className="h-4 w-72 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-                    <div className="h-12 animate-pulse rounded-lg bg-slate-200 dark:bg-noche-borde" />
-                    <div className="h-12 animate-pulse rounded-lg bg-slate-200 dark:bg-noche-borde" />
-                    <div className="h-12 animate-pulse rounded-lg bg-slate-200 dark:bg-noche-borde" />
-                    <div className="h-12 animate-pulse rounded-lg bg-slate-200 dark:bg-noche-borde" />
+                    <div className="h-12 animate-pulse rounded-lg bg-esqueleto dark:bg-noche-borde" />
+                    <div className="h-12 animate-pulse rounded-lg bg-esqueleto dark:bg-noche-borde" />
+                    <div className="h-12 animate-pulse rounded-lg bg-esqueleto dark:bg-noche-borde" />
+                    <div className="h-12 animate-pulse rounded-lg bg-esqueleto dark:bg-noche-borde" />
                   </div>
                 </div>
               ) : pendientes.length === 0 ? (
@@ -668,9 +668,9 @@ export function AdminConsolePage({ admin }: AdminConsolePageProps) {
 
               {cargandoDirectorio ? (
                 <div className="tarjeta flex flex-col gap-3 p-4">
-                  <div className="h-10 animate-pulse rounded bg-slate-200 dark:bg-noche-borde" />
-                  <div className="h-12 animate-pulse rounded bg-slate-200 dark:bg-noche-borde" />
-                  <div className="h-12 animate-pulse rounded bg-slate-200 dark:bg-noche-borde" />
+                  <div className="h-10 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
+                  <div className="h-12 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
+                  <div className="h-12 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
                 </div>
               ) : directorioFiltrado.length === 0 ? (
                 <article className="tarjeta flex flex-col items-center gap-2 p-8 text-center">

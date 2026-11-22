@@ -229,7 +229,7 @@ export function RegistroPage({ usuarioGoogle, alVolverALogin }: RegistroPageProp
             )
           })}
         </div>
-        <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-noche-campo">
+        <div className="h-2 w-full overflow-hidden rounded-full bg-esqueleto dark:bg-noche-campo">
           <div
             className={`h-full rounded-full bg-udec transition-all dark:bg-activo-claro ${
               paso === 1 ? 'w-1/3' : paso === 2 ? 'w-2/3' : 'w-full'

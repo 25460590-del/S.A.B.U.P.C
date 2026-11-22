@@ -127,7 +127,7 @@ export function ReportarEquipoModal({
 
         {/* 2 Pestañas */}
         <div className="border-b border-borde bg-tarjeta p-3 dark:border-noche-borde dark:bg-noche-tarjeta">
-          <div className="grid grid-cols-2 gap-1.5 rounded-lg bg-slate-100 p-1 dark:bg-noche-campo">
+          <div className="grid grid-cols-2 gap-1.5 rounded-lg bg-superficie-suave p-1 dark:bg-noche-campo">
             <button
               type="button"
               onClick={() => setPestana('bupc')}
@@ -276,14 +276,14 @@ export function ReportarEquipoModal({
             </section>
           )}
 
-          {/* PESTAÑA 2: Material Propio / Uniforme */}
+          {/* PESTAÑA 2: Material Propio / Uniforme (sin card-ception) */}
           {pestana === 'propio' && (
-            <section className="flex flex-col gap-4">
-              <article className="tarjeta flex flex-col gap-2.5 p-4">
+            <section className="flex flex-col gap-5">
+              <div className="flex flex-col gap-2.5">
                 <h3 className="text-sm font-bold text-tinta dark:text-noche-tinta">
-                  Registro rápido de uniforme y equipo propio
+                  Uniforme y equipo propio habitual
                 </h3>
-                <div className="flex flex-col gap-2">
+                <div className="divide-y divide-borde rounded-xl border border-borde bg-tarjeta dark:divide-noche-borde dark:border-noche-borde dark:bg-noche-tarjeta">
                   {UNIFORME_SUGERIDO.map((item) => {
                     const yaRegistrado = equiposPropios.some(
                       (e) => e.nombre_articulo.toLowerCase() === item.toLowerCase(),
@@ -291,7 +291,7 @@ export function ReportarEquipoModal({
                     return (
                       <div
                         key={item}
-                        className="flex items-center justify-between gap-2 rounded-lg border border-borde bg-fondo px-3 py-2 dark:border-noche-borde dark:bg-noche-campo"
+                        className="flex items-center justify-between gap-2 px-3.5 py-2.5"
                       >
                         <span className="text-sm font-medium text-tinta dark:text-noche-tinta">
                           {item}
@@ -305,7 +305,7 @@ export function ReportarEquipoModal({
                             type="button"
                             disabled={ocupado}
                             onClick={() => void agregarSugerido(item)}
-                            className="btn-salvia min-h-8 px-2.5 text-xs"
+                            className="btn-salvia min-h-9 px-3 text-xs"
                           >
                             <Plus size={14} strokeWidth={2} />
                             <span>Agregar</span>
@@ -315,11 +315,14 @@ export function ReportarEquipoModal({
                     )
                   })}
                 </div>
-              </article>
+              </div>
 
-              <form onSubmit={manejarAgregarPropio} className="tarjeta flex flex-col gap-3 p-4">
+              <form
+                onSubmit={manejarAgregarPropio}
+                className="flex flex-col gap-3 border-t border-borde pt-4 dark:border-noche-borde"
+              >
                 <h3 className="text-sm font-bold text-tinta dark:text-noche-tinta">
-                  Agregar otro equipo propio
+                  Otro equipo propio
                 </h3>
                 <input
                   type="text"
@@ -344,9 +347,9 @@ export function ReportarEquipoModal({
               </form>
 
               {equiposPropios.length > 0 && (
-                <article className="tarjeta flex flex-col gap-2 p-4">
+                <div className="flex flex-col gap-2 border-t border-borde pt-4 dark:border-noche-borde">
                   <h3 className="text-xs font-bold uppercase text-tinta-suave dark:text-noche-tinta-suave">
-                    Tu material propio en este turno
+                    Registrado en este turno
                   </h3>
                   <ul className="divide-y divide-borde dark:divide-noche-borde">
                     {equiposPropios.map((eq) => (
@@ -362,7 +365,7 @@ export function ReportarEquipoModal({
                       </li>
                     ))}
                   </ul>
-                </article>
+                </div>
               )}
             </section>
           )}

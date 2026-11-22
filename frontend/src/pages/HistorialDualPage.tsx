@@ -132,7 +132,7 @@ export function HistorialDualPage({ usuario }: HistorialDualPageProps) {
           </p>
         </div>
 
-        <div className="inline-flex flex-wrap gap-1.5 rounded-lg border border-borde bg-slate-100 p-1 dark:border-noche-borde dark:bg-noche-campo">
+        <div className="inline-flex flex-wrap gap-1.5 rounded-lg border border-borde bg-superficie-suave p-1 dark:border-noche-borde dark:bg-noche-campo">
           <button
             type="button"
             onClick={() => setPestana('personal')}
@@ -246,7 +246,7 @@ export function HistorialDualPage({ usuario }: HistorialDualPageProps) {
                           {item.turnos === 1 ? 'turno' : 'turnos'} ({pct}%)
                         </span>
                       </div>
-                      <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-noche-campo">
+                      <div className="h-2.5 w-full overflow-hidden rounded-full bg-esqueleto dark:bg-noche-campo">
                         <div
                           className={`h-full rounded-full ${barraColor}`}
                           style={{ width: `${pct}%` }}
@@ -269,8 +269,8 @@ export function HistorialDualPage({ usuario }: HistorialDualPageProps) {
 
             {cargando ? (
               <div className="flex flex-col gap-2 p-4">
-                <div className="h-10 animate-pulse rounded bg-slate-200 dark:bg-noche-borde" />
-                <div className="h-10 animate-pulse rounded bg-slate-200 dark:bg-noche-borde" />
+                <div className="h-10 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
+                <div className="h-10 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
               </div>
             ) : asistenciasCerradas.length === 0 ? (
               <div className="p-8 text-center">
@@ -459,7 +459,7 @@ export function HistorialDualPage({ usuario }: HistorialDualPageProps) {
                             className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
                               op.recepcion_abierta
                                 ? 'bg-activo-suave text-activo dark:bg-noche-campo dark:text-activo-claro'
-                                : 'bg-slate-100 text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave'
+                                : 'bg-superficie-suave text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave'
                             }`}
                           >
                             {op.recepcion_abierta ? 'Abierta' : 'Cerrada'}

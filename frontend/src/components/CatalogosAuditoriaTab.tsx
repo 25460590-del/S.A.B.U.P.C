@@ -224,10 +224,10 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
             ))}
           </div>
 
-          {/* Formulario alta / edición */}
+          {/* Formulario alta / edición (superficie plana sin card-ception) */}
           <form
             onSubmit={manejarGuardarClave}
-            className="flex flex-col gap-2.5 rounded-lg border border-borde bg-fondo p-3 dark:border-noche-borde dark:bg-noche-campo"
+            className="flex flex-col gap-2.5 rounded-lg bg-superficie-suave p-3 dark:bg-noche-campo"
           >
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               <input
@@ -290,7 +290,7 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
           </form>
 
           {/* Lista de claves */}
-          <div className="flex max-h-96 flex-col gap-2 overflow-y-auto">
+          <div className="flex max-h-96 flex-col divide-y divide-borde overflow-y-auto border-t border-borde dark:divide-noche-borde dark:border-noche-borde">
             {clavesDeTabla.length === 0 ? (
               <p className="py-4 text-center text-xs text-tinta-suave dark:text-noche-tinta-suave">
                 Sin claves en esta tabla. Agrega una nueva o siembra el catálogo ReBaCE v2.
@@ -299,7 +299,7 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
               clavesDeTabla.map((c) => (
                 <div
                   key={c.id}
-                  className="flex items-center justify-between gap-2 rounded-lg border border-borde bg-fondo px-3 py-2 dark:border-noche-borde dark:bg-noche-campo"
+                  className="flex items-center justify-between gap-2 py-2.5"
                 >
                   <div className="min-w-0 flex-1">
                     <span className="text-sm font-bold text-tinta dark:text-noche-tinta">
@@ -384,7 +384,7 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
             </select>
           </div>
 
-          <div className="flex max-h-[460px] flex-col gap-2 overflow-y-auto">
+          <div className="flex max-h-[460px] flex-col divide-y divide-borde overflow-y-auto border-t border-borde dark:divide-noche-borde dark:border-noche-borde">
             {eventosFiltrados.length === 0 ? (
               <p className="py-6 text-center text-xs text-tinta-suave dark:text-noche-tinta-suave">
                 Sin eventos de auditoría registrados.
@@ -393,7 +393,7 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
               eventosFiltrados.map((ev) => (
                 <div
                   key={ev.id}
-                  className="flex flex-col gap-1 rounded-lg border border-borde bg-fondo p-3 dark:border-noche-borde dark:bg-noche-campo"
+                  className="flex flex-col gap-1 py-3"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="rounded bg-salvia px-2 py-0.5 text-[10px] font-bold text-udec-oscuro dark:bg-noche-tarjeta dark:text-activo-claro">

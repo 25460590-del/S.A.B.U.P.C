@@ -723,7 +723,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
       <button
         type="button"
         onClick={() => setSheetClavesAbierto(true)}
-        className="btn-verde fixed right-4 bottom-20 z-40 rounded-full px-4 shadow-sm lg:hidden"
+        className="btn-verde fixed right-4 bottom-20 z-40 rounded-full border border-white/25 px-4 lg:hidden"
       >
         <BookOpen size={18} strokeWidth={2} />
         <span>Claves</span>

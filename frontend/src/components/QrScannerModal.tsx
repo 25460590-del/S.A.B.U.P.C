@@ -199,7 +199,7 @@ export function QrScannerModal({
               type="button"
               onClick={() => setCamaraFrontal((v) => !v)}
               disabled={procesando}
-              className="btn bg-tarjeta text-tinta hover:bg-slate-100"
+              className="btn bg-tarjeta text-tinta hover:bg-superficie-suave"
             >
               <SwitchCamera size={20} strokeWidth={2} />
               <span>{camaraFrontal ? 'Frontal' : 'Trasera'}</span>

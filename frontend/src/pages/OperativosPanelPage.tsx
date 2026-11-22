@@ -46,7 +46,7 @@ function estiloCategoria(cat: CategoriaOperativo): string {
     case 'Guardias Ordinarias':
       return 'bg-activo-suave text-activo border-activo dark:bg-noche-campo dark:text-activo-claro'
     case 'Capacitaciones, Simulacros y Difusión':
-      return 'bg-slate-100 text-tinta-suave border-slate-300 dark:bg-noche-campo dark:text-noche-tinta-suave dark:border-noche-borde'
+      return 'bg-superficie-suave text-tinta-suave border-borde-fuerte dark:bg-noche-campo dark:text-noche-tinta-suave dark:border-noche-borde'
   }
 }
 
@@ -638,7 +638,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                 </div>
 
                 {/* Alternador QR Dinámico TOTP vs QR Estático PNG */}
-                <div className="grid grid-cols-2 gap-1.5 rounded-lg bg-slate-100 p-1 dark:bg-noche-campo">
+                <div className="grid grid-cols-2 gap-1.5 rounded-lg bg-superficie-suave p-1 dark:bg-noche-campo">
                   <button
                     type="button"
                     disabled={cambiandoEstado}
@@ -665,11 +665,11 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                   </button>
                 </div>
 
-                {/* Visor QR siempre sobre fondo #FFFFFF puro */}
+                {/* Visor QR siempre sobre fondo #FFFFFF puro con margen amplio */}
                 <div className="flex flex-col items-center gap-4 sm:flex-row">
                   <div
                     ref={qrOperativoRef}
-                    className="flex shrink-0 items-center justify-center rounded-xl border border-slate-300 bg-[#FFFFFF] p-3"
+                    className="flex shrink-0 items-center justify-center rounded-xl border border-borde-fuerte bg-[#FFFFFF] p-4"
                   >
                     {payloadQrActual ? (
                       <QRCodeCanvas
@@ -703,7 +703,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                         </span>
                       </div>
 
-                      <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-noche-campo">
+                      <div className="h-2.5 w-full overflow-hidden rounded-full bg-esqueleto dark:bg-noche-campo">
                         <div
                           className="h-full rounded-full bg-naranja transition-all duration-300"
                           style={{

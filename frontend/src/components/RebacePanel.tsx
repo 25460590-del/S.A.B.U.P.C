@@ -118,9 +118,9 @@ export function RebacePanel({
       <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-3">
         {cargando ? (
           <div className="flex flex-col gap-2">
-            <div className="h-12 animate-pulse rounded-lg bg-slate-200 dark:bg-noche-borde" />
-            <div className="h-12 animate-pulse rounded-lg bg-slate-200 dark:bg-noche-borde" />
-            <div className="h-12 animate-pulse rounded-lg bg-slate-200 dark:bg-noche-borde" />
+            <div className="h-12 animate-pulse rounded-lg bg-esqueleto dark:bg-noche-borde" />
+            <div className="h-12 animate-pulse rounded-lg bg-esqueleto dark:bg-noche-borde" />
+            <div className="h-12 animate-pulse rounded-lg bg-esqueleto dark:bg-noche-borde" />
           </div>
         ) : claves.length === 0 ? (
           <div className="flex flex-col items-center gap-3 p-4 text-center">

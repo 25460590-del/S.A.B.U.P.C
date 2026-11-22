@@ -193,11 +193,11 @@ export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
               </span>
             </div>
 
-            {/* Código QR SIEMPRE sobre fondo BLANCO PURO (#FFFFFF) */}
+            {/* Código QR SIEMPRE sobre fondo BLANCO PURO (#FFFFFF) con margen amplio */}
             <div className="flex w-full flex-col items-center gap-3 pt-1">
               <div
                 ref={contenedorQrRef}
-                className="flex items-center justify-center rounded-xl border border-slate-300 bg-[#FFFFFF] p-4"
+                className="flex items-center justify-center rounded-xl border border-borde-fuerte bg-[#FFFFFF] p-5"
               >
                 <QRCodeCanvas
                   value={payloadQrCredencial}

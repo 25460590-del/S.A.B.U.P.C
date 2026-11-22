@@ -360,8 +360,8 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
       {/* Tabla en tiempo real */}
       {cargando ? (
         <div className="flex flex-col gap-3 p-4">
-          <div className="h-10 animate-pulse rounded bg-slate-200 dark:bg-noche-borde" />
-          <div className="h-14 animate-pulse rounded bg-slate-200 dark:bg-noche-borde" />
+          <div className="h-10 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
+          <div className="h-14 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
         </div>
       ) : filtradas.length === 0 ? (
         <div className="flex flex-col items-center gap-2 p-8 text-center">
