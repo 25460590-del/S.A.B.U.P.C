@@ -1,6 +1,7 @@
 import {
   collection,
   doc,
+  getDoc,
   getDocs,
   increment,
   onSnapshot,
@@ -16,7 +17,7 @@ import {
 } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import { comprimirImagenAWebP } from '../lib/imageCompression'
-import type { AsistenciaPersonal, EquipoTurno, Usuario } from '../types'
+import type { AsistenciaPersonal, EquipoTurno, EvidenciaEquipo, Usuario } from '../types'
 import { nombreCompleto } from './authService'
 
 const equiposRef = collection(db, 'equipos_turno')
@@ -487,4 +488,55 @@ export function escucharResguardoGlobalBupc(
     },
     alFallar,
   )
+}
+
+/**
+ * Suscripción en tiempo real a todas las Actas de Incidencia de material BUPC
+ * (sin descargar `evidencias_equipos`; las imágenes WebP se cargan solo bajo demanda).
+ */
+export function escucharActasMaterialBupc(
+  alCambiar: (lista: EquipoTurno[]) => void,
+  alFallar?: (error: FirestoreError) => void,
+): Unsubscribe {
+  return onSnapshot(
+    query(equiposRef, where('estado_reporte', '==', 'Incidencia')),
+    (snap) => {
+      const lista = snap.docs
+        .map((d) => d.data() as EquipoTurno)
+        .filter((e) => e.acta_incidencia !== null)
+      lista.sort((a, b) => (b.actualizado_en?.toMillis() ?? 0) - (a.actualizado_en?.toMillis() ?? 0))
+      alCambiar(lista)
+    },
+    alFallar,
+  )
+}
+
+/**
+ * Actas de incidencia de material asociadas a un brigadista específico (bajo demanda en Expediente).
+ */
+export function escucharActasMaterialDeUsuario(
+  usuarioUid: string,
+  alCambiar: (lista: EquipoTurno[]) => void,
+  alFallar?: (error: FirestoreError) => void,
+): Unsubscribe {
+  return onSnapshot(
+    query(equiposRef, where('usuario_uid', '==', usuarioUid)),
+    (snap) => {
+      const lista = snap.docs
+        .map((d) => d.data() as EquipoTurno)
+        .filter((e) => e.acta_incidencia !== null)
+      lista.sort((a, b) => (b.actualizado_en?.toMillis() ?? 0) - (a.actualizado_en?.toMillis() ?? 0))
+      alCambiar(lista)
+    },
+    alFallar,
+  )
+}
+
+/**
+ * Carga bajo demanda una evidencia fotográfica WebP desde `evidencias_equipos/{id}`
+ * únicamente cuando el usuario pulsa "Ver evidencia".
+ */
+export async function obtenerEvidenciaEquipo(evidenciaId: string): Promise<EvidenciaEquipo | null> {
+  const snap = await getDoc(doc(evidenciasRef, evidenciaId))
+  return snap.exists() ? (snap.data() as EvidenciaEquipo) : null
 }

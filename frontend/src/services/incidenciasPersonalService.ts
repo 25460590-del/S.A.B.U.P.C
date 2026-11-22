@@ -10,6 +10,7 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore'
 import { db } from '../lib/firebase'
+import { esAdmin, esEncargadoAP } from '../lib/permisos'
 import type {
   GravedadIncidencia,
   IncidenciaPersonal,
@@ -95,6 +96,32 @@ export function escucharIncidenciasPorOperativo(
 ): Unsubscribe {
   return onSnapshot(
     query(incidenciasRef, where('operativo_id', '==', operativoId)),
+    (snap) => {
+      const lista = snap.docs.map((d) => d.data() as IncidenciaPersonal)
+      lista.sort((a, b) => (b.creado_en?.toMillis() ?? 0) - (a.creado_en?.toMillis() ?? 0))
+      alCambiar(lista)
+    },
+    alFallar,
+  )
+}
+
+/**
+ * Consulta acotada de incidencias de personal según el rol del actor:
+ * - Admin y Encargado AP: todas las incidencias registradas.
+ * - Encargado normal: únicamente las incidencias creadas por él (alineado con `firestore.rules`).
+ */
+export function escucharIncidenciasPersonalSegunRol(
+  actor: Usuario,
+  alCambiar: (lista: IncidenciaPersonal[]) => void,
+  alFallar?: (error: FirestoreError) => void,
+): Unsubscribe {
+  const consulta =
+    esAdmin(actor) || esEncargadoAP(actor)
+      ? incidenciasRef
+      : query(incidenciasRef, where('creado_por_uid', '==', actor.uid))
+
+  return onSnapshot(
+    consulta,
     (snap) => {
       const lista = snap.docs.map((d) => d.data() as IncidenciaPersonal)
       lista.sort((a, b) => (b.creado_en?.toMillis() ?? 0) - (a.creado_en?.toMillis() ?? 0))

@@ -435,7 +435,7 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
           {destino === 'radio' && puedoRadio && <RadioConsolePage usuario={perfil} />}
 
           {destino === 'personal' && puedoPersonal && (
-            <AdminConsolePage key="personal" admin={perfil} embebido pestanaInicial="pendientes" />
+            <AdminConsolePage key="personal" admin={perfil} embebido pestanaInicial="directorio" />
           )}
 
           {destino === 'tesla' && soyTesla && <GestionTeslaPanel actor={perfil} />}

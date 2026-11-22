@@ -24,7 +24,11 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore'
 import { auth, db } from '../lib/firebase'
+import { AYUDANTIAS, ETAPAS_BRIGADISTA } from '../constants/catalogos'
 import {
+  esAdmin,
+  esEncargadoAP,
+  esEncargadoTesla,
   etapaDesdeGrupo,
   grupoDesdeEtapa,
   normalizarClaveRadio,
@@ -214,7 +218,7 @@ export async function verificarEstatusEnServidor(uid: string): Promise<EstatusUs
   return snap.exists() ? (snap.data() as Usuario).estatus : null
 }
 
-/** Solo Administrador activo (lo exige firestore.rules). */
+/** Solo Administrador / AP / Tesla activo (lo exige firestore.rules). */
 export function escucharUsuariosPorEstatus(
   estatus: EstatusUsuario[],
   alCambiar: (usuarios: Usuario[]) => void,
@@ -229,6 +233,114 @@ export function escucharUsuariosPorEstatus(
     },
     alFallar,
   )
+}
+
+/**
+ * Consulta acotada del directorio según rol (escala Plan Spark 150 → 300 personas):
+ * - Administrador, Encargado AP o Encargado Tesla: un solo listener sobre `usuarios`.
+ * - Encargado normal (Opción B): consultas acotadas únicamente a `Brigadistas` dentro de `grupos_a_cargo`.
+ * Nunca descarga `fotos_perfiles`.
+ */
+export function escucharDirectorioSegunRol(
+  actor: Usuario,
+  alCambiar: (usuarios: Usuario[]) => void,
+  alFallar: (error: FirestoreError) => void,
+): Unsubscribe {
+  if (esAdmin(actor) || esEncargadoAP(actor) || esEncargadoTesla(actor)) {
+    return onSnapshot(
+      usuariosRef,
+      (snap) => {
+        const lista = snap.docs.map((d) => normalizarUsuario(d.data() as Usuario))
+        lista.sort((a, b) => nombreCompleto(a).localeCompare(nombreCompleto(b), 'es-MX'))
+        alCambiar(lista)
+      },
+      alFallar,
+    )
+  }
+
+  const grupos = actor.grupos_a_cargo ?? []
+  if (actor.rol_sistema !== 'Encargado' || grupos.length === 0) {
+    alCambiar([])
+    return () => undefined
+  }
+
+  const ayudantiasSet = new Set<string>(AYUDANTIAS)
+  const etapasSet = new Set<string>(ETAPAS_BRIGADISTA)
+
+  const ayudantiasACargo = grupos.filter((g) => ayudantiasSet.has(g)).slice(0, 10)
+  const etapasACargo = grupos.filter((g) => etapasSet.has(g)).slice(0, 10)
+  const subgruposACargo = grupos
+    .filter((g) => !ayudantiasSet.has(g) && !etapasSet.has(g))
+    .slice(0, 30)
+
+  const buckets = new Map<string, Usuario[]>()
+  const unsubs: Unsubscribe[] = []
+
+  const emitir = () => {
+    const porUid = new Map<string, Usuario>()
+    for (const lista of buckets.values()) {
+      for (const u of lista) porUid.set(u.uid, u)
+    }
+    const combinada = Array.from(porUid.values())
+    combinada.sort((a, b) => nombreCompleto(a).localeCompare(nombreCompleto(b), 'es-MX'))
+    alCambiar(combinada)
+  }
+
+  const suscribir = (clave: string, q: ReturnType<typeof query>) => {
+    unsubs.push(
+      onSnapshot(
+        q,
+        (snap) => {
+          buckets.set(
+            clave,
+            snap.docs.map((d) => normalizarUsuario(d.data() as Usuario)),
+          )
+          emitir()
+        },
+        alFallar,
+      ),
+    )
+  }
+
+  if (subgruposACargo.length > 0) {
+    suscribir(
+      'subgrupos',
+      query(
+        usuariosRef,
+        where('rol_sistema', '==', 'Brigadista'),
+        where('subgrupo', 'in', subgruposACargo),
+      ),
+    )
+  }
+  if (ayudantiasACargo.length > 0) {
+    suscribir(
+      'ayudantias',
+      query(
+        usuariosRef,
+        where('rol_sistema', '==', 'Brigadista'),
+        where('ayudantia', 'in', ayudantiasACargo),
+      ),
+    )
+  }
+  if (etapasACargo.length > 0) {
+    suscribir(
+      'etapas',
+      query(
+        usuariosRef,
+        where('rol_sistema', '==', 'Brigadista'),
+        where('etapa', 'in', etapasACargo),
+      ),
+    )
+  }
+
+  if (unsubs.length === 0) {
+    alCambiar([])
+    return () => undefined
+  }
+
+  return () => {
+    for (const u of unsubs) u()
+  }
 }
 
 // ── Acciones de Administrador (writeBatch + auditoría inmutable) ────────────
@@ -314,15 +426,142 @@ export function actualizarRadioUsuario(
     )
   }
   const clave = normalizarClaveRadio(datos.clave_radio)
-  const detalle = datos.autorizado_radio
-    ? `Radio autorizado · Clave ${clave || 'sin clave'}`
-    : 'Autorización de radio revocada'
+  const claveAnterior = objetivo.clave_radio || objetivo.clave_personal_radio || 'Sin clave'
+  const cambiosTexto: string[] = []
+  if (objetivo.autorizado_radio !== datos.autorizado_radio) {
+    cambiosTexto.push(
+      `Radio: ${objetivo.autorizado_radio ? 'Autorizado' : 'No autorizado'} → ${
+        datos.autorizado_radio ? 'Autorizado' : 'No autorizado'
+      }`,
+    )
+  }
+  if (claveAnterior !== (clave || 'Sin clave')) {
+    cambiosTexto.push(`Clave: ${claveAnterior} → ${clave || 'Sin clave'}`)
+  }
+  const detalle =
+    cambiosTexto.join(' · ') ||
+    (datos.autorizado_radio
+      ? `Radio autorizado · Clave ${clave || 'sin clave'}`
+      : 'Autorización de radio revocada')
 
   return nuevoLoteConAuditoria(actor, objetivo, 'ASIGNACION_RADIO', detalle, {
     autorizado_radio: datos.autorizado_radio,
     clave_radio: clave,
     clave_personal_radio: clave ? clave.slice(0, 10) : null,
   })
+}
+
+export interface DatosEdicionExpediente {
+  etapa?: EtapaBrigadista
+  subgrupo?: string
+  ayudantia?: AyudantiaSlot
+  estatus?: EstatusUsuario
+  rol_sistema?: RolSistema
+  grupos_a_cargo?: string[]
+  autorizado_radio?: boolean
+  clave_radio?: string
+}
+
+/**
+ * Edición post-incorporación desde el Expediente Unificado respetando estrictamente
+ * los campos permitidos por rol en `firestore.rules` y registrando diff antes → después
+ * en `auditoria_eventos`.
+ */
+export function guardarEdicionExpediente(
+  actor: Usuario,
+  objetivo: Usuario,
+  cambios: DatosEdicionExpediente,
+): Promise<void> {
+  if (!puedeGestionarBrigadista(actor, objetivo)) {
+    return Promise.reject(new Error('No tienes permiso para editar este expediente.'))
+  }
+
+  const soyAdmin = esAdmin(actor)
+  const soyAP = esEncargadoAP(actor)
+  const payload: Record<string, unknown> = {}
+  const diffs: string[] = []
+
+  if (cambios.etapa !== undefined && cambios.etapa !== objetivo.etapa) {
+    payload.etapa = cambios.etapa
+    payload.grupo_operativo = grupoDesdeEtapa(cambios.etapa)
+    diffs.push(`Etapa: ${objetivo.etapa} → ${cambios.etapa}`)
+  }
+  if (cambios.subgrupo !== undefined) {
+    const sg = cambios.subgrupo.trim()
+    if (sg !== (objetivo.subgrupo || '')) {
+      payload.subgrupo = sg
+      diffs.push(`Subgrupo: ${objetivo.subgrupo || 'Ninguno'} → ${sg || 'Ninguno'}`)
+    }
+  }
+  if (cambios.ayudantia !== undefined && cambios.ayudantia !== objetivo.ayudantia) {
+    payload.ayudantia = cambios.ayudantia
+    payload.ayudantia_slot = cambios.ayudantia
+    diffs.push(`Ayudantía: ${objetivo.ayudantia} → ${cambios.ayudantia}`)
+  }
+  if (
+    (soyAdmin || soyAP) &&
+    cambios.estatus !== undefined &&
+    cambios.estatus !== objetivo.estatus
+  ) {
+    payload.estatus = cambios.estatus
+    if (cambios.estatus === 'Activo' && !objetivo.qr_codigo_unico) {
+      payload.qr_codigo_unico = crypto.randomUUID()
+    }
+    diffs.push(`Estatus: ${objetivo.estatus} → ${cambios.estatus}`)
+  }
+  if (soyAdmin && cambios.rol_sistema !== undefined && cambios.rol_sistema !== objetivo.rol_sistema) {
+    payload.rol_sistema = cambios.rol_sistema
+    diffs.push(`Rol: ${objetivo.rol_sistema} → ${cambios.rol_sistema}`)
+  }
+  if (soyAdmin && cambios.grupos_a_cargo !== undefined) {
+    const limpios = Array.from(
+      new Set(cambios.grupos_a_cargo.map((g) => g.trim()).filter(Boolean)),
+    ).slice(0, 30)
+    const previos = (objetivo.grupos_a_cargo ?? []).join(', ') || 'Ninguno'
+    const nuevos = limpios.join(', ') || 'Ninguno'
+    if (previos !== nuevos) {
+      payload.grupos_a_cargo = limpios
+      diffs.push(`Grupos a cargo: ${previos} → ${nuevos}`)
+    }
+  }
+  if (soyAdmin && cambios.autorizado_radio !== undefined) {
+    if (cambios.autorizado_radio !== objetivo.autorizado_radio) {
+      payload.autorizado_radio = cambios.autorizado_radio
+      diffs.push(
+        `Radio: ${objetivo.autorizado_radio ? 'Sí' : 'No'} → ${cambios.autorizado_radio ? 'Sí' : 'No'}`,
+      )
+    }
+  }
+  if (soyAdmin && cambios.clave_radio !== undefined) {
+    const clave = normalizarClaveRadio(cambios.clave_radio)
+    const previa = objetivo.clave_radio || objetivo.clave_personal_radio || ''
+    if (clave !== previa) {
+      payload.clave_radio = clave
+      payload.clave_personal_radio = clave ? clave.slice(0, 10) : null
+      diffs.push(`Clave radio: ${previa || 'Sin clave'} → ${clave || 'Sin clave'}`)
+    }
+  }
+
+  if (Object.keys(payload).length === 0) {
+    return Promise.resolve()
+  }
+
+  const tipoEvento: TipoEventoAuditoria =
+    payload.rol_sistema !== undefined
+      ? 'CAMBIO_ROL'
+      : payload.estatus === 'Inactivo'
+        ? 'BAJA_USUARIO'
+        : payload.estatus === 'Activo' && objetivo.estatus === 'Pendiente'
+          ? 'APROBACION_USUARIO'
+          : 'ACTUALIZACION_PERSONAL'
+
+  return nuevoLoteConAuditoria(
+    actor,
+    objetivo,
+    tipoEvento,
+    diffs.join(' · ').slice(0, 500),
+    payload,
+  )
 }
 
 export interface DatosOperativosPersonal {

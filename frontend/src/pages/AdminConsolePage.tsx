@@ -1,68 +1,71 @@
 import {
   AlertCircle,
   CheckCircle2,
-  History,
-  IdCard,
-  LogOut,
-  Megaphone,
+  Eye,
   Radio,
   Search,
   ShieldCheck,
   UserCheck,
   Users,
-  UserX,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import { BarraEstado } from '../components/BarraEstado'
-import { BupcLogo } from '../components/BupcLogo'
-import { AYUDANTIAS, GRUPOS_OPERATIVOS, ROLES } from '../constants/catalogos'
+import { useEffect, useMemo, useState } from 'react'
+import { CatalogosAuditoriaTab } from '../components/CatalogosAuditoriaTab'
+import { ExpedienteUnificadoModal } from '../components/ExpedienteUnificadoModal'
+import { AYUDANTIAS, ETAPAS_BRIGADISTA, ROLES } from '../constants/catalogos'
+import {
+  esAdmin,
+  esEncargadoAP,
+  grupoDesdeEtapa,
+  puedeAsignarRadio,
+} from '../lib/permisos'
 import {
   aprobarUsuario,
-  cambiarRolUsuario,
-  cerrarSesion,
-  darDeBajaUsuario,
-  escucharUsuariosPorEstatus,
+  escucharDirectorioSegunRol,
   mensajeDeError,
   nombreCompleto,
   rechazarUsuario,
   type AsignacionAlta,
 } from '../services/authService'
-import type { AyudantiaSlot, GrupoOperativo, RolSistema, Usuario } from '../types'
-import { CatalogosAuditoriaTab } from '../components/CatalogosAuditoriaTab'
-import { CredencialDigitalPage } from './CredencialDigitalPage'
-import { HistorialDualPage } from './HistorialDualPage'
-import { OperativosPanelPage } from './OperativosPanelPage'
-import { RadioConsolePage } from './RadioConsolePage'
+import { escucharCatalogoSubgrupos } from '../services/catalogosService'
+import type {
+  AyudantiaSlot,
+  EstatusUsuario,
+  EtapaBrigadista,
+  RolSistema,
+  Usuario,
+} from '../types'
 
 interface AdminConsolePageProps {
   admin: Usuario
-  /** Cuando se muestra dentro del shell unificado, omite la barra lateral duplicada. */
   embebido?: boolean
-  pestanaInicial?: Pestana
+  pestanaInicial?: 'directorio' | 'pendientes' | 'catalogos'
 }
 
-type Pestana =
-  | 'pendientes'
-  | 'directorio'
-  | 'catalogos'
-  | 'operativos'
-  | 'radio'
-  | 'historial'
-  | 'credencial'
+type PestanaPersonal = 'directorio' | 'pendientes' | 'catalogos'
+
+function iniciales(u: Usuario): string {
+  const n = (u.nombres.trim()[0] ?? '').toUpperCase()
+  const a = (u.apellido_paterno.trim()[0] ?? '').toUpperCase()
+  return `${n}${a}` || 'B'
+}
 
 function TarjetaPendiente({
-  admin,
+  actor,
   usuario,
+  subgruposActivos,
   alNotificar,
   alError,
 }: {
-  admin: Usuario
+  actor: Usuario
   usuario: Usuario
+  subgruposActivos: string[]
   alNotificar: (msg: string) => void
   alError: (msg: string) => void
 }) {
-  const [grupo, setGrupo] = useState<GrupoOperativo>('Alfa')
-  const [ayudantia, setAyudantia] = useState<AyudantiaSlot>('Socorros')
+  const puedoRadio = puedeAsignarRadio(actor, usuario)
+  const [etapa, setEtapa] = useState<EtapaBrigadista>('Alfa')
+  const [subgrupo, setSubgrupo] = useState<string>(subgruposActivos[0] ?? 'Alfa 1')
+  const [ayudantia, setAyudantia] = useState<AyudantiaSlot>('Ninguna')
   const [claveRadio, setClaveRadio] = useState('')
   const [autorizadoRadio, setAutorizadoRadio] = useState(false)
   const [confirmandoRechazo, setConfirmandoRechazo] = useState(false)
@@ -72,14 +75,22 @@ function TarjetaPendiente({
     setOcupado(true)
     alError('')
     try {
-      const claveLimpia = claveRadio.trim()
+      const claveLimpia = claveRadio.trim().toUpperCase()
       const asignacion: AsignacionAlta = {
-        grupo_operativo: grupo,
+        grupo_operativo: grupoDesdeEtapa(etapa),
         ayudantia_slot: ayudantia,
-        autorizado_radio: autorizadoRadio,
-        clave_personal_radio: claveLimpia ? claveLimpia : null,
+        etapa,
+        subgrupo: etapa === 'Grupo Operativo' ? '' : subgrupo,
+        ayudantia,
+        ...(puedoRadio
+          ? {
+              autorizado_radio: autorizadoRadio,
+              clave_radio: claveLimpia,
+              clave_personal_radio: claveLimpia ? claveLimpia.slice(0, 10) : null,
+            }
+          : {}),
       }
-      await aprobarUsuario(admin, usuario, asignacion)
+      await aprobarUsuario(actor, usuario, asignacion)
       alNotificar(`Alta aprobada para ${nombreCompleto(usuario)}.`)
     } catch (err) {
       alError(mensajeDeError(err))
@@ -92,7 +103,7 @@ function TarjetaPendiente({
     setOcupado(true)
     alError('')
     try {
-      await rechazarUsuario(admin, usuario)
+      await rechazarUsuario(actor, usuario)
       alNotificar(`Solicitud rechazada para ${nombreCompleto(usuario)}.`)
     } catch (err) {
       alError(mensajeDeError(err))
@@ -103,41 +114,68 @@ function TarjetaPendiente({
   }
 
   return (
-    <article className="tarjeta flex flex-col gap-4 p-4">
-      <div className="flex flex-wrap items-start justify-between gap-2 border-b border-borde pb-3 dark:border-noche-borde">
-        <div>
-          <h3 className="text-base font-semibold text-tinta dark:text-noche-tinta">
-            {nombreCompleto(usuario)}
-          </h3>
-          <p className="mt-0.5 text-xs font-medium tabular-nums text-tinta-suave dark:text-noche-tinta-suave">
-            Cuenta: {usuario.numero_cuenta} · {usuario.nivel_academico} ({usuario.escuela_carrera}) ·
-            Sangre {usuario.tipo_sangre}
-          </p>
-          <p className="mt-0.5 text-xs tabular-nums text-tinta-suave dark:text-noche-tinta-suave">
-            {usuario.correo} · Cel. {usuario.celular}
-            {usuario.celular_con_whatsapp ? ' (WhatsApp)' : ''}
-          </p>
+    <article className="tarjeta flex flex-col gap-3 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2 border-b border-borde pb-2.5 dark:border-noche-borde">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-salvia text-xs font-extrabold text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
+            {iniciales(usuario)}
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-tinta dark:text-noche-tinta">
+              {nombreCompleto(usuario)}
+            </h3>
+            <p className="text-xs tabular-nums text-tinta-suave dark:text-noche-tinta-suave">
+              Cuenta {usuario.numero_cuenta} · {usuario.nivel_academico} ({usuario.escuela_carrera})
+              · {usuario.correo}
+            </p>
+          </div>
         </div>
-        <span className="rounded-full border border-ambar bg-ambar-suave px-3 py-1 text-xs font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
+        <span className="rounded-full border border-ambar bg-ambar-suave px-2.5 py-0.5 text-[11px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
           PENDIENTE
         </span>
       </div>
 
-      <div className="grid grid-cols-1 items-end gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-1 items-end gap-2.5 sm:grid-cols-2 lg:grid-cols-5">
         <div className="flex flex-col gap-1">
-          <label htmlFor={`grupo-${usuario.uid}`} className="etiqueta">
-            Grupo Operativo
+          <label htmlFor={`etapa-${usuario.uid}`} className="etiqueta">
+            Etapa
           </label>
           <select
-            id={`grupo-${usuario.uid}`}
-            value={grupo}
-            onChange={(e) => setGrupo(e.target.value as GrupoOperativo)}
-            className="campo"
+            id={`etapa-${usuario.uid}`}
+            value={etapa}
+            onChange={(e) => {
+              const nueva = e.target.value as EtapaBrigadista
+              setEtapa(nueva)
+              if (nueva === 'Grupo Operativo') setSubgrupo('')
+            }}
+            className="campo min-h-10 text-xs"
             disabled={ocupado}
           >
-            {GRUPOS_OPERATIVOS.map((g) => (
-              <option key={g} value={g}>
-                {g === 'Ninguno' ? 'Ninguno' : `Grupo ${g}`}
+            {ETAPAS_BRIGADISTA.map((et) => (
+              <option key={et} value={et}>
+                {et}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label htmlFor={`sub-${usuario.uid}`} className="etiqueta">
+            Subgrupo
+          </label>
+          <select
+            id={`sub-${usuario.uid}`}
+            value={etapa === 'Grupo Operativo' ? '' : subgrupo}
+            onChange={(e) => setSubgrupo(e.target.value)}
+            className="campo min-h-10 text-xs"
+            disabled={ocupado || etapa === 'Grupo Operativo'}
+          >
+            <option value="">
+              {etapa === 'Grupo Operativo' ? 'No aplica' : 'Sin subgrupo'}
+            </option>
+            {subgruposActivos.map((sg) => (
+              <option key={sg} value={sg}>
+                {sg}
               </option>
             ))}
           </select>
@@ -145,13 +183,13 @@ function TarjetaPendiente({
 
         <div className="flex flex-col gap-1">
           <label htmlFor={`ayu-${usuario.uid}`} className="etiqueta">
-            Ayudantía (5 slots)
+            Ayudantía
           </label>
           <select
             id={`ayu-${usuario.uid}`}
             value={ayudantia}
             onChange={(e) => setAyudantia(e.target.value as AyudantiaSlot)}
-            className="campo"
+            className="campo min-h-10 text-xs"
             disabled={ocupado}
           >
             {AYUDANTIAS.map((a) => (
@@ -162,47 +200,51 @@ function TarjetaPendiente({
           </select>
         </div>
 
-        <div className="flex flex-col gap-1">
-          <label htmlFor={`clave-${usuario.uid}`} className="etiqueta">
-            Clave de Radio
-          </label>
-          <input
-            id={`clave-${usuario.uid}`}
-            type="text"
-            maxLength={10}
-            placeholder="Ej. E7 (opcional)"
-            value={claveRadio}
-            onChange={(e) => setClaveRadio(e.target.value)}
-            className="campo tabular-nums"
-            disabled={ocupado}
-          />
-        </div>
+        {puedoRadio && (
+          <>
+            <div className="flex flex-col gap-1">
+              <label htmlFor={`clave-${usuario.uid}`} className="etiqueta">
+                Clave Radio (opc.)
+              </label>
+              <input
+                id={`clave-${usuario.uid}`}
+                type="text"
+                maxLength={20}
+                placeholder="Ej. TESLA-205"
+                value={claveRadio}
+                onChange={(e) => setClaveRadio(e.target.value.toUpperCase())}
+                className="campo min-h-10 text-xs font-bold uppercase tabular-nums"
+                disabled={ocupado}
+              />
+            </div>
 
-        <label className="flex min-h-12 cursor-pointer items-center gap-2 rounded-lg border border-borde bg-salvia px-3 dark:border-udec-brillo dark:bg-noche-campo">
-          <input
-            type="checkbox"
-            checked={autorizadoRadio}
-            onChange={(e) => setAutorizadoRadio(e.target.checked)}
-            disabled={ocupado}
-            className="h-5 w-5 rounded accent-udec"
-          />
-          <span className="text-xs font-semibold whitespace-nowrap text-udec-oscuro dark:text-noche-tinta">
-            Autorizado Radio
-          </span>
-        </label>
+            <label className="flex min-h-10 cursor-pointer items-center gap-2 rounded-lg border border-borde bg-salvia px-2.5 dark:border-noche-borde dark:bg-noche-campo">
+              <input
+                type="checkbox"
+                checked={autorizadoRadio}
+                onChange={(e) => setAutorizadoRadio(e.target.checked)}
+                disabled={ocupado}
+                className="h-4 w-4 rounded accent-udec"
+              />
+              <span className="text-xs font-semibold text-udec-oscuro dark:text-noche-tinta">
+                Radio
+              </span>
+            </label>
+          </>
+        )}
       </div>
 
-      <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+      <div className="flex flex-wrap items-center justify-end gap-2">
         {confirmandoRechazo ? (
           <>
             <span className="mr-auto text-xs font-semibold text-alerta dark:text-noche-rojo-texto">
-              ¿Confirmas rechazar esta solicitud? Quedará en estado Inactivo.
+              ¿Confirmas rechazar esta solicitud?
             </span>
             <button
               type="button"
               onClick={() => setConfirmandoRechazo(false)}
               disabled={ocupado}
-              className="btn-salvia min-h-10 px-3"
+              className="btn-salvia min-h-9 px-3 text-xs"
             >
               Cancelar
             </button>
@@ -210,7 +252,7 @@ function TarjetaPendiente({
               type="button"
               onClick={manejarRechazar}
               disabled={ocupado}
-              className="btn-rojo min-h-10 px-4"
+              className="btn-rojo min-h-9 px-3.5 text-xs"
             >
               {ocupado ? 'Procesando...' : 'Confirmar Rechazo'}
             </button>
@@ -221,7 +263,7 @@ function TarjetaPendiente({
               type="button"
               onClick={() => setConfirmandoRechazo(true)}
               disabled={ocupado}
-              className="btn min-h-10 border border-alerta bg-tarjeta px-4 text-alerta hover:bg-alerta-suave dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+              className="btn min-h-9 border border-alerta bg-tarjeta px-3.5 text-xs text-alerta hover:bg-alerta-suave dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
             >
               Rechazar
             </button>
@@ -229,9 +271,9 @@ function TarjetaPendiente({
               type="button"
               onClick={manejarAprobar}
               disabled={ocupado}
-              className="btn-verde min-h-10 px-5"
+              className="btn-verde min-h-9 px-4 text-xs"
             >
-              <UserCheck size={18} strokeWidth={2} />
+              <UserCheck size={15} strokeWidth={2} />
               <span>{ocupado ? 'Aprobando...' : 'Aprobar Alta'}</span>
             </button>
           </>
@@ -243,582 +285,502 @@ function TarjetaPendiente({
 
 export function AdminConsolePage({
   admin,
-  embebido = false,
-  pestanaInicial = 'pendientes',
+  pestanaInicial = 'directorio',
 }: AdminConsolePageProps) {
-  const [pestana, setPestana] = useState<Pestana>(pestanaInicial)
-  const [pendientes, setPendientes] = useState<Usuario[]>([])
-  const [directorio, setDirectorio] = useState<Usuario[]>([])
-  const [cargandoPendientes, setCargandoPendientes] = useState(true)
-  const [cargandoDirectorio, setCargandoDirectorio] = useState(true)
+  const soyAdmin = esAdmin(admin)
+  const soyAP = esEncargadoAP(admin)
+  const puedeVerPendientes = soyAdmin || soyAP
+
+  const [pestana, setPestana] = useState<PestanaPersonal>(
+    pestanaInicial === 'pendientes' && !puedeVerPendientes ? 'directorio' : pestanaInicial,
+  )
+  const [usuarios, setUsuarios] = useState<Usuario[]>([])
+  const [subgruposActivos, setSubgruposActivos] = useState<string[]>([])
+  const [cargando, setCargando] = useState(true)
+
+  // Filtros 100% en cliente (cero lecturas extra en Firestore)
   const [busqueda, setBusqueda] = useState('')
-  const [filtroEstatus, setFiltroEstatus] = useState<'Todos' | 'Activo' | 'Inactivo'>('Todos')
+  const [filtroEstatus, setFiltroEstatus] = useState<'Todos' | EstatusUsuario>('Todos')
+  const [filtroEtapa, setFiltroEtapa] = useState<'Todas' | EtapaBrigadista>('Todas')
+  const [filtroSubgrupo, setFiltroSubgrupo] = useState('TODOS')
+  const [filtroAyudantia, setFiltroAyudantia] = useState<'Todas' | AyudantiaSlot>('Todas')
+  const [filtroRol, setFiltroRol] = useState<'Todos' | RolSistema>('Todos')
+
+  // Expediente Unificado abierto bajo demanda
+  const [expedienteUid, setExpedienteUid] = useState<string | null>(null)
+
   const [error, setError] = useState<string | null>(null)
   const [aviso, setAviso] = useState<string | null>(null)
-  const [bajaObjetivo, setBajaObjetivo] = useState<Usuario | null>(null)
-  const [motivoBaja, setMotivoBaja] = useState('')
-  const [procesandoUid, setProcesandoUid] = useState<string | null>(null)
 
   useEffect(() => {
-    const cancelarPend = escucharUsuariosPorEstatus(
-      ['Pendiente'],
+    const cDir = escucharDirectorioSegunRol(
+      admin,
       (lista) => {
-        setPendientes(lista)
-        setCargandoPendientes(false)
+        setUsuarios(lista)
+        setCargando(false)
       },
       (err) => {
         setError(mensajeDeError(err))
-        setCargandoPendientes(false)
+        setCargando(false)
       },
     )
-
-    const cancelarDir = escucharUsuariosPorEstatus(
-      ['Activo', 'Inactivo'],
-      (lista) => {
-        setDirectorio(lista)
-        setCargandoDirectorio(false)
-      },
-      (err) => {
-        setError(mensajeDeError(err))
-        setCargandoDirectorio(false)
-      },
-    )
-
+    const cSub = escucharCatalogoSubgrupos(setSubgruposActivos)
     return () => {
-      cancelarPend()
-      cancelarDir()
+      cDir()
+      cSub()
     }
-  }, [])
+  }, [admin])
 
-  const directorioFiltrado = directorio.filter((u) => {
-    if (filtroEstatus !== 'Todos' && u.estatus !== filtroEstatus) return false
+  const pendientes = useMemo(() => usuarios.filter((u) => u.estatus === 'Pendiente'), [usuarios])
+
+  const subgruposEnDirectorio = useMemo(() => {
+    const set = new Set<string>(subgruposActivos)
+    for (const u of usuarios) {
+      if (u.subgrupo) set.add(u.subgrupo)
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'es-MX'))
+  }, [usuarios, subgruposActivos])
+
+  const directorioFiltrado = useMemo(() => {
     const q = busqueda.trim().toLowerCase()
-    if (!q) return true
-    return (
-      nombreCompleto(u).toLowerCase().includes(q) ||
-      u.numero_cuenta.toLowerCase().includes(q) ||
-      u.correo.toLowerCase().includes(q)
-    )
-  })
+    return usuarios.filter((u) => {
+      if (filtroEstatus !== 'Todos' && u.estatus !== filtroEstatus) return false
+      if (filtroEtapa !== 'Todas' && u.etapa !== filtroEtapa) return false
+      if (filtroSubgrupo !== 'TODOS' && (u.subgrupo || '') !== filtroSubgrupo) return false
+      if (filtroAyudantia !== 'Todas' && u.ayudantia !== filtroAyudantia) return false
+      if (filtroRol !== 'Todos' && u.rol_sistema !== filtroRol) return false
+      if (!q) return true
+      return (
+        nombreCompleto(u).toLowerCase().includes(q) ||
+        u.numero_cuenta.toLowerCase().includes(q) ||
+        u.correo.toLowerCase().includes(q) ||
+        (u.clave_radio || u.clave_personal_radio || '').toLowerCase().includes(q) ||
+        (u.subgrupo || '').toLowerCase().includes(q)
+      )
+    })
+  }, [usuarios, busqueda, filtroEstatus, filtroEtapa, filtroSubgrupo, filtroAyudantia, filtroRol])
 
-  async function manejarCambioRol(usuario: Usuario, nuevoRol: RolSistema) {
-    if (usuario.rol_sistema === nuevoRol) return
-    setProcesandoUid(usuario.uid)
-    setError(null)
-    setAviso(null)
-    try {
-      await cambiarRolUsuario(admin, usuario, nuevoRol)
-      setAviso(`Rol actualizado a ${nuevoRol} para ${nombreCompleto(usuario)}.`)
-    } catch (err) {
-      setError(mensajeDeError(err))
-    } finally {
-      setProcesandoUid(null)
-    }
-  }
-
-  async function confirmarBaja() {
-    if (!bajaObjetivo) return
-    setProcesandoUid(bajaObjetivo.uid)
-    setError(null)
-    setAviso(null)
-    try {
-      const motivo = motivoBaja.trim() || 'Baja operativa desde consola de administración'
-      await darDeBajaUsuario(admin, bajaObjetivo, motivo)
-      setAviso(`${nombreCompleto(bajaObjetivo)} fue dado de baja (Inactivo).`)
-      setBajaObjetivo(null)
-      setMotivoBaja('')
-    } catch (err) {
-      setError(mensajeDeError(err))
-    } finally {
-      setProcesandoUid(null)
-    }
-  }
+  const usuarioExpediente = usuarios.find((u) => u.uid === expedienteUid) ?? null
 
   return (
-    <div className={embebido ? 'flex flex-col gap-5' : 'flex min-h-screen flex-col bg-fondo md:flex-row dark:bg-noche'}>
-      {/* Barra lateral Verde UdeC (solo si no está embebido en el shell unificado) */}
-      {!embebido && (
-      <aside className="flex shrink-0 flex-col justify-between bg-udec-oscuro p-4 text-white md:w-64 dark:border-r dark:border-noche-borde dark:bg-noche-sidebar">
-        <div className="flex flex-col gap-6">
-          <div className="flex items-center gap-3 border-b border-white/20 pb-4 dark:border-noche-borde">
-            <BupcLogo tamano="md" />
-            <div>
-              <p className="text-xs font-semibold text-white/80 dark:text-noche-tinta-suave">
-                Universidad de Colima
-              </p>
-              <h1 className="text-base font-bold">S.A.B.U.P.C</h1>
+    <div className="flex flex-col gap-4">
+      {/* Cabecera contextual según rol */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-bold tracking-tight text-tinta dark:text-noche-tinta">
+            {soyAdmin || soyAP ? 'Administración de Personal' : 'Mi Personal a Cargo'}
+          </h2>
+          {soyAdmin || soyAP ? (
+            <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
+              Directorio completo ({usuarios.length} registros) · Aprobaciones, adscripciones y
+              expedientes unificados.
+            </p>
+          ) : (
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              <span className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                Grupos bajo tu mando:
+              </span>
+              {(admin.grupos_a_cargo ?? []).map((g) => (
+                <span
+                  key={g}
+                  className="rounded-full bg-salvia px-2.5 py-0.5 text-[11px] font-bold text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro"
+                >
+                  {g}
+                </span>
+              ))}
             </div>
-          </div>
+          )}
+        </div>
 
-          <nav aria-label="Menú Administrador" className="flex flex-col gap-1.5">
+        {/* Pestañas internas */}
+        {puedeVerPendientes && (
+          <div className="inline-flex flex-wrap gap-1 rounded-xl border border-borde bg-superficie-suave p-1 dark:border-noche-borde dark:bg-noche-campo">
+            <button
+              type="button"
+              onClick={() => setPestana('directorio')}
+              className={`min-h-9 cursor-pointer rounded-lg px-3 text-xs font-semibold transition-colors ${
+                pestana === 'directorio'
+                  ? 'bg-udec text-white'
+                  : 'text-tinta-suave hover:bg-tarjeta dark:text-noche-tinta-suave dark:hover:bg-noche-tarjeta'
+              }`}
+            >
+              Directorio ({usuarios.length})
+            </button>
             <button
               type="button"
               onClick={() => setPestana('pendientes')}
-              className={`flex min-h-12 cursor-pointer items-center justify-between gap-2 rounded-lg px-3 text-left text-sm font-semibold transition-colors ${
+              className={`inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition-colors ${
                 pestana === 'pendientes'
-                  ? 'bg-white/15 text-white dark:bg-udec'
-                  : 'text-white/80 hover:bg-white/10 dark:text-noche-tinta-suave dark:hover:bg-noche-tarjeta'
+                  ? 'bg-udec text-white'
+                  : 'text-tinta-suave hover:bg-tarjeta dark:text-noche-tinta-suave dark:hover:bg-noche-tarjeta'
               }`}
             >
-              <span className="flex items-center gap-2.5">
-                <UserCheck size={18} strokeWidth={2} />
-                <span>Aprobaciones</span>
-              </span>
+              <span>Pendientes</span>
               {pendientes.length > 0 && (
-                <span className="rounded-full bg-naranja px-2 py-0.5 text-xs font-bold tabular-nums text-tinta">
+                <span className="rounded-full bg-naranja px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-tinta">
                   {pendientes.length}
                 </span>
               )}
             </button>
-
-            <button
-              type="button"
-              onClick={() => setPestana('directorio')}
-              className={`flex min-h-12 cursor-pointer items-center gap-2.5 rounded-lg px-3 text-left text-sm font-semibold transition-colors ${
-                pestana === 'directorio'
-                  ? 'bg-white/15 text-white dark:bg-udec'
-                  : 'text-white/80 hover:bg-white/10 dark:text-noche-tinta-suave dark:hover:bg-noche-tarjeta'
-              }`}
-            >
-              <Users size={18} strokeWidth={2} />
-              <span>Directorio y Bajas</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setPestana('operativos')}
-              className={`flex min-h-12 cursor-pointer items-center gap-2.5 rounded-lg px-3 text-left text-sm font-semibold transition-colors ${
-                pestana === 'operativos'
-                  ? 'bg-white/15 text-white dark:bg-udec'
-                  : 'text-white/80 hover:bg-white/10 dark:text-noche-tinta-suave dark:hover:bg-noche-tarjeta'
-              }`}
-            >
-              <Megaphone size={18} strokeWidth={2} />
-              <span>Operativos y QR</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setPestana('radio')}
-              className={`flex min-h-12 cursor-pointer items-center gap-2.5 rounded-lg px-3 text-left text-sm font-semibold transition-colors ${
-                pestana === 'radio'
-                  ? 'bg-white/15 text-white dark:bg-udec'
-                  : 'text-white/80 hover:bg-white/10 dark:text-noche-tinta-suave dark:hover:bg-noche-tarjeta'
-              }`}
-            >
-              <Radio size={18} strokeWidth={2} />
-              <span>Radio CECOM</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setPestana('historial')}
-              className={`flex min-h-12 cursor-pointer items-center gap-2.5 rounded-lg px-3 text-left text-sm font-semibold transition-colors ${
-                pestana === 'historial'
-                  ? 'bg-white/15 text-white dark:bg-udec'
-                  : 'text-white/80 hover:bg-white/10 dark:text-noche-tinta-suave dark:hover:bg-noche-tarjeta'
-              }`}
-            >
-              <History size={18} strokeWidth={2} />
-              <span>Historial Dual</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setPestana('credencial')}
-              className={`flex min-h-12 cursor-pointer items-center gap-2.5 rounded-lg px-3 text-left text-sm font-semibold transition-colors ${
-                pestana === 'credencial'
-                  ? 'bg-white/15 text-white dark:bg-udec'
-                  : 'text-white/80 hover:bg-white/10 dark:text-noche-tinta-suave dark:hover:bg-noche-tarjeta'
-              }`}
-            >
-              <IdCard size={18} strokeWidth={2} />
-              <span>Mi Credencial QR</span>
-            </button>
-          </nav>
-        </div>
-
-        <div className="mt-6 flex flex-col gap-3 border-t border-white/20 pt-4 dark:border-noche-borde">
-          <div>
-            <span className="block text-xs font-semibold text-white/75 dark:text-noche-tinta-suave">
-              Administrador Global
-            </span>
-            <span className="text-sm font-bold">{nombreCompleto(admin)}</span>
+            {soyAdmin && (
+              <button
+                type="button"
+                onClick={() => setPestana('catalogos')}
+                className={`min-h-9 cursor-pointer rounded-lg px-3 text-xs font-semibold transition-colors ${
+                  pestana === 'catalogos'
+                    ? 'bg-udec text-white'
+                    : 'text-tinta-suave hover:bg-tarjeta dark:text-noche-tinta-suave dark:hover:bg-noche-tarjeta'
+                }`}
+              >
+                Catálogos y Auditoría
+              </button>
+            )}
           </div>
-          <button
-            type="button"
-            onClick={() => void cerrarSesion()}
-            className="btn min-h-10 w-full border border-white/25 bg-white/10 text-white hover:bg-white/20 dark:border-noche-borde dark:bg-noche-tarjeta"
-          >
-            <LogOut size={16} strokeWidth={2} />
-            <span>Cerrar Sesión</span>
-          </button>
+        )}
+      </div>
+
+      {error && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-3 text-xs font-semibold text-red-900 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+        >
+          <AlertCircle size={16} strokeWidth={2} className="mt-0.5 shrink-0" />
+          <span>{error}</span>
         </div>
-      </aside>
       )}
 
-      {/* Contenido principal */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        {!embebido && (
-          <BarraEstado
-            etiquetaDerecha={`${pendientes.length} ${
-              pendientes.length === 1 ? 'solicitud pendiente' : 'solicitudes pendientes'
-            }`}
-          />
-        )}
+      {aviso && (
+        <div
+          role="status"
+          className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-3 text-xs font-semibold text-emerald-900 dark:bg-noche-campo dark:text-activo-claro"
+        >
+          <CheckCircle2 size={16} strokeWidth={2} className="mt-0.5 shrink-0" />
+          <span>{aviso}</span>
+        </div>
+      )}
 
-        <main className={embebido ? 'flex flex-1 flex-col gap-5' : 'flex flex-1 flex-col gap-5 p-4 md:p-6'}>
-          {(pestana === 'pendientes' || pestana === 'directorio' || pestana === 'catalogos') && (
-            <>
-              {/* Cabecera y pestañas */}
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <h2 className="text-2xl font-bold tracking-tight text-tinta dark:text-noche-tinta">
-                    Consola del Administrador Global
-                  </h2>
-                  <p className="mt-0.5 text-sm text-tinta-suave dark:text-noche-tinta-suave">
-                    Gestión de altas, adscripciones, bajas operativas y catálogos de radio.
-                  </p>
-                </div>
-
-                <div className="inline-flex flex-wrap gap-1.5 rounded-lg border border-borde bg-superficie-suave p-1 dark:border-noche-borde dark:bg-noche-campo">
-                  <button
-                    type="button"
-                    onClick={() => setPestana('pendientes')}
-                    className={`min-h-10 cursor-pointer rounded-md px-3 text-xs font-semibold transition-colors ${
-                      pestana === 'pendientes'
-                        ? 'bg-udec text-white'
-                        : 'bg-salvia text-udec-oscuro dark:bg-noche-tarjeta dark:text-noche-tinta-suave'
-                    }`}
-                  >
-                    Aprobación de Usuarios ({pendientes.length})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPestana('directorio')}
-                    className={`min-h-10 cursor-pointer rounded-md px-3 text-xs font-semibold transition-colors ${
-                      pestana === 'directorio'
-                        ? 'bg-udec text-white'
-                        : 'bg-salvia text-udec-oscuro dark:bg-noche-tarjeta dark:text-noche-tinta-suave'
-                    }`}
-                  >
-                    Directorio y Bajas ({directorio.length})
-                  </button>
-                  {admin.rol_sistema === 'Administrador' && (
-                    <button
-                      type="button"
-                      onClick={() => setPestana('catalogos')}
-                      className={`min-h-10 cursor-pointer rounded-md px-3 text-xs font-semibold transition-colors ${
-                        pestana === 'catalogos'
-                          ? 'bg-udec text-white'
-                          : 'bg-salvia text-udec-oscuro dark:bg-noche-tarjeta dark:text-noche-tinta-suave'
-                      }`}
-                    >
-                      Catálogos y Auditoría
-                    </button>
-                  )}
-                </div>
-              </div>
-            </>
-          )}
-
-          {error && (
-            <div
-              role="alert"
-              className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-3 text-sm text-red-900 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
-            >
-              <AlertCircle size={18} strokeWidth={2} className="mt-0.5 shrink-0" />
-              <span>{error}</span>
-            </div>
-          )}
-
-          {aviso && (
-            <div
-              role="status"
-              className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-3 text-sm text-emerald-900 dark:bg-noche-campo dark:text-activo-claro"
-            >
-              <CheckCircle2 size={18} strokeWidth={2} className="mt-0.5 shrink-0" />
-              <span>{aviso}</span>
-            </div>
-          )}
-
-          {/* PESTAÑA 1: Aprobación de Usuarios (Pendientes) */}
-          {pestana === 'pendientes' && (
-            <section aria-label="Solicitudes pendientes" className="flex flex-col gap-4">
-              {cargandoPendientes ? (
-                <div className="tarjeta flex flex-col gap-3 p-4">
-                  <div className="h-5 w-48 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
-                  <div className="h-4 w-72 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-                    <div className="h-12 animate-pulse rounded-lg bg-esqueleto dark:bg-noche-borde" />
-                    <div className="h-12 animate-pulse rounded-lg bg-esqueleto dark:bg-noche-borde" />
-                    <div className="h-12 animate-pulse rounded-lg bg-esqueleto dark:bg-noche-borde" />
-                    <div className="h-12 animate-pulse rounded-lg bg-esqueleto dark:bg-noche-borde" />
-                  </div>
-                </div>
-              ) : pendientes.length === 0 ? (
-                <article className="tarjeta flex flex-col items-center gap-2 p-8 text-center">
-                  <ShieldCheck
-                    size={36}
-                    strokeWidth={2}
-                    className="text-activo dark:text-activo-claro"
-                  />
-                  <h3 className="text-base font-semibold text-tinta dark:text-noche-tinta">
-                    Sin solicitudes pendientes
-                  </h3>
-                  <p className="text-sm text-tinta-suave dark:text-noche-tinta-suave">
-                    Cuando un nuevo brigadista complete su registro, aparecerá aquí automáticamente
-                    para su aprobación.
-                  </p>
-                </article>
-              ) : (
-                pendientes.map((u) => (
-                  <TarjetaPendiente
-                    key={u.uid}
-                    admin={admin}
-                    usuario={u}
-                    alNotificar={(msg) => setAviso(msg)}
-                    alError={(msg) => setError(msg || null)}
-                  />
-                ))
-              )}
-            </section>
-          )}
-
-          {/* PESTAÑA 2: Directorio y Bajas */}
-          {pestana === 'directorio' && (
-            <section aria-label="Directorio y Bajas" className="flex flex-col gap-4">
-              {/* Barra de búsqueda y filtro */}
-              <div className="tarjeta flex flex-wrap items-center gap-3 p-3">
-                <div className="relative min-w-56 flex-1">
-                  <Search
-                    size={18}
-                    strokeWidth={2}
-                    className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-tinta-suave dark:text-noche-tinta-suave"
-                  />
-                  <input
-                    type="search"
-                    placeholder="Buscar por nombre, cuenta o correo..."
-                    value={busqueda}
-                    onChange={(e) => setBusqueda(e.target.value)}
-                    className="campo pl-10"
-                  />
-                </div>
-                <div className="inline-flex gap-1">
-                  {(['Todos', 'Activo', 'Inactivo'] as const).map((est) => (
-                    <button
-                      key={est}
-                      type="button"
-                      onClick={() => setFiltroEstatus(est)}
-                      className={`min-h-10 cursor-pointer rounded-lg px-3 text-xs font-semibold ${
-                        filtroEstatus === est
-                          ? 'bg-udec text-white'
-                          : 'bg-salvia text-udec-oscuro dark:bg-noche-campo dark:text-noche-tinta-suave'
-                      }`}
-                    >
-                      {est === 'Todos' ? 'Todos' : est === 'Activo' ? 'Activos' : 'Inactivos'}
-                    </button>
-                  ))}
-                </div>
+      {/* PESTAÑA 1: DIRECTORIO DE ALTA DENSIDAD (150 -> 300 personas, sin fotos en listado) */}
+      {pestana === 'directorio' && (
+        <section aria-label="Directorio de Personal" className="flex flex-col gap-3">
+          {/* Barra de búsqueda + chips/selects 100% en cliente */}
+          <div className="tarjeta flex flex-col gap-2.5 p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative min-w-52 flex-1">
+                <Search
+                  size={15}
+                  strokeWidth={2}
+                  className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-tinta-suave dark:text-noche-tinta-suave"
+                />
+                <input
+                  type="search"
+                  placeholder="Buscar por nombre, cuenta, correo o clave de radio..."
+                  value={busqueda}
+                  onChange={(e) => setBusqueda(e.target.value)}
+                  className="campo min-h-9 pl-9 text-xs"
+                />
               </div>
 
-              {/* Panel de confirmación de baja */}
-              {bajaObjetivo && (
-                <article
-                  role="alertdialog"
-                  aria-label="Confirmar baja operativa"
-                  className="flex flex-col gap-3 rounded-xl border-2 border-alerta bg-alerta-suave p-4 dark:bg-noche-rojo-suave"
+              <div className="flex flex-wrap items-center gap-1">
+                {(['Todos', 'Activo', 'Pendiente', 'Inactivo'] as const).map((est) => (
+                  <button
+                    key={est}
+                    type="button"
+                    onClick={() => setFiltroEstatus(est)}
+                    className={`min-h-8 cursor-pointer rounded-full px-2.5 text-[11px] font-semibold ${
+                      filtroEstatus === est
+                        ? 'bg-udec text-white'
+                        : 'bg-salvia text-udec-oscuro dark:bg-noche-campo dark:text-noche-tinta-suave'
+                    }`}
+                  >
+                    {est}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-1">
+                {(['Todas', ...ETAPAS_BRIGADISTA] as const).map((et) => (
+                  <button
+                    key={et}
+                    type="button"
+                    onClick={() => setFiltroEtapa(et)}
+                    className={`min-h-8 cursor-pointer rounded-md px-2.5 text-[11px] font-semibold ${
+                      filtroEtapa === et
+                        ? 'bg-udec-oscuro text-white'
+                        : 'border border-borde bg-fondo text-tinta-suave dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta-suave'
+                    }`}
+                  >
+                    {et === 'Todas' ? 'Todas las etapas' : et}
+                  </button>
+                ))}
+              </div>
+
+              <select
+                aria-label="Filtrar por subgrupo"
+                value={filtroSubgrupo}
+                onChange={(e) => setFiltroSubgrupo(e.target.value)}
+                className="campo min-h-8 w-auto py-0.5 text-[11px] font-semibold"
+              >
+                <option value="TODOS">Todos los subgrupos</option>
+                {subgruposEnDirectorio.map((sg) => (
+                  <option key={sg} value={sg}>
+                    {sg}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                aria-label="Filtrar por ayudantía"
+                value={filtroAyudantia}
+                onChange={(e) => setFiltroAyudantia(e.target.value as 'Todas' | AyudantiaSlot)}
+                className="campo min-h-8 w-auto py-0.5 text-[11px] font-semibold"
+              >
+                <option value="Todas">Todas las ayudantías</option>
+                {AYUDANTIAS.map((ay) => (
+                  <option key={ay} value={ay}>
+                    {ay}
+                  </option>
+                ))}
+              </select>
+
+              {(soyAdmin || soyAP) && (
+                <select
+                  aria-label="Filtrar por rol"
+                  value={filtroRol}
+                  onChange={(e) => setFiltroRol(e.target.value as 'Todos' | RolSistema)}
+                  className="campo min-h-8 w-auto py-0.5 text-[11px] font-semibold"
                 >
-                  <div className="flex items-start gap-2.5">
-                    <UserX
-                      size={20}
-                      strokeWidth={2}
-                      className="mt-0.5 shrink-0 text-alerta dark:text-noche-rojo-texto"
-                    />
-                    <div>
-                      <h3 className="text-sm font-bold text-alerta dark:text-noche-rojo-texto">
-                        Confirmar baja operativa — {nombreCompleto(bajaObjetivo)}
-                      </h3>
-                      <p className="mt-0.5 text-xs text-tinta-suave dark:text-noche-tinta-suave">
-                        Esta acción bloqueará su sesión al instante y registrará el evento en la
-                        bitácora de auditoría.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <input
-                      type="text"
-                      maxLength={200}
-                      placeholder="Motivo de la baja (opcional)"
-                      value={motivoBaja}
-                      onChange={(e) => setMotivoBaja(e.target.value)}
-                      className="campo min-w-56 flex-1 bg-tarjeta dark:bg-noche-tarjeta"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setBajaObjetivo(null)
-                        setMotivoBaja('')
-                      }}
-                      disabled={procesandoUid === bajaObjetivo.uid}
-                      className="btn-salvia"
-                    >
-                      Cancelar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={confirmarBaja}
-                      disabled={procesandoUid === bajaObjetivo.uid}
-                      className="btn-rojo"
-                    >
-                      {procesandoUid === bajaObjetivo.uid
-                        ? 'Aplicando baja...'
-                        : 'Confirmar Baja Definitiva'}
-                    </button>
-                  </div>
-                </article>
+                  <option value="Todos">Todos los roles</option>
+                  {ROLES.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                </select>
               )}
 
-              {cargandoDirectorio ? (
-                <div className="tarjeta flex flex-col gap-3 p-4">
-                  <div className="h-10 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
-                  <div className="h-12 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
-                  <div className="h-12 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
-                </div>
-              ) : directorioFiltrado.length === 0 ? (
-                <article className="tarjeta flex flex-col items-center gap-2 p-8 text-center">
-                  <Users
-                    size={34}
-                    strokeWidth={2}
-                    className="text-tinta-suave dark:text-noche-tinta-suave"
-                  />
-                  <h3 className="text-base font-semibold text-tinta dark:text-noche-tinta">
-                    Sin brigadistas encontrados
-                  </h3>
-                  <p className="text-sm text-tinta-suave dark:text-noche-tinta-suave">
-                    Ajusta tu búsqueda o aprueba solicitudes pendientes para verlas en el directorio.
-                  </p>
-                </article>
-              ) : (
-                <div className="tarjeta overflow-x-auto">
-                  <table className="w-full border-collapse text-left">
-                    <thead className="bg-udec-oscuro text-white">
-                      <tr>
-                        <th scope="col" className="px-4 py-3 text-xs font-semibold">
-                          Brigadista
-                        </th>
-                        <th scope="col" className="px-4 py-3 text-xs font-semibold">
-                          Adscripción
-                        </th>
-                        <th scope="col" className="px-4 py-3 text-xs font-semibold">
-                          Rol del Sistema
-                        </th>
-                        <th scope="col" className="px-4 py-3 text-xs font-semibold">
-                          Estado
-                        </th>
-                        <th scope="col" className="px-4 py-3 text-xs font-semibold">
-                          Acción
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-borde dark:divide-noche-borde">
-                      {directorioFiltrado.map((u) => {
-                        const esPropio = u.uid === admin.uid
-                        const ocupado = procesandoUid === u.uid
-                        return (
-                          <tr key={u.uid}>
-                            <td className="px-4 py-3">
-                              <span className="block text-sm font-semibold text-tinta dark:text-noche-tinta">
-                                {nombreCompleto(u)}
-                                {esPropio ? ' (Tú)' : ''}
+              <span className="ml-auto text-[11px] font-semibold tabular-nums text-tinta-suave dark:text-noche-tinta-suave">
+                {directorioFiltrado.length} resultado{directorioFiltrado.length === 1 ? '' : 's'}
+              </span>
+            </div>
+          </div>
+
+          {/* Listado denso (avatares con iniciales, cero descargas de fotos_perfiles) */}
+          {cargando ? (
+            <div className="tarjeta flex flex-col gap-2 p-4">
+              <div className="h-10 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
+              <div className="h-10 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
+              <div className="h-10 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
+            </div>
+          ) : directorioFiltrado.length === 0 ? (
+            <article className="tarjeta flex flex-col items-center gap-2 p-8 text-center">
+              <Users size={30} strokeWidth={2} className="text-tinta-suave dark:text-noche-tinta-suave" />
+              <h3 className="text-sm font-bold text-tinta dark:text-noche-tinta">
+                Sin integrantes encontrados
+              </h3>
+              <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
+                Ajusta los filtros de etapa, subgrupo, ayudantía o búsqueda.
+              </p>
+            </article>
+          ) : (
+            <article className="tarjeta overflow-hidden">
+              {/* Móvil (< md): filas limpias de 2 líneas */}
+              <div className="divide-y divide-borde md:hidden dark:divide-noche-borde">
+                {directorioFiltrado.map((u) => {
+                  const clave = u.clave_radio || u.clave_personal_radio || ''
+                  return (
+                    <button
+                      key={u.uid}
+                      type="button"
+                      onClick={() => setExpedienteUid(u.uid)}
+                      className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-2.5 text-left hover:bg-superficie-suave dark:hover:bg-noche-campo/60"
+                    >
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-salvia text-[11px] font-extrabold text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
+                        {iniciales(u)}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate text-xs font-bold text-tinta dark:text-noche-tinta">
+                            {nombreCompleto(u)}
+                          </span>
+                          <span
+                            className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                              u.estatus === 'Activo'
+                                ? 'bg-activo-suave text-activo dark:bg-noche-campo dark:text-activo-claro'
+                                : u.estatus === 'Pendiente'
+                                  ? 'bg-ambar-suave text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto'
+                                  : 'bg-alerta-suave text-alerta dark:bg-noche-rojo-suave dark:text-noche-rojo-texto'
+                            }`}
+                          >
+                            {u.estatus}
+                          </span>
+                        </div>
+                        <p className="truncate text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
+                          {u.etapa}
+                          {u.subgrupo ? ` · ${u.subgrupo}` : ''} · {u.ayudantia} · {u.rol_sistema}
+                          {clave ? ` · ${clave}` : ''}
+                        </p>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* Escritorio (md+): tabla compacta */}
+              <div className="hidden overflow-x-auto md:block">
+                <table className="w-full border-collapse text-left">
+                  <thead className="bg-udec-oscuro text-white">
+                    <tr>
+                      <th scope="col" className="px-3 py-2 text-[11px] font-semibold">
+                        Integrante
+                      </th>
+                      <th scope="col" className="px-3 py-2 text-[11px] font-semibold">
+                        Etapa / Subgrupo
+                      </th>
+                      <th scope="col" className="px-3 py-2 text-[11px] font-semibold">
+                        Ayudantía
+                      </th>
+                      <th scope="col" className="px-3 py-2 text-[11px] font-semibold">
+                        Rol
+                      </th>
+                      <th scope="col" className="px-3 py-2 text-[11px] font-semibold">
+                        Radio
+                      </th>
+                      <th scope="col" className="px-3 py-2 text-[11px] font-semibold">
+                        Estatus
+                      </th>
+                      <th scope="col" className="px-3 py-2 text-right text-[11px] font-semibold">
+                        Expediente
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-borde dark:divide-noche-borde">
+                    {directorioFiltrado.map((u) => {
+                      const clave = u.clave_radio || u.clave_personal_radio || ''
+                      return (
+                        <tr
+                          key={u.uid}
+                          className="hover:bg-superficie-suave/60 dark:hover:bg-noche-campo/50"
+                        >
+                          <td className="px-3 py-2">
+                            <div className="flex items-center gap-2.5">
+                              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-salvia text-[11px] font-extrabold text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
+                                {iniciales(u)}
+                              </div>
+                              <div className="min-w-0">
+                                <span className="block truncate text-xs font-bold text-tinta dark:text-noche-tinta">
+                                  {nombreCompleto(u)}
+                                  {u.uid === admin.uid ? ' (Tú)' : ''}
+                                </span>
+                                <span className="text-[11px] tabular-nums text-tinta-suave dark:text-noche-tinta-suave">
+                                  {u.numero_cuenta}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 text-xs text-tinta dark:text-noche-tinta">
+                            <span className="font-semibold">{u.etapa}</span>
+                            {u.subgrupo && (
+                              <span className="ml-1 rounded bg-salvia px-1.5 py-0.5 text-[10px] font-bold text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
+                                {u.subgrupo}
                               </span>
-                              <span className="text-xs tabular-nums text-tinta-suave dark:text-noche-tinta-suave">
-                                {u.numero_cuenta}
-                                {u.clave_personal_radio
-                                  ? ` · Clave ${u.clave_personal_radio}`
-                                  : ''}
-                                {u.autorizado_radio ? ' · Radio' : ''}
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-xs text-tinta-suave dark:text-noche-tinta-suave">
+                            {u.ayudantia}
+                          </td>
+                          <td className="px-3 py-2 text-xs font-semibold text-tinta dark:text-noche-tinta">
+                            {u.rol_sistema}
+                          </td>
+                          <td className="px-3 py-2 text-xs whitespace-nowrap">
+                            {clave || u.autorizado_radio ? (
+                              <span className="inline-flex items-center gap-1 rounded bg-superficie-suave px-2 py-0.5 text-[11px] font-bold tabular-nums text-udec dark:bg-noche-campo dark:text-activo-claro">
+                                <Radio size={11} strokeWidth={2} />
+                                <span>{clave || 'Autorizado'}</span>
                               </span>
-                            </td>
-                            <td className="px-4 py-3 text-sm text-tinta dark:text-noche-tinta">
-                              {u.grupo_operativo === 'Ninguno'
-                                ? 'Sin grupo'
-                                : `Grupo ${u.grupo_operativo}`}{' '}
-                              · {u.ayudantia_slot}
-                            </td>
-                            <td className="px-4 py-3">
-                              <select
-                                aria-label={`Rol de ${nombreCompleto(u)}`}
-                                value={u.rol_sistema}
-                                disabled={
-                                  admin.rol_sistema !== 'Administrador' ||
-                                  esPropio ||
-                                  ocupado ||
-                                  u.estatus === 'Inactivo'
-                                }
-                                onChange={(e) =>
-                                  void manejarCambioRol(u, e.target.value as RolSistema)
-                                }
-                                className="campo min-h-10 w-auto py-1 text-sm"
-                              >
-                                {ROLES.map((r) => (
-                                  <option key={r} value={r}>
-                                    {r}
-                                  </option>
-                                ))}
-                              </select>
-                            </td>
-                            <td className="px-4 py-3">
-                              {u.estatus === 'Activo' ? (
-                                <span className="inline-flex rounded-full bg-activo-suave px-3 py-1 text-xs font-bold text-activo dark:border dark:border-activo-claro dark:bg-noche-campo dark:text-activo-claro">
-                                  ACTIVO
-                                </span>
-                              ) : (
-                                <span className="inline-flex rounded-full bg-alerta-suave px-3 py-1 text-xs font-bold text-alerta dark:border dark:border-alerta dark:bg-noche-rojo-suave dark:text-noche-rojo-texto">
-                                  INACTIVO
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-4 py-3">
-                              {u.estatus === 'Activo' && !esPropio ? (
-                                <button
-                                  type="button"
-                                  disabled={ocupado}
-                                  onClick={() => {
-                                    setBajaObjetivo(u)
-                                    setMotivoBaja('')
-                                  }}
-                                  className="btn-rojo min-h-10 px-3 text-xs whitespace-nowrap"
-                                >
-                                  Dar de Baja (Inactivo)
-                                </button>
-                              ) : (
-                                <span className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-                                  {esPropio ? 'Sesión actual' : 'Baja aplicada'}
-                                </span>
-                              )}
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </section>
+                            ) : (
+                              <span className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
+                                —
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            <span
+                              className={`inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                                u.estatus === 'Activo'
+                                  ? 'bg-activo-suave text-activo dark:bg-noche-campo dark:text-activo-claro'
+                                  : u.estatus === 'Pendiente'
+                                    ? 'bg-ambar-suave text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto'
+                                    : 'bg-alerta-suave text-alerta dark:bg-noche-rojo-suave dark:text-noche-rojo-texto'
+                              }`}
+                            >
+                              {u.estatus}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <button
+                              type="button"
+                              onClick={() => setExpedienteUid(u.uid)}
+                              className="btn-salvia min-h-8 px-2.5 text-[11px]"
+                            >
+                              <Eye size={13} strokeWidth={2} />
+                              <span>Abrir</span>
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </article>
           )}
+        </section>
+      )}
 
-          {pestana === 'catalogos' && <CatalogosAuditoriaTab admin={admin} />}
+      {/* PESTAÑA 2: SOLICITUDES PENDIENTES DE APROBACIÓN */}
+      {pestana === 'pendientes' && puedeVerPendientes && (
+        <section aria-label="Solicitudes pendientes" className="flex flex-col gap-3">
+          {pendientes.length === 0 ? (
+            <article className="tarjeta flex flex-col items-center gap-2 p-8 text-center">
+              <ShieldCheck size={34} strokeWidth={2} className="text-activo dark:text-activo-claro" />
+              <h3 className="text-sm font-bold text-tinta dark:text-noche-tinta">
+                Sin solicitudes pendientes
+              </h3>
+              <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
+                Cuando un nuevo brigadista complete su registro, aparecerá aquí para asignar etapa,
+                subgrupo y ayudantía.
+              </p>
+            </article>
+          ) : (
+            pendientes.map((u) => (
+              <TarjetaPendiente
+                key={u.uid}
+                actor={admin}
+                usuario={u}
+                subgruposActivos={subgruposActivos}
+                alNotificar={(msg) => setAviso(msg)}
+                alError={(msg) => setError(msg || null)}
+              />
+            ))
+          )}
+        </section>
+      )}
 
-          {pestana === 'operativos' && <OperativosPanelPage usuario={admin} />}
+      {/* PESTAÑA 3: CATÁLOGOS Y AUDITORÍA (EXCLUSIVO ADMIN) */}
+      {pestana === 'catalogos' && soyAdmin && <CatalogosAuditoriaTab admin={admin} />}
 
-          {pestana === 'radio' && <RadioConsolePage usuario={admin} />}
-
-          {pestana === 'historial' && <HistorialDualPage usuario={admin} />}
-
-          {pestana === 'credencial' && <CredencialDigitalPage perfil={admin} />}
-        </main>
-      </div>
+      {/* EXPEDIENTE UNIFICADO (FOTO Y SUBCONSULTAS BAJO DEMANDA) */}
+      {usuarioExpediente && (
+        <ExpedienteUnificadoModal
+          key={usuarioExpediente.uid}
+          actor={admin}
+          usuario={usuarioExpediente}
+          subgruposActivos={subgruposActivos}
+          alCerrar={() => setExpedienteUid(null)}
+        />
+      )}
     </div>
   )
 }
