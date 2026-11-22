@@ -1,6 +1,10 @@
 import { BookOpen, Database, Search, X } from 'lucide-react'
-import { useState } from 'react'
-import { ETIQUETAS_TABLAS_REBACE, TABLAS_REBACE_ORDEN } from '../constants/rebaceSeed'
+import { useMemo, useState } from 'react'
+import {
+  combinarCatalogoRebaceConOffline,
+  ETIQUETAS_TABLAS_REBACE,
+  TABLAS_REBACE_ORDEN,
+} from '../constants/rebaceSeed'
 import type { ClaveRebace, TablaRebace, Usuario } from '../types'
 
 interface RebacePanelProps {
@@ -11,6 +15,13 @@ interface RebacePanelProps {
   alPoblar?: () => void
   alInsertarCodigo: (codigo: string) => void
   alCerrarMovil?: () => void
+}
+
+function normalizarTexto(s: string): string {
+  return s
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
 }
 
 export function RebacePanel({
@@ -24,33 +35,44 @@ export function RebacePanel({
 }: RebacePanelProps) {
   const [tablaActiva, setTablaActiva] = useState<TablaRebace>('codigos_1_100')
   const [busqueda, setBusqueda] = useState('')
-  const [soloBasicos, setSoloBasicos] = useState(true)
+  const [soloBasicos, setSoloBasicos] = useState(false)
+  const [filtroPersonal, setFiltroPersonal] = useState<'Todos' | 'Personal' | 'Unidad'>('Todos')
 
-  const q = busqueda.trim().toLowerCase()
-  const filtradas = claves.filter((c) => {
-    if (!q && c.tabla !== tablaActiva) return false
-    if (soloBasicos && !c.es_basico && !q) return false
-    if (!q) return true
-    return (
-      c.codigo.toLowerCase().includes(q) ||
-      c.significado.toLowerCase().includes(q) ||
-      c.categoria.toLowerCase().includes(q)
-    )
-  })
+  // Disponibilidad 100% offline instantánea combinada con personalizaciones en Firestore
+  const catalogoEfectivo = useMemo(() => combinarCatalogoRebaceConOffline(claves), [claves])
+
+  const q = normalizarTexto(busqueda.trim())
+  const filtradas = useMemo(
+    () =>
+      catalogoEfectivo.filter((c) => {
+        if (!q && c.tabla !== tablaActiva) return false
+        if (!q && tablaActiva === 'claves_personales' && filtroPersonal !== 'Todos') {
+          if (c.categoria !== filtroPersonal) return false
+        }
+        if (soloBasicos && !c.es_basico && !q) return false
+        if (!q) return true
+        return (
+          normalizarTexto(c.codigo).includes(q) ||
+          normalizarTexto(c.significado).includes(q) ||
+          normalizarTexto(c.categoria).includes(q)
+        )
+      }),
+    [catalogoEfectivo, q, tablaActiva, filtroPersonal, soloBasicos],
+  )
 
   return (
     <div className="flex h-full flex-col bg-tarjeta dark:bg-noche-tarjeta">
-      <div className="flex flex-col gap-3 border-b border-borde p-4 dark:border-noche-borde">
+      <div className="flex flex-col gap-2.5 border-b border-borde p-3 dark:border-noche-borde">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <BookOpen size={18} strokeWidth={2} className="text-udec dark:text-activo-claro" />
+            <BookOpen size={17} strokeWidth={2} className="text-udec dark:text-activo-claro" />
             <h3 className="text-sm font-bold text-tinta dark:text-noche-tinta">
               Claves ReBaCE v2
             </h3>
           </div>
           <div className="flex items-center gap-2">
             <span className="rounded bg-salvia px-2 py-0.5 text-[11px] font-bold text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
-              Oficial
+              Offline · {filtradas.length}
             </span>
             {alCerrarMovil && (
               <button
@@ -67,30 +89,18 @@ export function RebacePanel({
 
         <div className="relative">
           <Search
-            size={16}
+            size={15}
             strokeWidth={2}
             className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-tinta-suave dark:text-noche-tinta-suave"
           />
           <input
             type="search"
-            placeholder="Buscar código o significado..."
+            placeholder="Buscar código, nombre o unidad..."
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
-            className="campo min-h-10 pl-9 text-xs"
+            className="campo min-h-9 pl-9 text-xs"
           />
         </div>
-
-        <label className="flex cursor-pointer items-center gap-2">
-          <input
-            type="checkbox"
-            checked={soloBasicos}
-            onChange={(e) => setSoloBasicos(e.target.checked)}
-            className="h-4 w-4 rounded accent-ambar"
-          />
-          <span className="text-xs font-semibold text-tinta dark:text-noche-tinta">
-            Solo básicos (resaltados)
-          </span>
-        </label>
 
         {/* 5 pestañas de tablas ReBaCE v2 */}
         <div className="flex flex-wrap gap-1">
@@ -112,38 +122,56 @@ export function RebacePanel({
             </button>
           ))}
         </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {!q && tablaActiva === 'claves_personales' ? (
+            <div className="flex items-center gap-1">
+              {(['Todos', 'Personal', 'Unidad'] as const).map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setFiltroPersonal(cat)}
+                  className={`cursor-pointer rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
+                    filtroPersonal === cat
+                      ? 'bg-udec text-white'
+                      : 'bg-superficie-suave text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave'
+                  }`}
+                >
+                  {cat === 'Unidad' ? 'Unidades' : cat}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <label className="flex cursor-pointer items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={soloBasicos}
+                onChange={(e) => setSoloBasicos(e.target.checked)}
+                className="h-3.5 w-3.5 rounded accent-ambar"
+              />
+              <span className="text-[11px] font-semibold text-tinta dark:text-noche-tinta">
+                Solo básicos
+              </span>
+            </label>
+          )}
+
+          {claves.length === 0 && !cargando && usuario.rol_sistema === 'Administrador' && alPoblar && (
+            <button
+              type="button"
+              disabled={poblando}
+              onClick={alPoblar}
+              className="inline-flex cursor-pointer items-center gap-1 rounded bg-salvia px-2 py-0.5 text-[11px] font-semibold text-udec-oscuro hover:bg-salvia-hover dark:bg-noche-campo dark:text-activo-claro"
+            >
+              <Database size={12} strokeWidth={2} />
+              <span>{poblando ? 'Sincronizando...' : 'Guardar en nube'}</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Lista de claves */}
-      <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-3">
-        {cargando ? (
-          <div className="flex flex-col gap-2">
-            <div className="h-12 animate-pulse rounded-lg bg-esqueleto dark:bg-noche-borde" />
-            <div className="h-12 animate-pulse rounded-lg bg-esqueleto dark:bg-noche-borde" />
-            <div className="h-12 animate-pulse rounded-lg bg-esqueleto dark:bg-noche-borde" />
-          </div>
-        ) : claves.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 p-4 text-center">
-            <Database size={28} strokeWidth={2} className="text-tinta-suave dark:text-noche-tinta-suave" />
-            <p className="text-xs font-semibold text-tinta dark:text-noche-tinta">
-              Catálogo ReBaCE v2 vacío en Firestore
-            </p>
-            {usuario.rol_sistema === 'Administrador' && alPoblar ? (
-              <button
-                type="button"
-                disabled={poblando}
-                onClick={alPoblar}
-                className="btn-verde min-h-10 w-full text-xs"
-              >
-                {poblando ? 'Poblando catálogo...' : 'Cargar 5 tablas ReBaCE v2'}
-              </button>
-            ) : (
-              <p className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
-                Solicita a un Administrador que inicialice el catálogo oficial ReBaCE v2.
-              </p>
-            )}
-          </div>
-        ) : filtradas.length === 0 ? (
+      <div className="flex flex-1 flex-col gap-1.5 overflow-y-auto p-2.5">
+        {filtradas.length === 0 ? (
           <p className="py-6 text-center text-xs text-tinta-suave dark:text-noche-tinta-suave">
             Sin coincidencias. Desactiva &ldquo;Solo básicos&rdquo; o cambia tu búsqueda.
           </p>
@@ -154,26 +182,30 @@ export function RebacePanel({
               type="button"
               onClick={() => alInsertarCodigo(c.codigo)}
               title="Clic para insertar en Actividades"
-              className={`flex w-full cursor-pointer items-start justify-between gap-2 rounded-lg border px-3 py-2 text-left transition-colors ${
+              className={`flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-colors ${
                 c.es_basico
-                  ? 'border-ambar bg-ambar-suave hover:bg-amber-100/70 dark:border-ambar dark:bg-noche-ambar dark:hover:bg-amber-950/60'
+                  ? 'border-ambar/70 bg-ambar-suave/70 hover:bg-amber-100/70 dark:border-ambar/70 dark:bg-noche-ambar dark:hover:bg-amber-950/60'
                   : 'border-borde bg-fondo hover:border-udec dark:border-noche-borde dark:bg-noche-campo'
               }`}
             >
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-sm font-extrabold tabular-nums text-udec-oscuro dark:text-noche-tinta">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-xs font-extrabold tabular-nums text-udec-oscuro dark:text-noche-tinta">
                     {c.codigo}
                   </span>
-                  {c.es_basico && (
-                    <span className="rounded bg-ambar/20 px-1.5 py-0.5 text-[10px] font-bold text-ambar-texto dark:text-noche-ambar-texto">
-                      Básico
+                  {c.tabla === 'claves_personales' && (
+                    <span
+                      className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                        c.categoria === 'Unidad'
+                          ? 'bg-naranja-suave text-naranja-oscuro dark:bg-noche-tarjeta dark:text-naranja'
+                          : 'bg-salvia text-udec-oscuro dark:bg-noche-tarjeta dark:text-activo-claro'
+                      }`}
+                    >
+                      {c.categoria}
                     </span>
                   )}
                 </div>
-                <p className="mt-0.5 text-xs text-tinta dark:text-noche-tinta-suave">
-                  {c.significado}
-                </p>
+                <p className="text-xs text-tinta dark:text-noche-tinta-suave">{c.significado}</p>
               </div>
             </button>
           ))

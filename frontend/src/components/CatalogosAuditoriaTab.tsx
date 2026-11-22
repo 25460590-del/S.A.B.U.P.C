@@ -9,7 +9,11 @@ import {
   Trash2,
 } from 'lucide-react'
 import { useEffect, useState, type FormEvent } from 'react'
-import { ETIQUETAS_TABLAS_REBACE, TABLAS_REBACE_ORDEN } from '../constants/rebaceSeed'
+import {
+  combinarCatalogoRebaceConOffline,
+  ETIQUETAS_TABLAS_REBACE,
+  TABLAS_REBACE_ORDEN,
+} from '../constants/rebaceSeed'
 import {
   eliminarClaveCatalogo,
   escucharAuditoriaEventos,
@@ -37,8 +41,9 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
   const [editandoId, setEditandoId] = useState<string | null>(null)
   const [codigo, setCodigo] = useState('')
   const [significado, setSignificado] = useState('')
-  const [categoria, setCategoria] = useState('Unidad')
+  const [categoria, setCategoria] = useState('Personal')
   const [esBasico, setEsBasico] = useState(true)
+  const [filtroCatPersonal, setFiltroCatPersonal] = useState<'Todos' | 'Personal' | 'Unidad'>('Todos')
 
   const [busquedaAudit, setBusquedaAudit] = useState('')
   const [filtroTipoAudit, setFiltroTipoAudit] = useState('TODOS')
@@ -56,7 +61,14 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
     }
   }, [])
 
-  const clavesDeTabla = claves.filter((c) => c.tabla === tablaSel)
+  const catalogoEfectivo = combinarCatalogoRebaceConOffline(claves)
+  const clavesDeTabla = catalogoEfectivo.filter((c) => {
+    if (c.tabla !== tablaSel) return false
+    if (tablaSel === 'claves_personales' && filtroCatPersonal !== 'Todos') {
+      return c.categoria === filtroCatPersonal
+    }
+    return true
+  })
 
   const tiposUnicos = Array.from(new Set(eventos.map((e) => e.tipo)))
   const eventosFiltrados = eventos.filter((ev) => {
@@ -80,11 +92,11 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
     setEsBasico(c.es_basico)
   }
 
-  function limpiarFormulario() {
+  function limpiarFormulario(tablaDestino: TablaRebace = tablaSel) {
     setEditandoId(null)
     setCodigo('')
     setSignificado('')
-    setCategoria('Unidad')
+    setCategoria(tablaDestino === 'claves_personales' ? 'Personal' : 'General')
     setEsBasico(true)
   }
 
@@ -191,17 +203,15 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
                 Gestiona Claves Personales e indicadores oficiales en tiempo real.
               </p>
             </div>
-            {claves.length === 0 && (
-              <button
-                type="button"
-                disabled={ocupado}
-                onClick={() => void manejarSembrar()}
-                className="btn-verde min-h-9 px-3 text-xs"
-              >
-                <Database size={14} strokeWidth={2} />
-                <span>Sembrar ReBaCE v2</span>
-              </button>
-            )}
+            <button
+              type="button"
+              disabled={ocupado}
+              onClick={() => void manejarSembrar()}
+              className="btn-verde min-h-9 px-3 text-xs"
+            >
+              <Database size={14} strokeWidth={2} />
+              <span>{claves.length === 0 ? 'Sembrar ReBaCE v2' : 'Sincronizar oficial (114+)'}</span>
+            </button>
           </div>
 
           <div className="flex flex-wrap gap-1.5">
@@ -211,7 +221,7 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
                 type="button"
                 onClick={() => {
                   setTablaSel(t)
-                  limpiarFormulario()
+                  limpiarFormulario(t)
                 }}
                 className={`cursor-pointer rounded-md px-2.5 py-1.5 text-xs font-semibold ${
                   tablaSel === t
@@ -252,14 +262,26 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
 
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-3">
-                <input
-                  type="text"
-                  maxLength={80}
-                  placeholder="Categoría"
-                  value={categoria}
-                  onChange={(e) => setCategoria(e.target.value)}
-                  className="campo min-h-9 w-36 text-xs"
-                />
+                {tablaSel === 'claves_personales' ? (
+                  <select
+                    aria-label="Categoría de clave personal o unidad"
+                    value={categoria === 'Unidad' ? 'Unidad' : 'Personal'}
+                    onChange={(e) => setCategoria(e.target.value)}
+                    className="campo min-h-9 w-36 text-xs font-semibold"
+                  >
+                    <option value="Personal">Personal</option>
+                    <option value="Unidad">Unidad</option>
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    maxLength={80}
+                    placeholder="Categoría"
+                    value={categoria}
+                    onChange={(e) => setCategoria(e.target.value)}
+                    className="campo min-h-9 w-36 text-xs"
+                  />
+                )}
                 <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs font-semibold text-tinta dark:text-noche-tinta">
                   <input
                     type="checkbox"
@@ -275,7 +297,7 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
                 {editandoId && (
                   <button
                     type="button"
-                    onClick={limpiarFormulario}
+                    onClick={() => limpiarFormulario()}
                     className="btn-salvia min-h-9 px-3 text-xs"
                   >
                     Cancelar
@@ -289,6 +311,25 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
             </div>
           </form>
 
+          {tablaSel === 'claves_personales' && (
+            <div className="flex items-center gap-1.5">
+              {(['Todos', 'Personal', 'Unidad'] as const).map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setFiltroCatPersonal(cat)}
+                  className={`cursor-pointer rounded-full px-3 py-1 text-xs font-semibold ${
+                    filtroCatPersonal === cat
+                      ? 'bg-udec text-white'
+                      : 'bg-salvia text-udec-oscuro dark:bg-noche-campo dark:text-noche-tinta-suave'
+                  }`}
+                >
+                  {cat === 'Unidad' ? 'Unidades Móviles' : cat}
+                </button>
+              ))}
+            </div>
+          )}
+
           {/* Lista de claves */}
           <div className="flex max-h-96 flex-col divide-y divide-borde overflow-y-auto border-t border-borde dark:divide-noche-borde dark:border-noche-borde">
             {clavesDeTabla.length === 0 ? (
@@ -296,7 +337,9 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
                 Sin claves en esta tabla. Agrega una nueva o siembra el catálogo ReBaCE v2.
               </p>
             ) : (
-              clavesDeTabla.map((c) => (
+              clavesDeTabla.map((c) => {
+                const estaEnNube = claves.some((x) => x.id === c.id)
+                return (
                 <div
                   key={c.id}
                   className="flex items-center justify-between gap-2 py-2.5"
@@ -305,6 +348,17 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
                     <span className="text-sm font-bold text-tinta dark:text-noche-tinta">
                       {c.codigo}
                     </span>{' '}
+                    {c.tabla === 'claves_personales' && (
+                      <span
+                        className={`mr-1 rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                          c.categoria === 'Unidad'
+                            ? 'bg-naranja-suave text-naranja-oscuro dark:bg-noche-campo dark:text-naranja'
+                            : 'bg-salvia text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro'
+                        }`}
+                      >
+                        {c.categoria}
+                      </span>
+                    )}
                     <span className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
                       — {c.significado}
                     </span>
@@ -318,18 +372,21 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
                     >
                       <Pencil size={14} strokeWidth={2} />
                     </button>
-                    <button
-                      type="button"
-                      disabled={ocupado}
-                      onClick={() => void manejarEliminar(c)}
-                      aria-label={`Eliminar ${c.codigo}`}
-                      className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded border border-alerta/50 bg-tarjeta text-alerta hover:bg-alerta-suave dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
-                    >
-                      <Trash2 size={14} strokeWidth={2} />
-                    </button>
+                    {estaEnNube && (
+                      <button
+                        type="button"
+                        disabled={ocupado}
+                        onClick={() => void manejarEliminar(c)}
+                        aria-label={`Eliminar ${c.codigo}`}
+                        className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded border border-alerta/50 bg-tarjeta text-alerta hover:bg-alerta-suave dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+                      >
+                        <Trash2 size={14} strokeWidth={2} />
+                      </button>
+                    )}
                   </div>
                 </div>
-              ))
+                )
+              })
             )}
           </div>
         </article>

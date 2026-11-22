@@ -1,14 +1,23 @@
-import { Moon, Sun, WifiOff } from 'lucide-react'
+import { RefreshCw, ShieldAlert, WifiOff } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { useTema } from '../context/TemaContext'
 
 interface BarraEstadoProps {
+  /** Reservado por retrocompatibilidad; no se muestra en estado estable. */
   etiquetaDerecha?: string
   variante?: 'normal' | 'alerta'
+  /** Muestra la franja compacta de sincronización cuando hay escrituras locales pendientes. */
+  sincronizando?: boolean
 }
 
-export function BarraEstado({ etiquetaDerecha, variante = 'normal' }: BarraEstadoProps) {
-  const { esOscuro, alternarTema } = useTema()
+/**
+ * Indicador de conexión silencioso (UI limpia):
+ * - En conexión estable: NO renderiza ninguna barra superior.
+ * - Solo aparece ante un estado accionable: sin conexión, sincronizando cambios pendientes o alerta de acceso.
+ */
+export function BarraEstado({
+  variante = 'normal',
+  sincronizando = false,
+}: BarraEstadoProps) {
   const [enLinea, setEnLinea] = useState(() => navigator.onLine)
 
   useEffect(() => {
@@ -22,51 +31,41 @@ export function BarraEstado({ etiquetaDerecha, variante = 'normal' }: BarraEstad
     }
   }, [])
 
-  const estiloBarra =
-    variante === 'alerta'
-      ? 'bg-tarjeta text-alerta border-alerta dark:bg-noche-rojo-suave dark:text-noche-rojo-texto dark:border-alerta'
-      : enLinea
-        ? 'bg-activo-suave text-activo border-activo dark:bg-noche-campo dark:text-activo-claro dark:border-noche-borde'
-        : 'bg-ambar-suave text-ambar-texto border-ambar dark:bg-noche-ambar dark:text-noche-ambar-texto dark:border-ambar'
-
-  return (
-    <div
-      role="status"
-      className={`flex w-full items-center justify-between gap-2 border-b px-4 py-1.5 text-xs font-semibold ${estiloBarra}`}
-    >
-      <div className="flex items-center gap-2">
-        {variante === 'alerta' ? (
-          <>
-            <span className="h-2 w-2 rounded-full bg-alerta" aria-hidden="true" />
-            <span>Acceso Restringido · {esOscuro ? 'Modo Nocturno' : 'BUPC'}</span>
-          </>
-        ) : enLinea ? (
-          <>
-            <span className="h-2 w-2 rounded-full bg-activo dark:bg-activo-claro" aria-hidden="true" />
-            <span>En línea · {esOscuro ? 'Modo Nocturno' : 'Sincronizado'}</span>
-          </>
-        ) : (
-          <>
-            <WifiOff size={14} strokeWidth={2} aria-hidden="true" />
-            <span>Sin conexión · Caché local activa</span>
-          </>
-        )}
+  if (variante === 'alerta') {
+    return (
+      <div
+        role="status"
+        className="flex w-full items-center justify-center gap-2 border-b border-alerta bg-alerta-suave px-3 py-1.5 text-xs font-semibold text-alerta dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+      >
+        <ShieldAlert size={14} strokeWidth={2} aria-hidden="true" />
+        <span>Acceso restringido · Cuenta inactiva</span>
       </div>
+    )
+  }
 
-      <div className="flex items-center gap-3">
-        {etiquetaDerecha && (
-          <span className="tabular-nums opacity-90">{etiquetaDerecha}</span>
-        )}
-        <button
-          type="button"
-          onClick={alternarTema}
-          aria-label={esOscuro ? 'Cambiar a modo día' : 'Cambiar a modo nocturno'}
-          title={esOscuro ? 'Cambiar a modo día' : 'Cambiar a modo nocturno'}
-          className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-current/25 hover:bg-black/5 dark:hover:bg-white/10"
-        >
-          {esOscuro ? <Sun size={14} strokeWidth={2} /> : <Moon size={14} strokeWidth={2} />}
-        </button>
+  if (!enLinea) {
+    return (
+      <div
+        role="status"
+        className="flex w-full items-center justify-center gap-2 border-b border-ambar bg-ambar-suave px-3 py-1.5 text-xs font-semibold text-ambar-texto dark:border-ambar/70 dark:bg-noche-ambar dark:text-noche-ambar-texto"
+      >
+        <WifiOff size={14} strokeWidth={2} aria-hidden="true" />
+        <span>Sin conexión — guardando localmente</span>
       </div>
-    </div>
-  )
+    )
+  }
+
+  if (sincronizando) {
+    return (
+      <div
+        role="status"
+        className="flex w-full items-center justify-center gap-2 border-b border-borde bg-salvia px-3 py-1.5 text-xs font-semibold text-udec-oscuro dark:border-noche-borde dark:bg-noche-campo dark:text-activo-claro"
+      >
+        <RefreshCw size={13} strokeWidth={2} className="animate-spin" aria-hidden="true" />
+        <span>Sincronizando cambios pendientes</span>
+      </div>
+    )
+  }
+
+  return null
 }

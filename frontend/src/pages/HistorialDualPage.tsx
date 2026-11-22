@@ -24,6 +24,7 @@ import type { AsistenciaPersonal, CategoriaOperativo, Operativo, Usuario } from 
 
 interface HistorialDualPageProps {
   usuario: Usuario
+  pestanaInicial?: 'personal' | 'archivo'
 }
 
 function formatearFechaCorta(ms?: number): string {
@@ -33,11 +34,16 @@ function formatearFechaCorta(ms?: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-export function HistorialDualPage({ usuario }: HistorialDualPageProps) {
+export function HistorialDualPage({
+  usuario,
+  pestanaInicial = 'personal',
+}: HistorialDualPageProps) {
   const esGestor =
     usuario.rol_sistema === 'Encargado' || usuario.rol_sistema === 'Administrador'
 
-  const [pestana, setPestana] = useState<'personal' | 'archivo'>('personal')
+  const [pestana, setPestana] = useState<'personal' | 'archivo'>(
+    pestanaInicial === 'archivo' && esGestor ? 'archivo' : 'personal',
+  )
   const [misAsistencias, setMisAsistencias] = useState<AsistenciaPersonal[]>([])
   const [operativos, setOperativos] = useState<Operativo[]>([])
   const [cargando, setCargando] = useState(true)

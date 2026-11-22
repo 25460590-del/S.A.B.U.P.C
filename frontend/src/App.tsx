@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { BarraEstado } from './components/BarraEstado'
 import { BupcLogo } from './components/BupcLogo'
 import { useSesion } from './context/SesionContext'
-import { AdminConsolePage } from './pages/AdminConsolePage'
 import { CuentaEnRevisionPage } from './pages/CuentaEnRevisionPage'
 import { LoginPage } from './pages/LoginPage'
 import { PanelActivoPage } from './pages/PanelActivoPage'
@@ -108,11 +107,6 @@ export default function App() {
     return <CuentaEnRevisionPage perfil={perfil} />
   }
 
-  // 9. Administrador activo → Consola del Administrador Global
-  if (perfil.rol_sistema === 'Administrador') {
-    return <AdminConsolePage admin={perfil} />
-  }
-
-  // 10. Brigadista o Encargado activo
+  // 9. Usuario activo (Brigadista, Encargado o Administrador) → Shell unificado RBAC aditivo
   return <PanelActivoPage perfil={perfil} />
 }

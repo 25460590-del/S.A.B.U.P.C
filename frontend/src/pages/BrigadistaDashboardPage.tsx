@@ -22,6 +22,7 @@ import type { AsistenciaPersonal, EquipoTurno, Usuario } from '../types'
 
 interface BrigadistaDashboardPageProps {
   perfil: Usuario
+  enfoque?: 'escaner' | 'material'
 }
 
 function formatearHora(ms?: number): string {
@@ -40,7 +41,7 @@ function formatearDuracion(ms: number): string {
   return `${pad(h)}:${pad(m)}:${pad(s)}`
 }
 
-export function BrigadistaDashboardPage({ perfil }: BrigadistaDashboardPageProps) {
+export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboardPageProps) {
   const [asistencias, setAsistencias] = useState<AsistenciaPersonal[]>([])
   const [cargando, setCargando] = useState(true)
   const [equiposPorAsistencia, setEquiposPorAsistencia] = useState<{
@@ -51,7 +52,7 @@ export function BrigadistaDashboardPage({ perfil }: BrigadistaDashboardPageProps
 
   const [abriendoEscaner, setAbriendoEscaner] = useState(false)
   const [procesandoQr, setProcesandoQr] = useState(false)
-  const [abriendoEquipo, setAbriendoEquipo] = useState(false)
+  const [abriendoEquipo, setAbriendoEquipo] = useState(enfoque === 'material')
   const [candadoPendientes, setCandadoPendientes] = useState<EquipoTurno[] | null>(null)
   const [aviso, setAviso] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)

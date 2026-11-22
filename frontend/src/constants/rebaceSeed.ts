@@ -17,55 +17,179 @@ export const TABLAS_REBACE_ORDEN: TablaRebace[] = [
 ]
 
 export const CANALES_SUGERIDOS: { nombre: string; etiqueta: string; unidades: string[] }[] = [
-  { nombre: 'CECOM', etiqueta: 'Canal 1 · Base', unidades: ['CECOM', '58A', 'E4', 'E5', 'BUPC 1'] },
-  { nombre: '58A / Puesto de Mando', etiqueta: 'Canal 2 · Mando', unidades: ['58A', 'CECOM', 'Jefe Sector'] },
-  { nombre: 'BUPC 1', etiqueta: 'Canal 3 · Campo', unidades: ['CECOM', 'BUPC 1', 'E1', 'E2'] },
-  { nombre: 'BUPC 2', etiqueta: 'Canal 4 · Apoyo', unidades: ['CECOM', 'BUPC 2', 'E3', 'E4'] },
-  { nombre: 'Sala de Crisis', etiqueta: 'Canal 5 · Emergencia', unidades: ['58A', 'CECOM', 'Sala de Crisis'] },
+  { nombre: 'CECOM', etiqueta: 'Canal 1 · Base', unidades: ['CECOM', '58A', 'UCOL-01', 'UCOL-02', 'TESLA'] },
+  { nombre: '58A / Puesto de Mando', etiqueta: 'Canal 2 · Mando', unidades: ['58A', 'CECOM', '42', 'Piscis'] },
+  { nombre: 'BUPC 1', etiqueta: 'Canal 3 · Campo', unidades: ['CECOM', 'UCOL-01', 'UCOL-02', 'UCOL-03'] },
+  { nombre: 'BUPC 2', etiqueta: 'Canal 4 · Apoyo', unidades: ['CECOM', 'Lince', 'Apolo', 'Artemisa'] },
+  { nombre: 'Sala de Crisis', etiqueta: 'Canal 5 · Emergencia', unidades: ['58A', 'CECOM', '42'] },
+]
+
+/** Códigos básicos resaltados para referencia rápida en operación de radio. */
+const CODIGOS_BASICOS = new Set([
+  '1', '2', '2A', '2F', '3', '4', '5', '5G', '6', '7', '7A', '8', '10',
+  '17', '18', '18A', '19', '22', '23', '27', '31', '33', '33A', '34',
+  '36', '38', '38A', '42', '45', '50', '51', '51R', '58', '58A', '59',
+  '62', '63', '67', '67A', '70', '71', '95', '99', '100',
+])
+
+/**
+ * Listado oficial de 114 Códigos Generales de Radiocomunicación (100% offline).
+ */
+const CODIGOS_GENERALES_OFICIALES: readonly (readonly [string, string])[] = [
+  ['1', 'Urgencia'],
+  ['2', 'Bomberos'],
+  ['2A', 'Incendio'],
+  ['2B', 'Explosión'],
+  ['2F', 'Fuga de gas'],
+  ['2I', 'Inundación'],
+  ['3', 'Emergencia Grande'],
+  ['4', 'Ambulancia'],
+  ['5', 'Herido'],
+  ['5A', 'Herido Apuñalado'],
+  ['5B', 'Herido Baleado'],
+  ['5C', 'Herido Caído'],
+  ['5D', 'Herido Leve'],
+  ['5E', 'Herido Electrocutado'],
+  ['5F', 'Herido Fracturado'],
+  ['5G', 'Herido Grave'],
+  ['5I', 'Herido Intoxicado'],
+  ['5M', 'Herido Amputado'],
+  ['5P', 'Herido Golpeado'],
+  ['5Q', 'Herido Quemado'],
+  ['5R', 'Herido Cortado'],
+  ['5S', 'Herido Asfixiado'],
+  ['5Z', 'Herido Cardiaco'],
+  ['6', 'Regresamos Libres'],
+  ['7', 'En el lugar'],
+  ['7A', 'Situación Controlada'],
+  ['8', 'Policía'],
+  ['10', 'Traslado'],
+  ['11', 'Prensa'],
+  ['11A', 'Foto'],
+  ['12', 'Carretera'],
+  ['14', 'Cadáver'],
+  ['14S', 'Suicidio'],
+  ['15', 'Servicio Especial'],
+  ['15A', 'Servicio Administrativo'],
+  ['15M', 'Servicio de Mantenimiento'],
+  ['16', 'Teléfono'],
+  ['16C', 'Teléfono Celular'],
+  ['17', 'Repetir Mensaje'],
+  ['18', 'Enterado'],
+  ['18A', 'Afirmativo'],
+  ['19', 'Circulación o Ubicación'],
+  ['19A', 'Domicilio Particular'],
+  ['19P', 'Casa'],
+  ['20', 'Persona Ajena'],
+  ['20A', 'Familiar'],
+  ['21', 'Alimentos'],
+  ['21A', 'Agua'],
+  ['21D', 'Diésel'],
+  ['21G', 'Gasolina'],
+  ['21N', 'Sanitario'],
+  ['22', 'Falsa Alarma'],
+  ['22B', 'No se encontró lesionado'],
+  ['22C', 'Negó ser atendido'],
+  ['23', 'Rescate'],
+  ['23E', 'Equipo de...'],
+  ['25', 'Accidente Aéreo'],
+  ['26', 'Vehículo'],
+  ['27', 'Choque'],
+  ['27A', 'Volcadura'],
+  ['29', 'Jefe de...'],
+  ['29A', 'Operador de ambulancia'],
+  ['31', 'Pendiente'],
+  ['32', 'Convoy'],
+  ['33', 'Adelante con el Mensaje'],
+  ['33A', 'Canal Libre'],
+  ['34', 'Personal'],
+  ['34A', 'Personal Administrativo'],
+  ['34B', 'Búsqueda y rescate'],
+  ['34C', 'Abastecedores'],
+  ['34D', 'Socorristas/Atención'],
+  ['34E', 'Enfermero/a'],
+  ['34M', 'Médico'],
+  ['34R', 'Radiocomunicador/TESLA'],
+  ['36', 'Datos del Incidente'],
+  ['36B', 'Informe Novedades'],
+  ['37', 'Reunión'],
+  ['38', 'Servicio/Orden Cancelado'],
+  ['38A', 'Negativo/No'],
+  ['39', 'Orden'],
+  ['41', 'Dron'],
+  ['41C', 'Dron Tello'],
+  ['41D', 'Dron DJI'],
+  ['41H', 'Helicóptero'],
+  ['42', 'Director General'],
+  ['43', 'Otro Servicio Cercano'],
+  ['44', 'Persona Ebria'],
+  ['44D', 'Persona Drogada'],
+  ['44N', 'Persona con Crisis Nerviosa'],
+  ['45', 'Hospital'],
+  ['47', 'Falla Mecánica'],
+  ['47T', 'Taller'],
+  ['49', 'Parto'],
+  ['49A', 'Hemorragia o Aborto'],
+  ['50', 'Llamada General'],
+  ['51', 'Cambio de Canal'],
+  ['51R', 'Radio'],
+  ['52', 'Investigue el Lugar'],
+  ['52A', 'Necesitamos más datos'],
+  ['54', 'Problemas'],
+  ['58', 'Base'],
+  ['58A', 'Puesto de mando'],
+  ['59', 'Relevo'],
+  ['62', 'Urgencia en Silencio'],
+  ['63', 'Servicio Urgente'],
+  ['67', 'Fuera de Aire'],
+  ['67A', 'Al aire'],
+  ['69', 'Zona del Desastre'],
+  ['70', 'Simulacro'],
+  ['71', 'Lesiones y Signos Vitales del Lesionado'],
+  ['75', 'Paramédico'],
+  ['95', 'Gracias/Por Favor'],
+  ['99', 'Ayuda'],
+  ['100', 'Personal Herido'],
+] as const
+
+export const CLAVES_GENERALES_OFFLINE: ClaveRebace[] = CODIGOS_GENERALES_OFICIALES.map(
+  ([codigo, significado], idx) => ({
+    id: `c_${codigo.toLowerCase()}`,
+    tabla: 'codigos_1_100',
+    codigo,
+    significado,
+    categoria: 'General',
+    es_basico: CODIGOS_BASICOS.has(codigo),
+    orden: idx + 1,
+  }),
+)
+
+/**
+ * Respaldo inicial offline de Claves Personales y Unidades Móviles.
+ * El Administrador puede editarlas o agregar nuevas desde Catálogos en Firestore.
+ */
+export const CLAVES_PERSONALES_Y_UNIDADES_OFFLINE: ClaveRebace[] = [
+  // Personal
+  { id: 'p_piscis', tabla: 'claves_personales', codigo: 'Piscis', significado: 'TUM Marcelino Ramos', categoria: 'Personal', es_basico: true, orden: 1 },
+  { id: 'p_libra', tabla: 'claves_personales', codigo: 'Libra', significado: 'TUM Sergio Martinez', categoria: 'Personal', es_basico: true, orden: 2 },
+  { id: 'p_42', tabla: 'claves_personales', codigo: '42', significado: 'Mtro. Marcos Buenrostro Jr', categoria: 'Personal', es_basico: true, orden: 3 },
+  { id: 'p_roma', tabla: 'claves_personales', codigo: 'Roma', significado: 'Arq. Alexandra Gutierrez', categoria: 'Personal', es_basico: true, orden: 4 },
+  { id: 'p_artemisa', tabla: 'claves_personales', codigo: 'Artemisa', significado: 'Diana Cruz', categoria: 'Personal', es_basico: true, orden: 5 },
+  { id: 'p_apolo', tabla: 'claves_personales', codigo: 'Apolo', significado: 'Carlos Avalos', categoria: 'Personal', es_basico: true, orden: 6 },
+  { id: 'p_lince', tabla: 'claves_personales', codigo: 'Lince', significado: 'Sofia Ramos', categoria: 'Personal', es_basico: true, orden: 7 },
+  { id: 'p_tesla', tabla: 'claves_personales', codigo: 'TESLA', significado: 'Karol Cobian', categoria: 'Personal', es_basico: true, orden: 8 },
+  // Unidades
+  { id: 'u_ucol_01', tabla: 'claves_personales', codigo: 'UCOL-01', significado: 'Ambulancia de Traslados', categoria: 'Unidad', es_basico: true, orden: 9 },
+  { id: 'u_ucol_02', tabla: 'claves_personales', codigo: 'UCOL-02', significado: 'Lobo', categoria: 'Unidad', es_basico: true, orden: 10 },
+  { id: 'u_ucol_03', tabla: 'claves_personales', codigo: 'UCOL-03', significado: 'Econoline', categoria: 'Unidad', es_basico: true, orden: 11 },
 ]
 
 /**
- * Catálogo inicial de las 5 tablas oficiales ReBaCE v2 para poblar `catalogo_claves` en Firestore.
+ * Catálogo completo oficial ReBaCE v2 (5 tablas) disponible 100% offline y como semilla para Firestore.
  */
 export const SEMILLA_REBACE_V2: ClaveRebace[] = [
-  // ── Tabla 1: Códigos 1-100 (básicos marcados con es_basico: true) ─────────
-  { id: 'c_1', tabla: 'codigos_1_100', codigo: '1', significado: 'Sin novedad / Todo normal', categoria: 'Operación', es_basico: true, orden: 1 },
-  { id: 'c_2', tabla: 'codigos_1_100', codigo: '2', significado: 'Recibido / Enterado', categoria: 'Operación', es_basico: true, orden: 2 },
-  { id: 'c_3', tabla: 'codigos_1_100', codigo: '3', significado: 'Repita mensaje', categoria: 'Operación', es_basico: true, orden: 3 },
-  { id: 'c_4', tabla: 'codigos_1_100', codigo: '4', significado: 'Afirmativo / Correcto', categoria: 'Operación', es_basico: true, orden: 4 },
-  { id: 'c_5', tabla: 'codigos_1_100', codigo: '5', significado: 'Negativo', categoria: 'Operación', es_basico: true, orden: 5 },
-  { id: 'c_6', tabla: 'codigos_1_100', codigo: '6', significado: 'En camino / Traslado', categoria: 'Despliegue', es_basico: true, orden: 6 },
-  { id: 'c_7', tabla: 'codigos_1_100', codigo: '7', significado: 'En el lugar', categoria: 'Despliegue', es_basico: true, orden: 7 },
-  { id: 'c_8', tabla: 'codigos_1_100', codigo: '8', significado: 'Disponible / En servicio', categoria: 'Estatus', es_basico: true, orden: 8 },
-  { id: 'c_9', tabla: 'codigos_1_100', codigo: '9', significado: 'Fuera de servicio / En descanso', categoria: 'Estatus', es_basico: true, orden: 9 },
-  { id: 'c_10', tabla: 'codigos_1_100', codigo: '10', significado: 'En espera de instrucciones', categoria: 'Operación', es_basico: true, orden: 10 },
-  { id: 'c_14', tabla: 'codigos_1_100', codigo: '14', significado: 'Solicito apoyo de primeros auxilios', categoria: 'Emergencia', es_basico: true, orden: 14 },
-  { id: 'c_19', tabla: 'codigos_1_100', codigo: '19', significado: 'Circulación o ubicación', categoria: 'Despliegue', es_basico: true, orden: 19 },
-  { id: 'c_20', tabla: 'codigos_1_100', codigo: '20', significado: 'Punto de reunión / Base', categoria: 'Despliegue', es_basico: false, orden: 20 },
-  { id: 'c_25', tabla: 'codigos_1_100', codigo: '25', significado: 'Persona lesionada o enferma', categoria: 'Emergencia', es_basico: true, orden: 25 },
-  { id: 'c_30', tabla: 'codigos_1_100', codigo: '30', significado: 'Solicito ambulancia / traslado médico', categoria: 'Emergencia', es_basico: true, orden: 30 },
-  { id: 'c_35', tabla: 'codigos_1_100', codigo: '35', significado: 'Conato o reporte de incendio', categoria: 'Emergencia', es_basico: false, orden: 35 },
-  { id: 'c_40', tabla: 'codigos_1_100', codigo: '40', significado: 'Fuga de gas o material peligroso', categoria: 'Emergencia', es_basico: false, orden: 40 },
-  { id: 'c_50', tabla: 'codigos_1_100', codigo: '50', significado: 'Evacuación de inmueble en curso', categoria: 'Emergencia', es_basico: true, orden: 50 },
-  { id: 'c_51R', tabla: 'codigos_1_100', codigo: '51R', significado: 'Radio', categoria: 'Equipo', es_basico: true, orden: 51 },
-  { id: 'c_58', tabla: 'codigos_1_100', codigo: '58', significado: 'Puesto de Mando / Coordinación', categoria: 'Mando', es_basico: true, orden: 58 },
-  { id: 'c_60', tabla: 'codigos_1_100', codigo: '60', significado: 'Inmueble revisado y despejado', categoria: 'Emergencia', es_basico: false, orden: 60 },
-  { id: 'c_70', tabla: 'codigos_1_100', codigo: '70', significado: 'Simulacro', categoria: 'Operación', es_basico: true, orden: 70 },
-  { id: 'c_80', tabla: 'codigos_1_100', codigo: '80', significado: 'Apoyo logístico / hidratación / relevo', categoria: 'Logística', es_basico: false, orden: 80 },
-  { id: 'c_90', tabla: 'codigos_1_100', codigo: '90', significado: 'Situación controlada', categoria: 'Operación', es_basico: true, orden: 90 },
-  { id: 'c_99', tabla: 'codigos_1_100', codigo: '99', significado: 'Emergencia prioritaria — Silencio de radio', categoria: 'Emergencia', es_basico: true, orden: 99 },
-  { id: 'c_100', tabla: 'codigos_1_100', codigo: '100', significado: 'Cierre de operativo / Fin de transmisión', categoria: 'Operación', es_basico: true, orden: 100 },
-
-  // ── Tabla 2: Claves Personales / Indicadores ─────────────────────────────
-  { id: 'p_cecom', tabla: 'claves_personales', codigo: 'CECOM', significado: 'Centro de Comunicaciones BUPC', categoria: 'Base', es_basico: true, orden: 1 },
-  { id: 'p_58A', tabla: 'claves_personales', codigo: '58A', significado: 'Puesto de Mando / Coordinación General', categoria: 'Mando', es_basico: true, orden: 2 },
-  { id: 'p_bupc1', tabla: 'claves_personales', codigo: 'BUPC 1', significado: 'Unidad Operativa Principal 1', categoria: 'Unidad', es_basico: true, orden: 3 },
-  { id: 'p_bupc2', tabla: 'claves_personales', codigo: 'BUPC 2', significado: 'Unidad Operativa Principal 2', categoria: 'Unidad', es_basico: false, orden: 4 },
-  { id: 'p_e1', tabla: 'claves_personales', codigo: 'E1', significado: 'Elemento / Binomio Operativo 1', categoria: 'Elemento', es_basico: false, orden: 5 },
-  { id: 'p_e4', tabla: 'claves_personales', codigo: 'E4', significado: 'Elemento / Unidad Móvil 4', categoria: 'Elemento', es_basico: false, orden: 6 },
-  { id: 'p_e5', tabla: 'claves_personales', codigo: 'E5', significado: 'Elemento / Unidad Móvil 5', categoria: 'Elemento', es_basico: false, orden: 7 },
-  { id: 'p_alfa', tabla: 'claves_personales', codigo: 'ALFA', significado: 'Grupo Operativo Alfa', categoria: 'Grupo', es_basico: true, orden: 8 },
-  { id: 'p_omega', tabla: 'claves_personales', codigo: 'OMEGA', significado: 'Grupo Operativo Omega', categoria: 'Grupo', es_basico: true, orden: 9 },
+  ...CLAVES_GENERALES_OFFLINE,
+  ...CLAVES_PERSONALES_Y_UNIDADES_OFFLINE,
 
   // ── Tabla 3: Alfabeto Fonético OACI / UIT ────────────────────────────────
   ...([
@@ -109,3 +233,27 @@ export const SEMILLA_REBACE_V2: ClaveRebace[] = [
   { id: 'b_roja', tabla: 'morse_banderolas', codigo: 'Banderola Roja', significado: 'Peligro / Alto total / Evacuación inmediata', categoria: 'Banderolas', es_basico: true, orden: 7 },
   { id: 'b_blanca', tabla: 'morse_banderolas', codigo: 'Banderola Blanca', significado: 'Puesto de Mando / Atención médica', categoria: 'Banderolas', es_basico: false, orden: 8 },
 ]
+
+/**
+ * Fusiona el catálogo offline oficial con entradas personalizadas en Firestore:
+ * - Los 114 códigos generales, Alfabeto, Código Q y Morse están siempre disponibles offline.
+ * - Las entradas en Firestore sobreescriben por `id` o añaden nuevas claves/unidades.
+ */
+export function combinarCatalogoRebaceConOffline(remotas: ClaveRebace[]): ClaveRebace[] {
+  const mapa = new Map<string, ClaveRebace>()
+  for (const base of SEMILLA_REBACE_V2) {
+    mapa.set(base.id, base)
+  }
+  const hayClavesPersonalesRemotas = remotas.some((r) => r.tabla === 'claves_personales')
+  if (hayClavesPersonalesRemotas) {
+    // Si el Admin ya gestiona `claves_personales` en Firestore, respetamos exactamente las remotas
+    // (así los borrados del Admin se reflejan de inmediato).
+    for (const base of CLAVES_PERSONALES_Y_UNIDADES_OFFLINE) {
+      mapa.delete(base.id)
+    }
+  }
+  for (const r of remotas) {
+    mapa.set(r.id, r)
+  }
+  return Array.from(mapa.values()).sort((a, b) => a.orden - b.orden)
+}

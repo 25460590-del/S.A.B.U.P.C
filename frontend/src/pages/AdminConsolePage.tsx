@@ -36,6 +36,9 @@ import { RadioConsolePage } from './RadioConsolePage'
 
 interface AdminConsolePageProps {
   admin: Usuario
+  /** Cuando se muestra dentro del shell unificado, omite la barra lateral duplicada. */
+  embebido?: boolean
+  pestanaInicial?: Pestana
 }
 
 type Pestana =
@@ -238,8 +241,12 @@ function TarjetaPendiente({
   )
 }
 
-export function AdminConsolePage({ admin }: AdminConsolePageProps) {
-  const [pestana, setPestana] = useState<Pestana>('pendientes')
+export function AdminConsolePage({
+  admin,
+  embebido = false,
+  pestanaInicial = 'pendientes',
+}: AdminConsolePageProps) {
+  const [pestana, setPestana] = useState<Pestana>(pestanaInicial)
   const [pendientes, setPendientes] = useState<Usuario[]>([])
   const [directorio, setDirectorio] = useState<Usuario[]>([])
   const [cargandoPendientes, setCargandoPendientes] = useState(true)
@@ -328,8 +335,9 @@ export function AdminConsolePage({ admin }: AdminConsolePageProps) {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-fondo md:flex-row dark:bg-noche">
-      {/* Barra lateral Verde UdeC (#1E5631 día / #08100B nocturno) */}
+    <div className={embebido ? 'flex flex-col gap-5' : 'flex min-h-screen flex-col bg-fondo md:flex-row dark:bg-noche'}>
+      {/* Barra lateral Verde UdeC (solo si no está embebido en el shell unificado) */}
+      {!embebido && (
       <aside className="flex shrink-0 flex-col justify-between bg-udec-oscuro p-4 text-white md:w-64 dark:border-r dark:border-noche-borde dark:bg-noche-sidebar">
         <div className="flex flex-col gap-6">
           <div className="flex items-center gap-3 border-b border-white/20 pb-4 dark:border-noche-borde">
@@ -447,16 +455,19 @@ export function AdminConsolePage({ admin }: AdminConsolePageProps) {
           </button>
         </div>
       </aside>
+      )}
 
       {/* Contenido principal */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <BarraEstado
-          etiquetaDerecha={`${pendientes.length} ${
-            pendientes.length === 1 ? 'solicitud pendiente' : 'solicitudes pendientes'
-          }`}
-        />
+        {!embebido && (
+          <BarraEstado
+            etiquetaDerecha={`${pendientes.length} ${
+              pendientes.length === 1 ? 'solicitud pendiente' : 'solicitudes pendientes'
+            }`}
+          />
+        )}
 
-        <main className="flex flex-1 flex-col gap-5 p-4 md:p-6">
+        <main className={embebido ? 'flex flex-1 flex-col gap-5' : 'flex flex-1 flex-col gap-5 p-4 md:p-6'}>
           {(pestana === 'pendientes' || pestana === 'directorio' || pestana === 'catalogos') && (
             <>
               {/* Cabecera y pestañas */}
@@ -493,17 +504,19 @@ export function AdminConsolePage({ admin }: AdminConsolePageProps) {
                   >
                     Directorio y Bajas ({directorio.length})
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setPestana('catalogos')}
-                    className={`min-h-10 cursor-pointer rounded-md px-3 text-xs font-semibold transition-colors ${
-                      pestana === 'catalogos'
-                        ? 'bg-udec text-white'
-                        : 'bg-salvia text-udec-oscuro dark:bg-noche-tarjeta dark:text-noche-tinta-suave'
-                    }`}
-                  >
-                    Catálogos y Auditoría
-                  </button>
+                  {admin.rol_sistema === 'Administrador' && (
+                    <button
+                      type="button"
+                      onClick={() => setPestana('catalogos')}
+                      className={`min-h-10 cursor-pointer rounded-md px-3 text-xs font-semibold transition-colors ${
+                        pestana === 'catalogos'
+                          ? 'bg-udec text-white'
+                          : 'bg-salvia text-udec-oscuro dark:bg-noche-tarjeta dark:text-noche-tinta-suave'
+                      }`}
+                    >
+                      Catálogos y Auditoría
+                    </button>
+                  )}
                 </div>
               </div>
             </>
@@ -737,7 +750,12 @@ export function AdminConsolePage({ admin }: AdminConsolePageProps) {
                               <select
                                 aria-label={`Rol de ${nombreCompleto(u)}`}
                                 value={u.rol_sistema}
-                                disabled={esPropio || ocupado || u.estatus === 'Inactivo'}
+                                disabled={
+                                  admin.rol_sistema !== 'Administrador' ||
+                                  esPropio ||
+                                  ocupado ||
+                                  u.estatus === 'Inactivo'
+                                }
                                 onChange={(e) =>
                                   void manejarCambioRol(u, e.target.value as RolSistema)
                                 }

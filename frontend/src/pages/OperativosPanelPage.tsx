@@ -231,53 +231,8 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
     enlace.click()
   }
 
-  const abiertosCount = operativos.filter((o) => o.recepcion_abierta).length
-  const dinamicosCount = operativos.filter((o) => o.modo_qr === 'dinamico').length
-  const estaticosCount = operativos.filter((o) => o.modo_qr === 'estatico').length
-
   return (
     <div className="flex flex-col gap-5">
-      {/* KPIs reales desde Firestore */}
-      <section aria-label="Indicadores de operativos" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <article className="tarjeta flex flex-col justify-between gap-1 p-4">
-          <span className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
-            Operativos registrados
-          </span>
-          <span className="text-3xl font-bold tabular-nums text-udec dark:text-activo-claro">
-            {operativos.length}
-          </span>
-        </article>
-        <article className="tarjeta flex flex-col justify-between gap-1 p-4">
-          <span className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
-            Recepción abierta
-          </span>
-          <div className="flex items-baseline justify-between gap-2">
-            <span className="text-3xl font-bold tabular-nums text-activo dark:text-activo-claro">
-              {abiertosCount}
-            </span>
-            <span className="rounded-full bg-activo-suave px-2 py-0.5 text-[11px] font-bold text-activo dark:bg-noche-campo dark:text-activo-claro">
-              En curso
-            </span>
-          </div>
-        </article>
-        <article className="tarjeta flex flex-col justify-between gap-1 p-4">
-          <span className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
-            QR Dinámico TOTP
-          </span>
-          <span className="text-3xl font-bold tabular-nums text-tinta dark:text-noche-tinta">
-            {dinamicosCount}
-          </span>
-        </article>
-        <article className="tarjeta flex flex-col justify-between gap-1 p-4">
-          <span className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
-            QR Estático (PNG)
-          </span>
-          <span className="text-3xl font-bold tabular-nums text-tinta dark:text-noche-tinta">
-            {estaticosCount}
-          </span>
-        </article>
-      </section>
-
       {error && (
         <div
           role="alert"
