@@ -9,7 +9,7 @@ import {
 } from '@firebase/rules-unit-testing';
 import {
   doc, getDoc, setDoc, updateDoc, deleteDoc, collection, getDocs, addDoc,
-  writeBatch, serverTimestamp, Timestamp,
+  query, where, writeBatch, serverTimestamp, Timestamp,
 } from 'firebase/firestore';
 
 let env;
@@ -154,8 +154,43 @@ beforeEach(async () => {
       ...extra,
     });
     await setDoc(doc(f, 'operativos/opAbierto'), opBase('opAbierto'));
+    await setDoc(doc(f, 'operativos/opAbierto/secretos/totp'), {
+      secreto_base32: 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP',
+      periodo_segundos: 30,
+      digitos: 6,
+      actualizado_en: Timestamp.now(),
+    });
     await setDoc(doc(f, 'operativos/opCerrado'), opBase('opCerrado', { recepcion_abierta: false }));
     await setDoc(doc(f, 'operativos/opFinalizado'), opBase('opFinalizado', { estatus: 'Finalizado', recepcion_abierta: false }));
+
+    await setDoc(doc(f, 'canales_radio/canalFin'), {
+      id: 'canalFin',
+      operativo_id: 'opFinalizado',
+      nombre_canal: 'CECOM',
+      frecuencia_etiqueta: 'CH-1',
+      unidades_participantes: ['CECOM', '58A'],
+      creado_por: 'Admin Uno',
+      creado_por_uid: 'admin1',
+      creado_en: Timestamp.now(),
+      actualizado_en: Timestamp.now(),
+    });
+    await setDoc(doc(f, 'bitacora_radio_registros/regFin'), {
+      id: 'regFin',
+      canal_id: 'canalFin',
+      operativo_id: 'opFinalizado',
+      hora_original: '10:15:00',
+      origen: 'CECOM',
+      destinos: ['58A'],
+      actividades: '70 operativo finalizado',
+      registrado_por: 'Admin Uno',
+      registrado_por_uid: 'admin1',
+      fue_editado: false,
+      actividad_original_respaldo: null,
+      editado_en: null,
+      editado_por: null,
+      creado_en: Timestamp.now(),
+      actualizado_en: Timestamp.now(),
+    });
 
     const asisBase = (id, operativoId, usuarioUid, extra = {}) => ({
       id,
@@ -597,4 +632,144 @@ test('Incidencias de personal: creación controlada e inmutabilidad', async () =
   await assertFails(setDoc(doc(db('encAlfa1'), 'incidencias_personal/incAjenoFail'), incDoc('incAjenoFail', 'brigOmega1', null, 'encAlfa1')));
   await assertSucceeds(setDoc(doc(db('encAlfa1'), 'incidencias_personal/incOpOk'), incDoc('incOpOk', 'brigOmega1', 'opAbierto', 'encAlfa1')));
   await assertFails(deleteDoc(doc(db('admin1'), 'incidencias_personal/inc1')));
+});
+
+// ============================================================================
+// PRUEBAS: FLUJO REAL ESCÁNER QR (ENTRADA/SALIDA + LECTURAS EN SERVICIO)
+// Y BLOQUEO DE CONSOLA DE RADIO EN OPERATIVOS FINALIZADOS
+// ============================================================================
+
+test('Flujo real Brigadista QR: entrada, lecturas posteriores En servicio y salida sin permission-denied', async () => {
+  const f = db('activo1');
+
+  // 1. Validación previa de operativo y secreto QR
+  await assertSucceeds(getDoc(doc(f, 'operativos/opAbierto')));
+  await assertSucceeds(getDoc(doc(f, 'operativos/opAbierto/secretos/totp')));
+
+  // 2. Auto-registro de entrada por QR
+  await assertSucceeds(setDoc(doc(f, 'asistencias_personal/asisQrReal'), {
+    id: 'asisQrReal',
+    operativo_id: 'opAbierto',
+    operativo_nombre: 'Operativo opAbierto',
+    usuario_uid: 'activo1',
+    usuario_nombre: 'Ana Pérez',
+    usuario_cuenta: '20201234',
+    grupo_operativo: 'Ninguno',
+    ayudantia_slot: 'Ninguna',
+    rol_en_turno: 'Sin asignar',
+    estado_operativo: 'En servicio',
+    signos_vitales: null,
+    metodo_entrada: 'QR_Operativo_TOTP',
+    hora_entrada: serverTimestamp(),
+    hora_salida: null,
+    horas_totales: null,
+    salida_cerrada_manual: false,
+    equipos_bupc_pendientes: 0,
+    registrado_por_uid: 'activo1',
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // 3. Lecturas secundarias al pasar a "En servicio" (acotadas al propio uid)
+  await assertSucceeds(getDocs(query(
+    collection(f, 'asistencias_personal'),
+    where('usuario_uid', '==', 'activo1'),
+  )));
+  await assertSucceeds(getDocs(query(
+    collection(f, 'equipos_turno'),
+    where('usuario_uid', '==', 'activo1'),
+    where('asistencia_id', '==', 'asisQrReal'),
+  )));
+  // Foto de perfil inexistente debe devolver snapshot vacío sin permission-denied
+  await assertSucceeds(getDoc(doc(f, 'fotos_perfiles/activo1')));
+
+  // 4. Seguridad preservada: Brigadista NO puede listar equipos_turno sin filtrar su usuario_uid
+  await assertFails(getDocs(query(
+    collection(f, 'equipos_turno'),
+    where('asistencia_id', '==', 'asisQrReal'),
+  )));
+
+  // 5. Registro de salida propia con 0 equipos BUPC pendientes
+  await assertSucceeds(updateDoc(doc(f, 'asistencias_personal/asisQrReal'), {
+    hora_salida: serverTimestamp(),
+    horas_totales: 1.5,
+    estado_operativo: 'Retirado',
+    actualizado_en: serverTimestamp(),
+  }));
+});
+
+test('Radio en operativo Finalizado: bloquea create/update en canales y bitácora, permite lectura histórica', async () => {
+  // Rechaza crear nuevo canal en operativo Finalizado (incluso Admin y Encargado con radio)
+  const nuevoCanal = {
+    id: 'canalFinNuevo',
+    operativo_id: 'opFinalizado',
+    nombre_canal: 'Canal 2',
+    frecuencia_etiqueta: 'CH-2',
+    unidades_participantes: ['CECOM'],
+    creado_por: 'Admin Uno',
+    creado_por_uid: 'admin1',
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  };
+  await assertFails(setDoc(doc(db('admin1'), 'canales_radio/canalFinNuevo'), nuevoCanal));
+  await assertFails(setDoc(doc(db('encRadio'), 'canales_radio/canalFinNuevo'), {
+    ...nuevoCanal,
+    creado_por_uid: 'encRadio',
+  }));
+
+  // Rechaza agregar unidades o editar canal de operativo Finalizado
+  await assertFails(updateDoc(doc(db('admin1'), 'canales_radio/canalFin'), {
+    unidades_participantes: ['CECOM', '58A', 'BUPC-2'],
+    actualizado_en: serverTimestamp(),
+  }));
+  await assertFails(updateDoc(doc(db('encRadio'), 'canales_radio/canalFin'), {
+    unidades_participantes: ['CECOM', '58A', 'BUPC-2'],
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // Rechaza crear nuevo mensaje de radio en operativo Finalizado
+  const nuevoMensaje = {
+    id: 'regFinNuevo',
+    canal_id: 'canalFin',
+    operativo_id: 'opFinalizado',
+    hora_original: '11:00:00',
+    origen: 'CECOM',
+    destinos: ['58A'],
+    actividades: 'Intento tardío',
+    registrado_por: 'Admin Uno',
+    registrado_por_uid: 'admin1',
+    fue_editado: false,
+    actividad_original_respaldo: null,
+    editado_en: null,
+    editado_por: null,
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  };
+  await assertFails(setDoc(doc(db('admin1'), 'bitacora_radio_registros/regFinNuevo'), nuevoMensaje));
+  await assertFails(setDoc(doc(db('encRadio'), 'bitacora_radio_registros/regFinNuevo'), {
+    ...nuevoMensaje,
+    registrado_por_uid: 'encRadio',
+  }));
+
+  // Rechaza editar registro existente de radio en operativo Finalizado
+  await assertFails(updateDoc(doc(db('admin1'), 'bitacora_radio_registros/regFin'), {
+    actividades: 'Texto alterado tras cierre',
+    fue_editado: true,
+    actividad_original_respaldo: '70 operativo finalizado',
+    editado_en: serverTimestamp(),
+    editado_por: 'Admin Uno',
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // Lectura histórica sigue permitida en Archivo para usuarios autorizados de Radio
+  await assertSucceeds(getDoc(doc(db('admin1'), 'canales_radio/canalFin')));
+  await assertSucceeds(getDocs(query(
+    collection(db('encRadio'), 'canales_radio'),
+    where('operativo_id', '==', 'opFinalizado'),
+  )));
+  await assertSucceeds(getDoc(doc(db('encRadio'), 'bitacora_radio_registros/regFin')));
+  await assertSucceeds(getDocs(query(
+    collection(db('brigRadio'), 'bitacora_radio_registros'),
+    where('canal_id', '==', 'canalFin'),
+  )));
 });

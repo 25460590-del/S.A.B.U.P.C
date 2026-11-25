@@ -416,9 +416,18 @@ export function escucharEquiposDeAsistencia(
   asistenciaId: string,
   alCambiar: (lista: EquipoTurno[]) => void,
   alFallar?: (error: FirestoreError) => void,
+  usuarioUid?: string,
 ): Unsubscribe {
+  const consulta = usuarioUid
+    ? query(
+        equiposRef,
+        where('usuario_uid', '==', usuarioUid),
+        where('asistencia_id', '==', asistenciaId),
+      )
+    : query(equiposRef, where('asistencia_id', '==', asistenciaId))
+
   return onSnapshot(
-    query(equiposRef, where('asistencia_id', '==', asistenciaId)),
+    consulta,
     (snap) => {
       const lista = snap.docs.map((d) => d.data() as EquipoTurno)
       lista.sort((a, b) => (b.creado_en?.toMillis() ?? 0) - (a.creado_en?.toMillis() ?? 0))

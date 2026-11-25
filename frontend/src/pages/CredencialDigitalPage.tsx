@@ -36,9 +36,10 @@ export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
   const contenedorQrRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    const cancelar = escucharFotoPerfil(perfil.uid, setFoto, (err) =>
-      setErrorFoto(mensajeDeError(err)),
-    )
+    const cancelar = escucharFotoPerfil(perfil.uid, setFoto, () => {
+      // Foto de perfil opcional: si aún no existe o no puede leerse, mostrar avatar sin banner de error
+      setFoto(null)
+    })
     return cancelar
   }, [perfil.uid])
 
@@ -66,9 +67,8 @@ export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
     setAvisoFoto(null)
     setErrorFoto(null)
     try {
-      const { bytes } = await guardarFotoPerfil(perfil.uid, archivo)
-      const kb = Math.max(1, Math.round(bytes / 1024))
-      setAvisoFoto(`Fotografía guardada en formato WebP (${kb} KB).`)
+      await guardarFotoPerfil(perfil.uid, archivo)
+      setAvisoFoto('Fotografía actualizada correctamente.')
     } catch (err) {
       setErrorFoto(err instanceof Error ? err.message : mensajeDeError(err))
     } finally {
@@ -125,7 +125,7 @@ export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
                 onClick={() => inputArchivoRef.current?.click()}
                 disabled={subiendoFoto}
                 aria-label="Subir o cambiar fotografía de perfil"
-                title="Subir o cambiar fotografía (WebP)"
+                title="Subir o cambiar fotografía"
                 className="absolute right-0 bottom-0 inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border-2 border-white bg-udec text-white hover:bg-udec-oscuro disabled:opacity-60 dark:border-noche-tarjeta"
               >
                 <Camera size={16} strokeWidth={2} />
@@ -141,7 +141,7 @@ export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
 
             {subiendoFoto && (
               <p className="text-xs font-semibold text-udec dark:text-activo-claro">
-                Comprimiendo fotografía a WebP ligero...
+                Guardando fotografía...
               </p>
             )}
 
@@ -226,7 +226,7 @@ export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
             <div className="grid w-full grid-cols-2 gap-2.5 pt-1">
               <button type="button" onClick={descargarQrPng} className="btn-salvia px-3 text-xs">
                 <Download size={16} strokeWidth={2} />
-                <span>Descargar PNG</span>
+                <span>Descargar QR</span>
               </button>
               <button
                 type="button"
@@ -313,7 +313,7 @@ export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
               className="btn-salvia w-full"
             >
               <QrCode size={18} strokeWidth={2} />
-              <span>Volver al Anverso (QR)</span>
+              <span>Volver a la Credencial</span>
             </button>
           </div>
         </article>

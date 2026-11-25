@@ -258,7 +258,7 @@ export function IncidenciasPersonalPanel({ actor }: IncidenciasPersonalPanelProp
       setDescripcion('')
       setObjetivoUid('')
       setMostrarFormulario(false)
-      setAviso(`Incidencia registrada para ${nombreCompleto(objetivo)} (auditoría actualizada).`)
+      setAviso(`Incidencia registrada para ${nombreCompleto(objetivo)}.`)
     } catch (err) {
       setError(err instanceof Error ? err.message : mensajeDeError(err))
     } finally {
@@ -319,7 +319,7 @@ export function IncidenciasPersonalPanel({ actor }: IncidenciasPersonalPanelProp
             Concentrador de Incidencias
           </h2>
           <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-            Actas de material BUPC e incidencias de personal con trazabilidad inmutable.
+            Actas de material BUPC e incidencias de personal.
           </p>
         </div>
 

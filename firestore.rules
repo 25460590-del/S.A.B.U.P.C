@@ -1230,17 +1230,20 @@ service cloud.firestore {
       // Lectura y listado: Administrador Activo o usuario Activo con autorizado_radio == true.
       allow get, list: if puedeUsarRadio();
 
-      // Alta: usuario con permiso de radio, esquema completo, autoría propia
-      // y marcas de tiempo del servidor.
+      // Alta: usuario con permiso de radio, esquema completo, operativo no
+      // finalizado, autoría propia y marcas de tiempo del servidor.
       allow create: if puedeUsarRadio()
                     && esCanalRadioValido(request.resource.data, canalId)
+                    && operativoNoFinalizado(request.resource.data.operativo_id)
                     && request.resource.data.creado_por_uid == request.auth.uid
                     && request.resource.data.creado_en == request.time
                     && request.resource.data.actualizado_en == request.time;
 
-      // Actualización: solo unidades_participantes, frecuencia_etiqueta y
+      // Actualización: solo mientras el operativo no esté Finalizado; permite
+      // únicamente unidades_participantes, frecuencia_etiqueta y
       // actualizado_en == request.time; el resto permanece inmutable.
       allow update: if puedeUsarRadio()
+                    && operativoNoFinalizado(resource.data.operativo_id)
                     && camposCambiados().hasOnly(['unidades_participantes',
                                                   'frecuencia_etiqueta',
                                                   'actualizado_en'])
@@ -1259,10 +1262,12 @@ service cloud.firestore {
       // Lectura y listado: Administrador Activo o usuario Activo con autorizado_radio == true.
       allow get, list: if puedeUsarRadio();
 
-      // Alta: usuario con permiso de radio, esquema válido, autoría propia,
-      // sin marcas de edición previa y marcas de tiempo del servidor.
+      // Alta: usuario con permiso de radio, esquema válido, operativo no
+      // finalizado, autoría propia, sin marcas de edición previa y marcas de
+      // tiempo del servidor.
       allow create: if puedeUsarRadio()
                     && esRegistroBitacoraRadioValido(request.resource.data, registroId)
+                    && operativoNoFinalizado(request.resource.data.operativo_id)
                     && request.resource.data.registrado_por_uid == request.auth.uid
                     && request.resource.data.fue_editado == false
                     && request.resource.data.actividad_original_respaldo == null
@@ -1272,9 +1277,11 @@ service cloud.firestore {
                     && request.resource.data.actualizado_en == request.time;
 
       // Actualización controlada (INMUTABILIDAD CRÍTICA):
-      // hora_original nunca cambia; solo puede corregirse actividades dejando
-      // respaldo obligatorio y rastro de auditoría de edición.
+      // solo mientras el operativo no esté Finalizado; hora_original nunca
+      // cambia y solo puede corregirse actividades dejando respaldo obligatorio
+      // y rastro de auditoría de edición.
       allow update: if puedeUsarRadio()
+                    && operativoNoFinalizado(resource.data.operativo_id)
                     && esRegistroBitacoraRadioValido(request.resource.data, registroId)
                     && request.resource.data.hora_original == resource.data.hora_original
                     && camposCambiados().hasOnly(['actividades', 'fue_editado',

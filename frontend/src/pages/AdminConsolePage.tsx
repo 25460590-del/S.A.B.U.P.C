@@ -204,7 +204,7 @@ function TarjetaPendiente({
           <>
             <div className="flex flex-col gap-1">
               <label htmlFor={`clave-${usuario.uid}`} className="etiqueta">
-                Clave Radio (opc.)
+                Clave de radio (opcional)
               </label>
               <input
                 id={`clave-${usuario.uid}`}

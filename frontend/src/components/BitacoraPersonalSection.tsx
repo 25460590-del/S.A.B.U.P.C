@@ -60,6 +60,19 @@ function formatearHoraCorta(ms?: number): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
+function etiquetaMetodoEntrada(metodo: AsistenciaPersonal['metodo_entrada']): string {
+  switch (metodo) {
+    case 'QR_Operativo_TOTP':
+      return 'QR Dinámico'
+    case 'QR_Operativo_Estatico':
+      return 'QR Fijo'
+    case 'QR_Credencial':
+      return 'Credencial QR'
+    case 'Manual':
+      return 'Manual'
+  }
+}
+
 function etiquetaGrupoAsistencia(a: AsistenciaPersonal, mapaUsuarios: Map<string, Usuario>): string {
   const u = mapaUsuarios.get(a.usuario_uid)
   if (u?.subgrupo) return u.subgrupo
@@ -470,7 +483,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
       {esFinalizado && (
         <div className="flex items-center gap-2 border-b border-borde bg-superficie-suave px-4 py-2 text-xs font-semibold text-tinta-suave dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta-suave">
           <Lock size={14} strokeWidth={2} />
-          <span>Operativo finalizado — consulta en modo solo lectura (sin ediciones ni entregas).</span>
+          <span>Operativo finalizado — consulta en modo solo lectura.</span>
         </div>
       )}
 
@@ -895,7 +908,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                           {formatearHoraCorta(a.hora_entrada?.toMillis())}
                         </span>
                         <span className="text-[10px] text-tinta-suave dark:text-noche-tinta-suave">
-                          {a.metodo_entrada.replace(/_/g, ' ')}
+                          {etiquetaMetodoEntrada(a.metodo_entrada)}
                         </span>
                       </td>
 
@@ -1120,7 +1133,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                     <input
                       type="text"
                       maxLength={60}
-                      placeholder="Serie / Folio (opc.)"
+                      placeholder="Serie o folio (opcional)"
                       value={articuloFolio}
                       onChange={(e) => setArticuloFolio(e.target.value)}
                       className="campo min-h-9 text-xs tabular-nums sm:col-span-4"
@@ -1146,7 +1159,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                         onChange={(e) => setMantenerEnCadena(e.target.checked)}
                         className="h-3.5 w-3.5 rounded accent-udec"
                       />
-                      <span>Seguir entregando (en cadena)</span>
+                      <span>Mantener abierto para seguir entregando</span>
                     </label>
                     <button
                       type="submit"
@@ -1501,11 +1514,11 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
               </div>
 
               <div className="flex flex-col gap-1">
-                <span className="etiqueta">Evidencia fotográfica WebP (opcional)</span>
+                <span className="etiqueta">Evidencia fotográfica (opcional)</span>
                 <label className="btn-salvia min-h-10 cursor-pointer text-xs">
                   <Upload size={15} strokeWidth={2} />
                   <span>
-                    {archivoEvidencia ? archivoEvidencia.name : 'Adjuntar foto (WebP ligero)'}
+                    {archivoEvidencia ? archivoEvidencia.name : 'Adjuntar fotografía'}
                   </span>
                   <input
                     type="file"

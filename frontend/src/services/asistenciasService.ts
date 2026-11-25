@@ -14,7 +14,12 @@ import {
 } from 'firebase/firestore'
 import * as OTPAuth from 'otpauth'
 import { db } from '../lib/firebase'
-import { esEncargado, normalizarOperativo, normalizarUsuario } from '../lib/permisos'
+import {
+  esEncargado,
+  grupoDesdeEtapa,
+  normalizarOperativo,
+  normalizarUsuario,
+} from '../lib/permisos'
 import type {
   AsistenciaPersonal,
   EquipoTurno,
@@ -112,9 +117,16 @@ export type ResultadoRegistroQR =
       usuario: Usuario
     }
 
-async function obtenerEquiposBupcPendientes(asistenciaId: string): Promise<EquipoTurno[]> {
+async function obtenerEquiposBupcPendientes(
+  asistenciaId: string,
+  usuarioUid: string,
+): Promise<EquipoTurno[]> {
   const snap = await getDocs(
-    query(equiposRef, where('asistencia_id', '==', asistenciaId)),
+    query(
+      equiposRef,
+      where('usuario_uid', '==', usuarioUid),
+      where('asistencia_id', '==', asistenciaId),
+    ),
   )
   return snap.docs
     .map((d) => d.data() as EquipoTurno)
@@ -200,8 +212,12 @@ export async function cerrarSalidaConCandado(
   })
 
   if (bloqueadaData) {
-    const pendientes = await obtenerEquiposBupcPendientes(asistenciaId)
-    return { bloqueado: true, asistencia: bloqueadaData, pendientes }
+    const asistenciaBloqueada: AsistenciaPersonal = bloqueadaData
+    const pendientes = await obtenerEquiposBupcPendientes(
+      asistenciaId,
+      asistenciaBloqueada.usuario_uid,
+    )
+    return { bloqueado: true, asistencia: asistenciaBloqueada, pendientes }
   }
 
   return { bloqueado: false, horasTotales: horasCalculadas }
@@ -215,6 +231,14 @@ async function crearEntradaAtomica(
   rolInicial: RolEnTurno = 'Sin asignar',
 ): Promise<string> {
   const nuevoDoc = doc(asistenciasRef)
+  const grupoValido =
+    brigadista.grupo_operativo === 'Alfa' ||
+    brigadista.grupo_operativo === 'Omega' ||
+    brigadista.grupo_operativo === 'Ninguno'
+      ? brigadista.grupo_operativo
+      : grupoDesdeEtapa(brigadista.etapa)
+  const ayudantiaValida = brigadista.ayudantia_slot || brigadista.ayudantia || 'Ninguna'
+  const cuentaValida = (brigadista.numero_cuenta || '0').trim().slice(0, 12) || '0'
 
   await runTransaction(db, async (tx) => {
     tx.set(nuevoDoc, {
@@ -223,9 +247,9 @@ async function crearEntradaAtomica(
       operativo_nombre: operativo.nombre,
       usuario_uid: brigadista.uid,
       usuario_nombre: nombreCompleto(brigadista),
-      usuario_cuenta: brigadista.numero_cuenta,
-      grupo_operativo: brigadista.grupo_operativo,
-      ayudantia_slot: brigadista.ayudantia_slot,
+      usuario_cuenta: cuentaValida,
+      grupo_operativo: grupoValido,
+      ayudantia_slot: ayudantiaValida,
       rol_en_turno: rolInicial,
       estado_operativo: 'En servicio',
       signos_vitales: null,
@@ -277,22 +301,22 @@ export async function registrarAsistenciaQR(
 
     if (qr.tipo === 'operativo_estatico') {
       if (operativo.modo_qr !== 'estatico') {
-        throw new Error('Este operativo requiere escaneo de QR Dinámico TOTP vigente.')
+        throw new Error('Este operativo requiere escanear el código QR dinámico vigente.')
       }
       if (operativo.qr_token_estatico !== qr.token) {
-        throw new Error('El token del QR estático no coincide con el operativo.')
+        throw new Error('El código QR fijo no corresponde a este operativo.')
       }
     } else {
       if (operativo.modo_qr !== 'dinamico') {
-        throw new Error('Este operativo está configurado en modo QR Estático.')
+        throw new Error('Este operativo utiliza código QR fijo.')
       }
       const secretoSnap = await getDoc(doc(db, 'operativos', operativo.id, 'secretos', 'totp'))
       if (!secretoSnap.exists()) {
-        throw new Error('No se encontró la clave TOTP del operativo.')
+        throw new Error('No se encontró el código de verificación del operativo.')
       }
       const secreto = secretoSnap.data() as SecretoTotpOperativo
       if (!validarTotpOffline(operativo.id, secreto.secreto_base32, qr.totp)) {
-        throw new Error('El código QR Dinámico TOTP expiró. Escanea nuevamente el código actual.')
+        throw new Error('El código QR dinámico expiró. Escanea nuevamente el código en pantalla.')
       }
     }
 

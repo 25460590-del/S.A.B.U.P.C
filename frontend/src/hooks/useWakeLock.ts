@@ -13,7 +13,7 @@ export function useWakeLock() {
 
   const adquirir = useCallback(async () => {
     if (!soportado) {
-      setError('Tu navegador no soporta Pantalla Activa (Wake Lock).')
+      setError('Tu navegador no permite mantener la pantalla encendida.')
       return
     }
     try {
@@ -26,7 +26,7 @@ export function useWakeLock() {
       })
     } catch {
       setActivo(false)
-      setError('No se pudo activar Pantalla Activa (revisa ahorro de batería o permisos).')
+      setError('No se pudo mantener la pantalla encendida. Revisa el ahorro de batería o los permisos.')
     }
   }, [soportado])
 

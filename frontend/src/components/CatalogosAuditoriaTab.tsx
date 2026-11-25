@@ -150,7 +150,7 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
         },
         !editandoId,
       )
-      setAviso(editandoId ? 'Clave actualizada en Firestore.' : 'Nueva clave agregada al catálogo.')
+      setAviso(editandoId ? 'Clave actualizada en el catálogo.' : 'Nueva clave agregada al catálogo.')
       limpiarFormulario()
     } catch (err) {
       setError(mensajeDeError(err))
@@ -200,7 +200,7 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
         `Subgrupo agregado: ${etiqueta}`,
       )
       setNombreNuevoSubgrupo('')
-      setAviso(`Subgrupo "${etiqueta}" agregado al catálogo dinámico.`)
+      setAviso(`Subgrupo "${etiqueta}" agregado al catálogo.`)
     } catch (err) {
       setError(mensajeDeError(err))
     } finally {
@@ -256,7 +256,7 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
     setAviso(null)
     try {
       const total = await poblarCatalogoRebace(admin)
-      setAviso(`Catálogo ReBaCE v2 inicializado con ${total} claves.`)
+      setAviso(`Catálogo de claves actualizado con ${total} registros.`)
     } catch (err) {
       setError(mensajeDeError(err))
     } finally {
@@ -293,10 +293,10 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
             <Layers size={18} strokeWidth={2} className="text-udec dark:text-activo-claro" />
             <div>
               <h3 className="text-base font-bold text-tinta dark:text-noche-tinta">
-                Catálogo Dinámico de Subgrupos por Etapa
+                Subgrupos por Etapa
               </h3>
               <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-                Agrega o archiva subgrupos (ej. Alfa 5, Omega 3) sin afectar históricos ni recompilar.
+                Agrega o archiva subgrupos (ej. Alfa 5, Omega 3) sin afectar el historial.
               </p>
             </div>
           </div>
@@ -433,10 +433,10 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-borde pb-3 dark:border-noche-borde">
             <div>
               <h3 className="text-base font-bold text-tinta dark:text-noche-tinta">
-                Editor de Claves de Radio (ReBaCE v2)
+                Editor de Claves de Radio
               </h3>
               <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-                Gestiona Claves Personales e indicadores oficiales en tiempo real.
+                Gestiona claves personales, unidades y códigos oficiales de radio.
               </p>
             </div>
             <button
@@ -446,7 +446,7 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
               className="btn-verde min-h-9 px-3 text-xs"
             >
               <Database size={14} strokeWidth={2} />
-              <span>{claves.length === 0 ? 'Sembrar ReBaCE v2' : 'Sincronizar oficial (114+)'}</span>
+              <span>{claves.length === 0 ? 'Cargar claves oficiales' : 'Actualizar claves oficiales'}</span>
             </button>
           </div>
 
@@ -570,7 +570,7 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
           <div className="flex max-h-96 flex-col divide-y divide-borde overflow-y-auto border-t border-borde dark:divide-noche-borde dark:border-noche-borde">
             {clavesDeTabla.length === 0 ? (
               <p className="py-4 text-center text-xs text-tinta-suave dark:text-noche-tinta-suave">
-                Sin claves en esta tabla. Agrega una nueva o siembra el catálogo ReBaCE v2.
+                Sin claves en esta tabla. Agrega una nueva o carga las claves oficiales.
               </p>
             ) : (
               clavesDeTabla.map((c) => {
@@ -637,7 +637,7 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
                   Auditoría de Eventos Críticos
                 </h3>
                 <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-                  Bitácora inmutable de aprobaciones, bajas, actas y ediciones.
+                  Historial de aprobaciones, bajas, actas y cambios.
                 </p>
               </div>
             </div>

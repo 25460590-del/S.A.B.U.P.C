@@ -101,7 +101,7 @@ export function GestionTeslaPanel({ actor }: GestionTeslaPanelProps) {
         autorizado_radio: estado.autorizado,
         clave_radio: estado.clave,
       })
-      setAviso(`Claves de radio actualizadas para ${nombreCompleto(u)} (registrado en auditoría).`)
+      setAviso(`Claves de radio actualizadas para ${nombreCompleto(u)}.`)
       setBorradores((prev) => {
         const copia = { ...prev }
         delete copia[u.uid]
@@ -118,11 +118,10 @@ export function GestionTeslaPanel({ actor }: GestionTeslaPanelProps) {
     <section className="flex flex-col gap-4">
       <div>
         <h2 className="text-xl font-bold text-tinta dark:text-noche-tinta">
-          Claves TESLA · Dominio Exclusivo de Radio
+          Claves TESLA
         </h2>
         <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-          Asigna, edita o revoca claves de radio (mayúsculas) y autorización de consola. Cada cambio
-          queda registrado en auditoría.
+          Asigna, edita o revoca claves de radio y permisos de acceso a la consola.
         </p>
       </div>
 

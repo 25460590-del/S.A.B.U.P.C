@@ -2,17 +2,27 @@ import {
   AlertCircle,
   CheckCircle2,
   Clock,
+  Download,
   FileDown,
   FileSpreadsheet,
   FileText,
   FolderArchive,
   History,
+  Lock,
+  Radio,
+  X,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { CATEGORIAS_OPERATIVO } from '../constants/catalogos'
+import { puedeUsarRadio } from '../lib/permisos'
 import { escucharMisAsistencias } from '../services/asistenciasService'
 import { mensajeDeError } from '../services/authService'
 import { escucharOperativos } from '../services/operativosService'
+import {
+  escucharCanalesOperativo,
+  escucharRegistrosCanal,
+  exportarBitacoraCsvLocal,
+} from '../services/radioService'
 import {
   calcularDesgloseHoras,
   exportarExpedienteExcel,
@@ -20,7 +30,14 @@ import {
   generarConstanciaHorasPdf,
   obtenerDatosExpedienteOperativo,
 } from '../services/reportesService'
-import type { AsistenciaPersonal, CategoriaOperativo, Operativo, Usuario } from '../types'
+import type {
+  AsistenciaPersonal,
+  CanalRadio,
+  CategoriaOperativo,
+  Operativo,
+  RegistroBitacoraRadio,
+  Usuario,
+} from '../types'
 
 interface HistorialDualPageProps {
   usuario: Usuario
@@ -34,12 +51,286 @@ function formatearFechaCorta(ms?: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
+function BitacoraRadioArchivoModal({
+  operativo,
+  alCerrar,
+}: {
+  operativo: Operativo
+  alCerrar: () => void
+}) {
+  const [canales, setCanales] = useState<CanalRadio[]>([])
+  const [cargandoCanales, setCargandoCanales] = useState(true)
+  const [canalIdSel, setCanalIdSel] = useState<string>('')
+  const [registrosPorCanal, setRegistrosPorCanal] = useState<{
+    canalId: string
+    lista: RegistroBitacoraRadio[]
+  } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    const cancelar = escucharCanalesOperativo(
+      operativo.id,
+      (lista) => {
+        setCanales(lista)
+        setCargandoCanales(false)
+      },
+      (err) => {
+        setError(mensajeDeError(err))
+        setCargandoCanales(false)
+      },
+    )
+    return cancelar
+  }, [operativo.id])
+
+  const canalActivo = canales.find((c) => c.id === canalIdSel) ?? canales[0] ?? null
+  const canalActivoId = canalActivo?.id ?? null
+
+  useEffect(() => {
+    if (!canalActivoId) return
+    const cancelar = escucharRegistrosCanal(
+      canalActivoId,
+      (lista) => setRegistrosPorCanal({ canalId: canalActivoId, lista }),
+      (err) => setError(mensajeDeError(err)),
+    )
+    return cancelar
+  }, [canalActivoId])
+
+  const registros =
+    registrosPorCanal?.canalId === canalActivoId ? registrosPorCanal.lista : []
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Bitácora de radio de ${operativo.nombre}`}
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/75 sm:items-center sm:p-4"
+    >
+      <article className="tarjeta flex h-[90dvh] w-full max-w-4xl flex-col overflow-hidden rounded-t-2xl sm:h-[85dvh] sm:rounded-xl">
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b-3 border-naranja bg-udec px-4 py-3.5 text-white">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="truncate text-base font-bold">
+                Bitácora de Radio · {operativo.nombre}
+              </h3>
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white/15 px-2.5 py-0.5 text-[11px] font-semibold text-white">
+                <Lock size={11} strokeWidth={2} />
+                <span>Solo lectura</span>
+              </span>
+            </div>
+            <p className="truncate text-xs text-white/85">
+              {operativo.sede} · {operativo.fecha_inicio.replace('T', ' ')}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={alCerrar}
+            aria-label="Cerrar bitácora de radio"
+            className="inline-flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/25"
+          >
+            <X size={18} strokeWidth={2} />
+          </button>
+        </header>
+
+        {/* Barra de canales (sin + Canal ni + Unidad) + Exportar CSV */}
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-borde bg-superficie-suave px-4 py-2.5 dark:border-noche-borde dark:bg-noche-campo">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {canales.length === 0 && !cargandoCanales ? (
+              <span className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                Sin canales de radio registrados
+              </span>
+            ) : (
+              canales.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => setCanalIdSel(c.id)}
+                  className={`min-h-8 cursor-pointer rounded-md px-3 text-xs font-bold transition-colors ${
+                    canalActivo?.id === c.id
+                      ? 'bg-udec text-white'
+                      : 'bg-salvia text-udec-oscuro hover:bg-salvia-hover dark:bg-noche-tarjeta dark:text-noche-tinta-suave'
+                  }`}
+                >
+                  {c.nombre_canal}
+                  {c.frecuencia_etiqueta ? ` · ${c.frecuencia_etiqueta}` : ''}
+                </button>
+              ))
+            )}
+          </div>
+
+          <button
+            type="button"
+            disabled={!canalActivo || registros.length === 0}
+            onClick={() => {
+              if (canalActivo) {
+                exportarBitacoraCsvLocal(operativo.nombre, canalActivo.nombre_canal, registros)
+              }
+            }}
+            className="btn-salvia min-h-9 px-3 text-xs"
+          >
+            <Download size={14} strokeWidth={2} />
+            <span>Exportar CSV</span>
+          </button>
+        </div>
+
+        {/* Unidades participantes en solo lectura */}
+        {canalActivo && canalActivo.unidades_participantes.length > 0 && (
+          <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-borde px-4 py-2 text-[11px] dark:border-noche-borde">
+            <span className="font-bold text-tinta-suave dark:text-noche-tinta-suave">Unidades:</span>
+            {canalActivo.unidades_participantes.map((u) => (
+              <span
+                key={u}
+                className="rounded bg-superficie-suave px-2 py-0.5 font-semibold text-tinta dark:bg-noche-campo dark:text-noche-tinta"
+              >
+                {u}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {error && (
+          <div
+            role="alert"
+            className="mx-4 mt-3 flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-2.5 text-xs font-semibold text-red-900 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+          >
+            <AlertCircle size={15} strokeWidth={2} className="mt-0.5 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {cargandoCanales ? (
+            <div className="flex flex-col gap-2 p-4">
+              <div className="h-10 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
+              <div className="h-10 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
+            </div>
+          ) : !canalActivo ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
+              <Radio size={30} strokeWidth={2} className="text-tinta-suave dark:text-noche-tinta-suave" />
+              <p className="text-sm font-semibold text-tinta dark:text-noche-tinta">
+                Este operativo no tiene canales de radio registrados
+              </p>
+            </div>
+          ) : registros.length === 0 ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
+              <Clock size={28} strokeWidth={2} className="text-tinta-suave dark:text-noche-tinta-suave" />
+              <p className="text-sm font-semibold text-tinta dark:text-noche-tinta">
+                Sin transmisiones registradas en {canalActivo.nombre_canal}
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Móvil: filas compactas de solo lectura */}
+              <div className="flex min-h-0 flex-1 flex-col divide-y divide-borde overflow-y-auto md:hidden dark:divide-noche-borde">
+                {registros.map((r) => (
+                  <div key={r.id} className="flex flex-col gap-0.5 px-3.5 py-2.5">
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                      <span className="font-bold tabular-nums text-tinta-suave dark:text-noche-tinta-suave">
+                        {r.hora_original}
+                      </span>
+                      <span className="font-bold text-udec dark:text-activo-claro">{r.origen}</span>
+                      <span className="text-tinta-suave">→</span>
+                      <span className="font-semibold text-tinta dark:text-noche-tinta">
+                        {r.destinos.join(', ')}
+                      </span>
+                      {r.fue_editado && (
+                        <span className="rounded bg-ambar-suave px-1 py-0.5 text-[10px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
+                          Editado
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[13px] leading-snug font-medium text-tinta dark:text-noche-tinta">
+                      {r.actividades}
+                    </p>
+                    {r.fue_editado && r.actividad_original_respaldo && (
+                      <p className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
+                        Original: &ldquo;{r.actividad_original_respaldo}&rdquo;
+                      </p>
+                    )}
+                    <p className="text-[10px] text-tinta-suave dark:text-noche-tinta-suave">
+                      Registrado por: {r.registrado_por}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Escritorio: tabla de solo lectura sin columna de edición */}
+              <div className="hidden min-h-0 flex-1 overflow-auto md:block">
+                <table className="w-full border-collapse text-left">
+                  <thead className="sticky top-0 z-10 bg-udec-oscuro text-white">
+                    <tr>
+                      <th scope="col" className="w-28 px-3 py-2 text-[11px] font-semibold">
+                        Hora
+                      </th>
+                      <th scope="col" className="w-28 px-3 py-2 text-[11px] font-semibold">
+                        ORIGEN
+                      </th>
+                      <th scope="col" className="w-36 px-3 py-2 text-[11px] font-semibold">
+                        DESTINO
+                      </th>
+                      <th scope="col" className="px-3 py-2 text-[11px] font-semibold">
+                        Actividades
+                      </th>
+                      <th scope="col" className="w-36 px-3 py-2 text-[11px] font-semibold">
+                        Registrado por
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-borde dark:divide-noche-borde">
+                    {registros.map((r) => (
+                      <tr key={r.id} className="align-top">
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <div className="flex flex-wrap items-center gap-1">
+                            <span className="text-xs font-bold tabular-nums text-tinta dark:text-noche-tinta">
+                              {r.hora_original}
+                            </span>
+                            {r.fue_editado && (
+                              <span
+                                title={`Original: ${r.actividad_original_respaldo ?? ''} · Editado por ${r.editado_por ?? ''}`}
+                                className="rounded bg-ambar-suave px-1 py-0.5 text-[10px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto"
+                              >
+                                Editado
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 text-xs font-bold text-tinta dark:text-noche-tinta">
+                          {r.origen}
+                        </td>
+                        <td className="px-3 py-2 text-xs font-semibold text-tinta dark:text-noche-tinta">
+                          {r.destinos.join(', ')}
+                        </td>
+                        <td className="px-3 py-2 text-[13px] leading-snug text-tinta dark:text-noche-tinta">
+                          <p className="font-medium">{r.actividades}</p>
+                          {r.fue_editado && r.actividad_original_respaldo && (
+                            <p className="mt-0.5 text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
+                              Original: &ldquo;{r.actividad_original_respaldo}&rdquo;
+                            </p>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-xs text-tinta-suave dark:text-noche-tinta-suave">
+                          {r.registrado_por}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      </article>
+    </div>
+  )
+}
+
 export function HistorialDualPage({
   usuario,
   pestanaInicial = 'personal',
 }: HistorialDualPageProps) {
   const esGestor =
     usuario.rol_sistema === 'Encargado' || usuario.rol_sistema === 'Administrador'
+  const puedoVerRadio = puedeUsarRadio(usuario)
 
   const [pestana, setPestana] = useState<'personal' | 'archivo'>(
     pestanaInicial === 'archivo' && esGestor ? 'archivo' : 'personal',
@@ -50,9 +341,12 @@ export function HistorialDualPage({
 
   // Filtros del Archivo Operativo Global
   const [filtroCategoria, setFiltroCategoria] = useState<'Todas' | CategoriaOperativo>('Todas')
-  const [filtroEstatus, setFiltroEstatus] = useState<'Todos' | 'Abierta' | 'Cerrada'>('Todos')
+  const [filtroEstatus, setFiltroEstatus] = useState<'Todos' | 'Abierta' | 'Cerrada' | 'Finalizado'>(
+    'Todos',
+  )
   const [fechaDesde, setFechaDesde] = useState('')
   const [fechaHasta, setFechaHasta] = useState('')
+  const [operativoRadioArchivo, setOperativoRadioArchivo] = useState<Operativo | null>(null)
 
   const [exportandoId, setExportandoId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -83,8 +377,13 @@ export function HistorialDualPage({
 
   const operativosFiltrados = operativos.filter((op) => {
     if (filtroCategoria !== 'Todas' && op.categoria !== filtroCategoria) return false
-    if (filtroEstatus === 'Abierta' && !op.recepcion_abierta) return false
-    if (filtroEstatus === 'Cerrada' && op.recepcion_abierta) return false
+    if (filtroEstatus === 'Finalizado' && op.estatus !== 'Finalizado') return false
+    if (filtroEstatus === 'Abierta' && (op.estatus === 'Finalizado' || !op.recepcion_abierta)) {
+      return false
+    }
+    if (filtroEstatus === 'Cerrada' && (op.estatus === 'Finalizado' || op.recepcion_abierta)) {
+      return false
+    }
     const fechaOp = op.fecha_inicio.slice(0, 10)
     if (fechaDesde && fechaOp < fechaDesde) return false
     if (fechaHasta && fechaOp > fechaHasta) return false
@@ -131,7 +430,7 @@ export function HistorialDualPage({
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold tracking-tight text-tinta dark:text-noche-tinta">
-            Historial Dual y Reportes
+            Historial y Reportes
           </h2>
           <p className="mt-0.5 text-sm text-tinta-suave dark:text-noche-tinta-suave">
             Constancia personal de horas y archivo operativo exportable a Excel y PDF.
@@ -370,19 +669,22 @@ export function HistorialDualPage({
 
             <div className="flex flex-col gap-1">
               <label htmlFor="arch-est" className="etiqueta">
-                Estatus de recepción
+                Estatus
               </label>
               <select
                 id="arch-est"
                 value={filtroEstatus}
                 onChange={(e) =>
-                  setFiltroEstatus(e.target.value as 'Todos' | 'Abierta' | 'Cerrada')
+                  setFiltroEstatus(
+                    e.target.value as 'Todos' | 'Abierta' | 'Cerrada' | 'Finalizado',
+                  )
                 }
                 className="campo min-h-10 text-xs"
               >
                 <option value="Todos">Todos</option>
-                <option value="Abierta">Recepción Abierta</option>
-                <option value="Cerrada">Recepción Cerrada</option>
+                <option value="Abierta">Recepción abierta</option>
+                <option value="Cerrada">Recepción cerrada</option>
+                <option value="Finalizado">Finalizados</option>
               </select>
             </div>
 
@@ -436,77 +738,104 @@ export function HistorialDualPage({
                         Fecha Inicio
                       </th>
                       <th scope="col" className="px-4 py-3 text-xs font-semibold">
-                        Recepción
+                        Estatus
                       </th>
                       <th scope="col" className="px-4 py-3 text-xs font-semibold">
-                        Exportación
+                        Consulta y exportación
                       </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-borde dark:divide-noche-borde">
-                    {operativosFiltrados.map((op) => (
-                      <tr key={op.id}>
-                        <td className="px-4 py-3">
-                          <span className="block text-sm font-bold text-tinta dark:text-noche-tinta">
-                            {op.nombre}
-                          </span>
-                          <span className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-                            {op.sede}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-xs font-semibold text-tinta dark:text-noche-tinta">
-                          {op.categoria}
-                        </td>
-                        <td className="px-4 py-3 text-xs tabular-nums text-tinta-suave dark:text-noche-tinta-suave">
-                          {op.fecha_inicio.replace('T', ' ')}
-                        </td>
-                        <td className="px-4 py-3">
-                          <span
-                            className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
-                              op.recepcion_abierta
-                                ? 'bg-activo-suave text-activo dark:bg-noche-campo dark:text-activo-claro'
-                                : 'bg-superficie-suave text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave'
-                            }`}
-                          >
-                            {op.recepcion_abierta ? 'Abierta' : 'Cerrada'}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              disabled={exportandoId === `${op.id}-excel`}
-                              onClick={() => void manejarExportarOperativo(op, 'excel')}
-                              className="btn-salvia min-h-9 px-3 text-xs"
+                    {operativosFiltrados.map((op) => {
+                      const finalizado = op.estatus === 'Finalizado'
+                      return (
+                        <tr key={op.id}>
+                          <td className="px-4 py-3">
+                            <span className="block text-sm font-bold text-tinta dark:text-noche-tinta">
+                              {op.nombre}
+                            </span>
+                            <span className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
+                              {op.sede}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-xs font-semibold text-tinta dark:text-noche-tinta">
+                            {op.categoria}
+                          </td>
+                          <td className="px-4 py-3 text-xs tabular-nums text-tinta-suave dark:text-noche-tinta-suave">
+                            {op.fecha_inicio.replace('T', ' ')}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span
+                              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
+                                finalizado
+                                  ? 'bg-superficie-suave text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave'
+                                  : op.recepcion_abierta
+                                    ? 'bg-activo-suave text-activo dark:bg-noche-campo dark:text-activo-claro'
+                                    : 'bg-ambar-suave text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto'
+                              }`}
                             >
-                              <FileSpreadsheet size={15} strokeWidth={2} />
+                              {finalizado && <Lock size={11} strokeWidth={2} />}
                               <span>
-                                {exportandoId === `${op.id}-excel`
-                                  ? 'Generando...'
-                                  : 'Excel / Google Sheets'}
+                                {finalizado
+                                  ? 'Finalizado'
+                                  : op.recepcion_abierta
+                                    ? 'Abierta'
+                                    : 'Cerrada'}
                               </span>
-                            </button>
-                            <button
-                              type="button"
-                              disabled={exportandoId === `${op.id}-pdf`}
-                              onClick={() => void manejarExportarOperativo(op, 'pdf')}
-                              className="btn-verde min-h-9 px-3 text-xs"
-                            >
-                              <FileText size={15} strokeWidth={2} />
-                              <span>
-                                {exportandoId === `${op.id}-pdf` ? 'Generando...' : 'Expediente PDF'}
-                              </span>
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex flex-wrap gap-2">
+                              {puedoVerRadio && (
+                                <button
+                                  type="button"
+                                  onClick={() => setOperativoRadioArchivo(op)}
+                                  className="btn-salvia min-h-9 px-3 text-xs"
+                                >
+                                  <Radio size={15} strokeWidth={2} />
+                                  <span>Bitácora Radio</span>
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                disabled={exportandoId === `${op.id}-excel`}
+                                onClick={() => void manejarExportarOperativo(op, 'excel')}
+                                className="btn-salvia min-h-9 px-3 text-xs"
+                              >
+                                <FileSpreadsheet size={15} strokeWidth={2} />
+                                <span>
+                                  {exportandoId === `${op.id}-excel` ? 'Generando...' : 'Excel'}
+                                </span>
+                              </button>
+                              <button
+                                type="button"
+                                disabled={exportandoId === `${op.id}-pdf`}
+                                onClick={() => void manejarExportarOperativo(op, 'pdf')}
+                                className="btn-verde min-h-9 px-3 text-xs"
+                              >
+                                <FileText size={15} strokeWidth={2} />
+                                <span>
+                                  {exportandoId === `${op.id}-pdf` ? 'Generando...' : 'PDF'}
+                                </span>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
             )}
           </article>
         </section>
+      )}
+
+      {operativoRadioArchivo && (
+        <BitacoraRadioArchivoModal
+          operativo={operativoRadioArchivo}
+          alCerrar={() => setOperativoRadioArchivo(null)}
+        />
       )}
     </div>
   )

@@ -173,7 +173,7 @@ export function QrScannerModal({
           ) : (
             <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-1.5 text-xs font-semibold">
               <span className="h-2 w-2 rounded-full bg-activo-claro" />
-              <span>Lectura Estática y Dinámica TOTP lista</span>
+              <span>Escáner listo para leer código QR</span>
             </div>
           )}
         </main>

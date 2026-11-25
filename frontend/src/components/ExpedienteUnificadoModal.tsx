@@ -419,7 +419,7 @@ export function ExpedienteUnificadoModal({
 
                   <div className="flex flex-col gap-1">
                     <label htmlFor="exp-subgrupo" className="etiqueta">
-                      Subgrupo (catálogo dinámico)
+                      Subgrupo
                     </label>
                     <select
                       id="exp-subgrupo"
@@ -429,7 +429,7 @@ export function ExpedienteUnificadoModal({
                       className="campo min-h-10 text-xs"
                     >
                       <option value="">
-                        {etapa === 'Grupo Operativo' ? 'No aplica (Grupo Operativo)' : 'Sin subgrupo'}
+                        {etapa === 'Grupo Operativo' ? 'No aplica' : 'Sin subgrupo'}
                       </option>
                       {opcionesSubgrupo.map((sg) => (
                         <option key={sg} value={sg}>
@@ -471,7 +471,7 @@ export function ExpedienteUnificadoModal({
                     >
                       <option value="Pendiente">Pendiente</option>
                       <option value="Activo">Activo</option>
-                      <option value="Inactivo">Inactivo (Baja)</option>
+                      <option value="Inactivo">Inactivo</option>
                     </select>
                   </div>
                 </div>
@@ -480,7 +480,7 @@ export function ExpedienteUnificadoModal({
                 <div className="grid grid-cols-1 gap-3 border-t border-borde pt-3 sm:grid-cols-2 dark:border-noche-borde">
                   <div className="flex flex-col gap-1">
                     <label htmlFor="exp-rol" className="etiqueta">
-                      Rol del sistema {soyAdmin ? '' : '(solo Administrador)'}
+                      Rol del sistema
                     </label>
                     <select
                       id="exp-rol"
@@ -499,7 +499,7 @@ export function ExpedienteUnificadoModal({
 
                   <div className="flex flex-col gap-1">
                     <label htmlFor="exp-radio" className="etiqueta">
-                      Clave de Radio {soyAdmin ? '' : '(dominio TESLA / Administrador)'}
+                      Clave de Radio
                     </label>
                     <div className="flex items-center gap-2">
                       <input
@@ -531,10 +531,7 @@ export function ExpedienteUnificadoModal({
                 {(rol === 'Encargado' || gruposACargo.length > 0) && (
                   <div className="flex flex-col gap-2 rounded-xl border border-borde bg-superficie-suave p-3 dark:border-noche-borde dark:bg-noche-campo">
                     <span className="text-xs font-bold text-tinta dark:text-noche-tinta">
-                      Grupos o ayudantías a cargo (Opción B){' '}
-                      {!soyAdmin && (
-                        <span className="font-normal text-tinta-suave">(solo Administrador)</span>
-                      )}
+                      Grupos o ayudantías a cargo
                     </span>
                     <div className="flex flex-wrap gap-1.5">
                       {opcionesGruposACargo.map((item) => {
@@ -566,7 +563,7 @@ export function ExpedienteUnificadoModal({
                     </button>
                     <button type="submit" disabled={guardando} className="btn-verde min-h-10 px-4 text-xs">
                       <Save size={15} strokeWidth={2} />
-                      <span>{guardando ? 'Guardando...' : 'Guardar cambios (con auditoría)'}</span>
+                      <span>{guardando ? 'Guardando...' : 'Guardar cambios'}</span>
                     </button>
                   </div>
                 )}

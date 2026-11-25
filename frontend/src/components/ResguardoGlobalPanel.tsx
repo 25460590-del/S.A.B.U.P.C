@@ -468,11 +468,11 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
               </div>
 
               <div className="flex flex-col gap-1">
-                <span className="etiqueta">Evidencia fotográfica WebP (opcional)</span>
+                <span className="etiqueta">Evidencia fotográfica (opcional)</span>
                 <label className="btn-salvia min-h-10 cursor-pointer text-xs">
                   <Upload size={15} strokeWidth={2} />
                   <span>
-                    {archivoEvidencia ? archivoEvidencia.name : 'Adjuntar foto (WebP ligero)'}
+                    {archivoEvidencia ? archivoEvidencia.name : 'Adjuntar fotografía'}
                   </span>
                   <input
                     type="file"

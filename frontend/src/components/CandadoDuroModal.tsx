@@ -24,7 +24,7 @@ export function CandadoDuroModal({
           <Lock size={26} strokeWidth={2} className="shrink-0" />
           <div>
             <span className="block text-[11px] font-bold tracking-wider uppercase">
-              CANDADO DURO DE SALIDA
+              DEVOLUCIÓN PENDIENTE
             </span>
             <h2 id="candado-duro-titulo" className="text-lg font-bold">
               Imposible Registrar Salida

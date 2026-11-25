@@ -193,7 +193,7 @@ export async function obtenerDatosExpedienteOperativo(
     getDocs(query(collection(db, 'equipos_turno'), where('operativo_id', '==', operativoId))),
     getDocs(
       query(collection(db, 'bitacora_radio_registros'), where('operativo_id', '==', operativoId)),
-    ),
+    ).catch(() => null),
   ])
 
   const asistencias = asisSnap.docs
@@ -204,9 +204,11 @@ export async function obtenerDatosExpedienteOperativo(
     .map((d) => d.data() as EquipoTurno)
     .sort((a, b) => (a.creado_en?.toMillis() ?? 0) - (b.creado_en?.toMillis() ?? 0))
 
-  const registrosRadio = radioSnap.docs
-    .map((d) => d.data() as RegistroBitacoraRadio)
-    .sort((a, b) => (a.creado_en?.toMillis() ?? 0) - (b.creado_en?.toMillis() ?? 0))
+  const registrosRadio = radioSnap
+    ? radioSnap.docs
+        .map((d) => d.data() as RegistroBitacoraRadio)
+        .sort((a, b) => (a.creado_en?.toMillis() ?? 0) - (b.creado_en?.toMillis() ?? 0))
+    : []
 
   return { asistencias, equipos, registrosRadio }
 }

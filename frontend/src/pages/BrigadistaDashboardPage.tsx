@@ -93,10 +93,14 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
       (lista) => {
         setEquiposPorAsistencia({ asistenciaId: turnoAbiertoId, lista })
       },
-      (err) => setError(mensajeDeError(err)),
+      (err) => {
+        // Lectura secundaria del detalle de equipo: nunca interrumpir ni pintar error de permisos en el escáner
+        console.warn('[SABUPC] Error secundario al leer equipos de asistencia:', err.code)
+      },
+      perfil.uid,
     )
     return cancelar
-  }, [turnoAbiertoId])
+  }, [turnoAbiertoId, perfil.uid])
 
   useEffect(() => {
     if (!turnoAbiertoId) return
@@ -146,7 +150,10 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
       }
     } catch (err) {
       setAbriendoEscaner(false)
-      setError(err instanceof Error ? err.message : mensajeDeError(err))
+      const tieneCodigoFirebase = Boolean((err as { code?: string })?.code)
+      setError(
+        !tieneCodigoFirebase && err instanceof Error ? err.message : mensajeDeError(err),
+      )
     } finally {
       setProcesandoQr(false)
     }
@@ -273,7 +280,7 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
             <div className="col-span-2 flex items-center justify-between gap-2 rounded-lg bg-superficie-suave px-3 py-2.5 dark:bg-noche-campo">
               <div>
                 <span className="block text-[11px] font-semibold text-tinta-suave dark:text-noche-tinta-suave">
-                  Rol asignado en turno (solo lectura)
+                  Rol asignado en turno
                 </span>
                 <span className="text-sm font-bold text-tinta dark:text-noche-tinta">
                   {ultimoRegistro.rol_en_turno}

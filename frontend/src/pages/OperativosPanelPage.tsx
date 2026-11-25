@@ -234,7 +234,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
       setDescripcion('')
       setFechaInicio(valorDatetimeLocalActual())
       setFechaFin('')
-      setAviso('Operativo creado y configurado con QR dual (Estático + TOTP sin internet).')
+      setAviso('Operativo creado y listo para pase de lista con código QR.')
     } catch (err) {
       setError(mensajeDeError(err))
     } finally {
@@ -273,8 +273,8 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
       await cambiarModoQrOperativo(usuario, operativoActivo, modo)
       setAviso(
         modo === 'dinamico'
-          ? 'Modo QR cambiado a Dinámico TOTP (rotación cada 30 s sin internet).'
-          : 'Modo QR cambiado a Estático (listo para descarga PNG).',
+          ? 'Modo QR cambiado a Dinámico (se renueva cada 30 segundos).'
+          : 'Modo QR cambiado a Fijo (listo para descargar).',
       )
     } catch (err) {
       setError(mensajeDeError(err))
@@ -437,7 +437,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                   Iniciar Nuevo Operativo o Actividad
                 </h3>
                 <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-                  Genera automáticamente el token estático y el secreto TOTP de 30 s sin internet.
+                  Configura el pase de lista con código QR fijo o dinámico.
                 </p>
               </div>
               <button
@@ -512,8 +512,8 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                     onChange={(e) => setModoQrInicial(e.target.value as ModoQrOperativo)}
                     className="campo"
                   >
-                    <option value="dinamico">QR Dinámico TOTP (rotación cada 30 s sin internet)</option>
-                    <option value="estatico">QR Estático (descargable en PNG)</option>
+                    <option value="dinamico">QR Dinámico (se renueva cada 30 s)</option>
+                    <option value="estatico">QR Fijo (para imprimir o proyectar)</option>
                   </select>
                 </div>
 
@@ -712,7 +712,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
             }`}
           >
             {opEsFinalizado
-              ? 'Finalizado (Solo lectura)'
+              ? 'Finalizado'
               : opRecepcionAbierta
                 ? 'Recepción abierta'
                 : 'Recepción cerrada'}
@@ -982,7 +982,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                         : 'bg-salvia text-udec-oscuro dark:bg-noche-tarjeta dark:text-noche-tinta-suave'
                     }`}
                   >
-                    QR Dinámico TOTP (30 s)
+                    QR Dinámico (30 s)
                   </button>
                   <button
                     type="button"
@@ -994,7 +994,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                         : 'bg-salvia text-udec-oscuro dark:bg-noche-tarjeta dark:text-noche-tinta-suave'
                     }`}
                   >
-                    QR Estático (PNG)
+                    QR Fijo
                   </button>
                 </div>
               )}
@@ -1016,7 +1016,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                     />
                   ) : (
                     <div className="flex h-[180px] w-[180px] items-center justify-center text-xs font-semibold text-tinta-suave">
-                      Cargando TOTP...
+                      Generando código...
                     </div>
                   )}
                 </div>
@@ -1047,8 +1047,8 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                     </div>
 
                     <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-                      Cada código caduca en 30 segundos. Al cerrar la recepción el QR se desmonta
-                      inmediatamente y el temporizador se detiene.
+                      El código cambia cada 30 segundos. Al cerrar la recepción, se desactiva
+                      automáticamente.
                     </p>
                   </div>
                 ) : (
@@ -1063,7 +1063,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                       className="btn-salvia w-full text-xs"
                     >
                       <Download size={16} strokeWidth={2} />
-                      <span>Descargar PNG</span>
+                      <span>Descargar código QR</span>
                     </button>
                   </div>
                 )}
@@ -1234,7 +1234,8 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                     Eliminar Operativo
                   </h3>
                   <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-                    Acción exclusiva de Administrador. Quedará registrada en auditoría inmutable.
+                    Acción exclusiva de Administrador. Quedará registrada en el historial de
+                    auditoría.
                   </p>
                 </div>
               </div>

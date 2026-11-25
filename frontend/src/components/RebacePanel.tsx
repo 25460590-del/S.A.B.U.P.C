@@ -13,7 +13,7 @@ interface RebacePanelProps {
   usuario: Usuario
   poblando: boolean
   alPoblar?: () => void
-  alInsertarCodigo: (codigo: string) => void
+  alInsertarCodigo?: (codigo: string) => void
   alCerrarMovil?: () => void
 }
 
@@ -67,12 +67,12 @@ export function RebacePanel({
           <div className="flex items-center gap-2">
             <BookOpen size={17} strokeWidth={2} className="text-udec dark:text-activo-claro" />
             <h3 className="text-sm font-bold text-tinta dark:text-noche-tinta">
-              Claves ReBaCE v2
+              Claves de Radio
             </h3>
           </div>
           <div className="flex items-center gap-2">
             <span className="rounded bg-salvia px-2 py-0.5 text-[11px] font-bold tabular-nums text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
-              Local · {filtradas.length}
+              {filtradas.length}
             </span>
             {alCerrarMovil && (
               <button
@@ -163,7 +163,7 @@ export function RebacePanel({
               className="inline-flex cursor-pointer items-center gap-1 rounded bg-salvia px-2 py-0.5 text-[11px] font-semibold text-udec-oscuro hover:bg-salvia-hover dark:bg-noche-campo dark:text-activo-claro"
             >
               <Database size={12} strokeWidth={2} />
-              <span>{poblando ? 'Sincronizando...' : 'Guardar en nube'}</span>
+              <span>{poblando ? 'Sincronizando...' : 'Sincronizar catálogo'}</span>
             </button>
           )}
         </div>
@@ -180,9 +180,16 @@ export function RebacePanel({
             <button
               key={c.id}
               type="button"
-              onClick={() => alInsertarCodigo(c.codigo)}
-              title="Clic para insertar en Actividades"
-              className={`flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-colors ${
+              disabled={!alInsertarCodigo}
+              onClick={() => alInsertarCodigo?.(c.codigo)}
+              title={
+                alInsertarCodigo
+                  ? 'Clic para insertar en Actividades'
+                  : 'Consulta de catálogo de claves'
+              }
+              className={`flex w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-colors ${
+                alInsertarCodigo ? 'cursor-pointer' : 'cursor-default'
+              } ${
                 c.es_basico
                   ? 'border-ambar/70 bg-ambar-suave/70 hover:bg-amber-100/70 dark:border-ambar/70 dark:bg-noche-ambar dark:hover:bg-amber-950/60'
                   : 'border-borde bg-fondo hover:border-udec dark:border-noche-borde dark:bg-noche-campo'

@@ -91,9 +91,30 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
 
   const [error, setError] = useState<string | null>(null)
   const [aviso, setAviso] = useState<string | null>(null)
+  const opActivoIdRef = useRef<string | null>(null)
 
   useEffect(() => {
-    const cancelarOps = escucharOperativos(setOperativos, (err) => setError(mensajeDeError(err)))
+    const cancelarOps = escucharOperativos(
+      (lista) => {
+        const actualId = opActivoIdRef.current
+        if (actualId) {
+          const opActualizado = lista.find((o) => o.id === actualId)
+          if (opActualizado?.estatus === 'Finalizado') {
+            setOperativoIdSel('')
+            setCanalIdSel('')
+            setRegistroEditando(null)
+            setTextoEditado('')
+            setMostrandoNuevoCanal(false)
+            setMostrandoNuevaUnidad(false)
+            setAviso(
+              `El operativo "${opActualizado.nombre}" fue finalizado. Su bitácora de radio quedó disponible solo para consulta en Archivo Operativo Global.`,
+            )
+          }
+        }
+        setOperativos(lista)
+      },
+      (err) => setError(mensajeDeError(err)),
+    )
     const cancelarClaves = escucharCatalogoRebace(
       (lista) => {
         setClaves(lista)
@@ -107,12 +128,18 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
     }
   }, [])
 
+  const operativosActivos = operativos.filter((o) => o.estatus !== 'Finalizado')
+
   const operativoActivo =
-    operativos.find((o) => o.id === operativoIdSel) ??
-    operativos.find((o) => o.recepcion_abierta) ??
-    operativos[0] ??
+    operativosActivos.find((o) => o.id === operativoIdSel) ??
+    operativosActivos.find((o) => o.recepcion_abierta) ??
+    operativosActivos[0] ??
     null
   const opActivoId = operativoActivo?.id ?? null
+
+  useEffect(() => {
+    opActivoIdRef.current = opActivoId
+  }, [opActivoId])
 
   useEffect(() => {
     if (!opActivoId) return
@@ -181,6 +208,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
 
   async function manejarAgregarUnidad(e: FormEvent) {
     e.preventDefault()
+    if (!operativoActivo || operativoActivo.estatus === 'Finalizado') return
     if (!canalActivo || !nuevaUnidad.trim()) return
     setError(null)
     try {
@@ -197,7 +225,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
     etiqueta: string,
     unidadesBase: string[] = ['CECOM', '58A', 'BUPC 1'],
   ) {
-    if (!operativoActivo || !nombre.trim()) return
+    if (!operativoActivo || operativoActivo.estatus === 'Finalizado' || !nombre.trim()) return
     setError(null)
     setAviso(null)
     try {
@@ -219,7 +247,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
 
   async function manejarEnviarMensaje(e: FormEvent) {
     e.preventDefault()
-    if (!operativoActivo || !canalActivo) return
+    if (!operativoActivo || operativoActivo.estatus === 'Finalizado' || !canalActivo) return
     setError(null)
     setAviso(null)
 
@@ -243,7 +271,8 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
       setActividades('')
       setDestinoExtra('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : mensajeDeError(err))
+      const tieneCodigo = Boolean((err as { code?: string })?.code)
+      setError(!tieneCodigo && err instanceof Error ? err.message : mensajeDeError(err))
     } finally {
       setEnviando(false)
     }
@@ -251,17 +280,18 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
 
   async function manejarGuardarEdicion(e: FormEvent) {
     e.preventDefault()
-    if (!registroEditando) return
+    if (!operativoActivo || operativoActivo.estatus === 'Finalizado' || !registroEditando) return
     setError(null)
     setAviso(null)
     setEnviando(true)
     try {
       await editarRegistroBitacoraRadio(usuario, registroEditando.id, textoEditado)
-      setAviso(`Registro ${registroEditando.hora_original} actualizado con respaldo de auditoría.`)
+      setAviso(`Registro ${registroEditando.hora_original} actualizado correctamente.`)
       setRegistroEditando(null)
       setTextoEditado('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : mensajeDeError(err))
+      const tieneCodigo = Boolean((err as { code?: string })?.code)
+      setError(!tieneCodigo && err instanceof Error ? err.message : mensajeDeError(err))
     } finally {
       setEnviando(false)
     }
@@ -273,7 +303,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
     setAviso(null)
     try {
       const total = await poblarCatalogoRebace(usuario)
-      setAviso(`Catálogo ReBaCE v2 poblado con ${total} claves en 5 tablas oficiales.`)
+      setAviso(`Catálogo de claves cargado con ${total} registros.`)
     } catch (err) {
       setError(mensajeDeError(err))
     } finally {
@@ -297,24 +327,28 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
               Consola de Radio Multi-Canal
             </h2>
             <p className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
-              Registro cronológico inmutable (HH:MM:SS) · Claves oficiales ReBaCE v2
+              Registro cronológico de transmisiones y catálogo de claves
             </p>
           </div>
 
           <div className="flex w-full flex-wrap items-center gap-1.5 sm:w-auto">
             <select
-              aria-label="Seleccionar operativo"
+              aria-label="Seleccionar operativo activo"
               value={opActivoId ?? ''}
+              disabled={operativosActivos.length === 0}
               onChange={(e) => {
                 setOperativoIdSel(e.target.value)
                 setCanalIdSel('')
+                setRegistroEditando(null)
+                setMostrandoNuevoCanal(false)
+                setMostrandoNuevaUnidad(false)
               }}
               className="campo min-h-9 min-w-0 flex-1 text-xs font-semibold sm:w-52 sm:flex-none"
             >
-              {operativos.length === 0 ? (
-                <option value="">Sin operativos creados</option>
+              {operativosActivos.length === 0 ? (
+                <option value="">Sin operativos activos</option>
               ) : (
-                operativos.map((op) => (
+                operativosActivos.map((op) => (
                   <option key={op.id} value={op.id}>
                     {op.nombre}
                   </option>
@@ -328,7 +362,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
               title={
                 wakeLock.soportado
                   ? 'Evita que la pantalla se apague durante la guardia'
-                  : 'Wake Lock no soportado en este navegador'
+                  : 'Tu navegador no permite mantener la pantalla encendida'
               }
               className={`btn min-h-9 px-2.5 text-xs ${
                 wakeLock.activo
@@ -355,7 +389,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
                   )
                 }
               }}
-              aria-label="Exportar CSV Local"
+              aria-label="Exportar bitácora a CSV"
               className="btn-salvia min-h-9 px-2.5 text-xs"
             >
               <Download size={14} strokeWidth={2} />
@@ -474,43 +508,52 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
         </div>
       )}
 
-      {!operativoActivo ? (
-        <article className="tarjeta flex flex-col items-center gap-2 p-8 text-center">
-          <Radio size={34} strokeWidth={2} className="text-tinta-suave dark:text-noche-tinta-suave" />
-          <h3 className="text-base font-bold text-tinta dark:text-noche-tinta">
-            Crea primero un operativo
-          </h3>
-          <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-            La bitácora de radio se asocia a un operativo activo para mantener trazabilidad por
-            canal.
-          </p>
-        </article>
-      ) : !canalActivo ? (
-        <article className="tarjeta flex flex-col items-center gap-3 p-6 text-center">
-          <Radio size={32} strokeWidth={2} className="text-udec dark:text-activo-claro" />
-          <h3 className="text-base font-bold text-tinta dark:text-noche-tinta">
-            Sin canales de radio en {operativoActivo.nombre}
-          </h3>
-          <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-            Inicia el canal principal CECOM o cualquiera de los canales sugeridos para comenzar a
-            registrar transmisiones.
-          </p>
-          <div className="flex flex-wrap justify-center gap-2 pt-1">
-            {CANALES_SUGERIDOS.slice(0, 3).map((sug) => (
-              <button
-                key={sug.nombre}
-                type="button"
-                onClick={() => void manejarCrearCanal(sug.nombre, sug.etiqueta, sug.unidades)}
-                className="btn-verde min-h-10 px-4 text-xs"
-              >
-                + Abrir canal {sug.nombre}
-              </button>
-            ))}
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-12">
+        {!operativoActivo ? (
+          <div className="flex min-h-0 flex-col lg:col-span-8">
+            <article className="tarjeta flex flex-1 flex-col items-center justify-center gap-2.5 p-8 text-center">
+              <Radio
+                size={34}
+                strokeWidth={2}
+                className="text-tinta-suave dark:text-noche-tinta-suave"
+              />
+              <h3 className="text-base font-bold text-tinta dark:text-noche-tinta">
+                Sin operativos activos para radio
+              </h3>
+              <p className="max-w-md text-xs text-tinta-suave dark:text-noche-tinta-suave">
+                No hay operativos en curso disponibles para registrar transmisiones. Los operativos
+                finalizados pueden consultarse en modo solo lectura desde Archivo Operativo Global.
+                El catálogo de claves sigue disponible para consulta inmediata.
+              </p>
+            </article>
           </div>
-        </article>
-      ) : (
-        <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-12">
-          {/* Columna izquierda: en móvil muestra tabla arriba y captura fija abajo sobre el teclado; en PC captura arriba y tabla compacta debajo */}
+        ) : !canalActivo ? (
+          <div className="flex min-h-0 flex-col lg:col-span-8">
+            <article className="tarjeta flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+              <Radio size={32} strokeWidth={2} className="text-udec dark:text-activo-claro" />
+              <h3 className="text-base font-bold text-tinta dark:text-noche-tinta">
+                Sin canales de radio en {operativoActivo.nombre}
+              </h3>
+              <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
+                Inicia el canal principal CECOM o cualquiera de los canales sugeridos para comenzar a
+                registrar transmisiones.
+              </p>
+              <div className="flex flex-wrap justify-center gap-2 pt-1">
+                {CANALES_SUGERIDOS.slice(0, 3).map((sug) => (
+                  <button
+                    key={sug.nombre}
+                    type="button"
+                    onClick={() => void manejarCrearCanal(sug.nombre, sug.etiqueta, sug.unidades)}
+                    className="btn-verde min-h-10 px-4 text-xs"
+                  >
+                    + Abrir canal {sug.nombre}
+                  </button>
+                ))}
+              </div>
+            </article>
+          </div>
+        ) : (
+          /* Columna izquierda: en móvil muestra tabla arriba y captura fija abajo sobre el teclado; en PC captura arriba y tabla compacta debajo */
           <div className="flex min-h-0 flex-col-reverse gap-2.5 lg:col-span-8 lg:flex-col">
             {/* Barra de captura rápida */}
             <article
@@ -605,9 +648,9 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
                     </button>
                   </div>
 
-                  {/* DESTINO (Múltiple) */}
+                  {/* DESTINO */}
                   <div className="flex flex-col gap-1 md:col-span-5">
-                    <span className="etiqueta">DESTINO (Múltiple)</span>
+                    <span className="etiqueta">DESTINO</span>
                     <div className="flex flex-wrap gap-1">
                       {unidadesCanal.map((u) => {
                         const activo = destinos.includes(u)
@@ -692,8 +735,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
                     Sin transmisiones en {canalActivo.nombre_canal}
                   </p>
                   <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-                    Cada mensaje queda sellado con hora exacta HH:MM:SS inmutable y se guarda
-                    incluso sin conexión.
+                    Cada mensaje registra su hora exacta y se guarda incluso sin conexión.
                   </p>
                 </div>
               ) : (
@@ -841,27 +883,27 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
               )}
             </article>
           </div>
+        )}
 
-          {/* Panel lateral derecho Claves ReBaCE v2 (Escritorio) */}
-          <aside className="tarjeta hidden min-h-0 overflow-hidden lg:col-span-4 lg:flex lg:flex-col">
-            <RebacePanel
-              claves={claves}
-              cargando={cargandoClaves}
-              usuario={usuario}
-              poblando={poblandoClaves}
-              alPoblar={() => void manejarPoblarClaves()}
-              alInsertarCodigo={insertarCodigoEnActividad}
-            />
-          </aside>
-        </div>
-      )}
+        {/* Panel lateral derecho Claves de Radio (Escritorio, siempre usable incluso sin operativos activos) */}
+        <aside className="tarjeta hidden min-h-0 overflow-hidden lg:col-span-4 lg:flex lg:flex-col">
+          <RebacePanel
+            claves={claves}
+            cargando={cargandoClaves}
+            usuario={usuario}
+            poblando={poblandoClaves}
+            alPoblar={() => void manejarPoblarClaves()}
+            alInsertarCodigo={operativoActivo && canalActivo ? insertarCodigoEnActividad : undefined}
+          />
+        </aside>
+      </div>
 
-      {/* Bottom Sheet móvil de Claves ReBaCE v2 */}
+      {/* Bottom Sheet móvil de Claves de Radio */}
       {sheetClavesAbierto && (
         <div
           role="dialog"
           aria-modal="true"
-          aria-label="Claves ReBaCE v2"
+          aria-label="Claves de Radio"
           className="fixed inset-0 z-50 flex items-end bg-black/70 lg:hidden"
         >
           <div className="h-[82dvh] w-full overflow-hidden rounded-t-2xl border-t border-borde dark:border-noche-borde">
@@ -871,7 +913,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
               usuario={usuario}
               poblando={poblandoClaves}
               alPoblar={() => void manejarPoblarClaves()}
-              alInsertarCodigo={insertarCodigoEnActividad}
+              alInsertarCodigo={operativoActivo && canalActivo ? insertarCodigoEnActividad : undefined}
               alCerrarMovil={() => setSheetClavesAbierto(false)}
             />
           </div>
@@ -879,7 +921,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
       )}
 
       {/* Modal de edición de actividad (hora_original inmutable) */}
-      {registroEditando && (
+      {registroEditando && operativoActivo && operativoActivo.estatus !== 'Finalizado' && (
         <div
           role="dialog"
           aria-modal="true"
@@ -894,7 +936,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
                   <span className="tabular-nums">{registroEditando.hora_original}</span>
                 </h3>
                 <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-                  La hora original es inmutable y el texto anterior se conserva en auditoría.
+                  La hora original se conserva y el texto anterior queda guardado como respaldo.
                 </p>
               </div>
               <button
