@@ -313,6 +313,26 @@ export function puedeAdministrarCatalogos(actor?: Usuario | null): boolean {
   return esAdmin(actor)
 }
 
+/** ¿El operativo se encuentra cerrado en modo solo lectura ('Finalizado' o 'Cancelado')? */
+export function esOperativoCerrado(op?: Pick<Operativo, 'estatus'> | null): boolean {
+  return op?.estatus === 'Finalizado' || op?.estatus === 'Cancelado'
+}
+
+/** Solo Administración puede finalizar o cancelar definitivamente un operativo. */
+export function puedeFinalizarOperativo(actor?: Usuario | null): boolean {
+  return esAdmin(actor)
+}
+
+/**
+ * Administración o Encargado sin ayudantía pueden abrir/cerrar recepción, convocatoria,
+ * cupo sugerido y modo QR de un operativo activo (Jefe de Ayudantía no modifica configuración global).
+ */
+export function puedeConfigurarOperativoActivo(actor?: Usuario | null): boolean {
+  if (!esUsuarioActivo(actor)) return false
+  if (actor.rol_sistema === 'Administrador') return true
+  return actor.rol_sistema === 'Encargado' && !esJefeAyudantia(actor)
+}
+
 export function puedeEliminarOperativo(actor?: Usuario | null): boolean {
   return esAdmin(actor)
 }

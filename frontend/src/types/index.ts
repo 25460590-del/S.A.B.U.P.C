@@ -110,7 +110,7 @@ export type CategoriaOperativo =
 
 export type ModoQrOperativo = 'estatico' | 'dinamico'
 
-export type EstatusOperativo = 'Activo' | 'Finalizado'
+export type EstatusOperativo = 'Activo' | 'Finalizado' | 'Cancelado'
 
 export interface Operativo {
   id: string
@@ -394,6 +394,7 @@ export type TipoEventoAuditoria =
   | 'CAMBIO_CONVOCATORIA_OPERATIVO'
   | 'CAMBIO_MODO_QR'
   | 'FINALIZACION_OPERATIVO'
+  | 'CANCELACION_OPERATIVO'
   | 'ELIMINACION_OPERATIVO'
   | 'ASIGNACION_EQUIPO'
   | 'DEVOLUCION_EQUIPO'

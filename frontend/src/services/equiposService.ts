@@ -17,7 +17,7 @@ import {
 } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import { comprimirImagenAWebP } from '../lib/imageCompression'
-import { ayudantiaEfectiva } from '../lib/permisos'
+import { ayudantiaEfectiva, ayudantiaJefatura, type AyudantiaActiva } from '../lib/permisos'
 import type { AsistenciaPersonal, EquipoTurno, EvidenciaEquipo, Usuario } from '../types'
 import { nombreCompleto } from './authService'
 
@@ -96,14 +96,21 @@ export async function asignarEquipoBupc(
   }
 
   if (codigoInventario) {
-    // Validación anti-doble préstamo simultáneo para equipo serializado
-    const dupSnap = await getDocs(
-      query(
-        equiposRef,
-        where('operativo_id', '==', asistencia.operativo_id),
-        where('codigo_inventario', '==', codigoInventario),
-      ),
-    )
+    // Validación anti-doble préstamo simultáneo para equipo serializado (acotada por ayudantia_slot si es Jefe)
+    const ayJefe = ayudantiaJefatura(encargado)
+    const consultaDup = ayJefe
+      ? query(
+          equiposRef,
+          where('operativo_id', '==', asistencia.operativo_id),
+          where('codigo_inventario', '==', codigoInventario),
+          where('ayudantia_slot', '==', ayJefe),
+        )
+      : query(
+          equiposRef,
+          where('operativo_id', '==', asistencia.operativo_id),
+          where('codigo_inventario', '==', codigoInventario),
+        )
+    const dupSnap = await getDocs(consultaDup)
     const yaPrestado = dupSnap.docs
       .map((d) => d.data() as EquipoTurno)
       .find(
@@ -448,9 +455,18 @@ export function escucharEquiposDeOperativo(
   operativoId: string,
   alCambiar: (lista: EquipoTurno[]) => void,
   alFallar?: (error: FirestoreError) => void,
+  ayudantiaFiltro?: AyudantiaActiva | null,
 ): Unsubscribe {
+  const consulta = ayudantiaFiltro
+    ? query(
+        equiposRef,
+        where('operativo_id', '==', operativoId),
+        where('ayudantia_slot', '==', ayudantiaFiltro),
+      )
+    : query(equiposRef, where('operativo_id', '==', operativoId))
+
   return onSnapshot(
-    query(equiposRef, where('operativo_id', '==', operativoId)),
+    consulta,
     (snap) => {
       const lista = snap.docs.map((d) => d.data() as EquipoTurno)
       lista.sort((a, b) => (b.creado_en?.toMillis() ?? 0) - (a.creado_en?.toMillis() ?? 0))
@@ -490,17 +506,28 @@ export function escucharMisEquiposBupc(
 /**
  * Suscripción en tiempo real para Encargados/Admin en "Resguardo Global de Material":
  * concentra todo el material BUPC que aún no ha sido devuelto ni cerrado por acta.
+ * Si consulta un Jefe de Ayudantía, filtra estrictamente por `ayudantia_slot`.
  */
 export function escucharResguardoGlobalBupc(
   alCambiar: (lista: EquipoTurno[]) => void,
   alFallar?: (error: FirestoreError) => void,
+  ayudantiaFiltro?: AyudantiaActiva | null,
 ): Unsubscribe {
+  const consulta = ayudantiaFiltro
+    ? query(
+        equiposRef,
+        where('origen_material', '==', 'BUPC_Asignado'),
+        where('devuelto', '==', false),
+        where('ayudantia_slot', '==', ayudantiaFiltro),
+      )
+    : query(
+        equiposRef,
+        where('origen_material', '==', 'BUPC_Asignado'),
+        where('devuelto', '==', false),
+      )
+
   return onSnapshot(
-    query(
-      equiposRef,
-      where('origen_material', '==', 'BUPC_Asignado'),
-      where('devuelto', '==', false),
-    ),
+    consulta,
     (snap) => {
       const lista = snap.docs
         .map((d) => d.data() as EquipoTurno)
@@ -522,9 +549,18 @@ export function escucharResguardoGlobalBupc(
 export function escucharActasMaterialBupc(
   alCambiar: (lista: EquipoTurno[]) => void,
   alFallar?: (error: FirestoreError) => void,
+  ayudantiaFiltro?: AyudantiaActiva | null,
 ): Unsubscribe {
+  const consulta = ayudantiaFiltro
+    ? query(
+        equiposRef,
+        where('estado_reporte', '==', 'Incidencia'),
+        where('ayudantia_slot', '==', ayudantiaFiltro),
+      )
+    : query(equiposRef, where('estado_reporte', '==', 'Incidencia'))
+
   return onSnapshot(
-    query(equiposRef, where('estado_reporte', '==', 'Incidencia')),
+    consulta,
     (snap) => {
       const lista = snap.docs
         .map((d) => d.data() as EquipoTurno)
@@ -546,9 +582,18 @@ export function escucharActasMaterialDeUsuario(
   usuarioUid: string,
   alCambiar: (lista: EquipoTurno[]) => void,
   alFallar?: (error: FirestoreError) => void,
+  ayudantiaFiltro?: AyudantiaActiva | null,
 ): Unsubscribe {
+  const consulta = ayudantiaFiltro
+    ? query(
+        equiposRef,
+        where('usuario_uid', '==', usuarioUid),
+        where('ayudantia_slot', '==', ayudantiaFiltro),
+      )
+    : query(equiposRef, where('usuario_uid', '==', usuarioUid))
+
   return onSnapshot(
-    query(equiposRef, where('usuario_uid', '==', usuarioUid)),
+    consulta,
     (snap) => {
       const lista = snap.docs
         .map((d) => d.data() as EquipoTurno)
@@ -570,9 +615,18 @@ export function escucharMaterialPropioDeUsuario(
   usuarioUid: string,
   alCambiar: (lista: EquipoTurno[]) => void,
   alFallar?: (error: FirestoreError) => void,
+  ayudantiaFiltro?: AyudantiaActiva | null,
 ): Unsubscribe {
+  const consulta = ayudantiaFiltro
+    ? query(
+        equiposRef,
+        where('usuario_uid', '==', usuarioUid),
+        where('ayudantia_slot', '==', ayudantiaFiltro),
+      )
+    : query(equiposRef, where('usuario_uid', '==', usuarioUid))
+
   return onSnapshot(
-    query(equiposRef, where('usuario_uid', '==', usuarioUid)),
+    consulta,
     (snap) => {
       const lista = snap.docs
         .map((d) => d.data() as EquipoTurno)

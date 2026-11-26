@@ -851,10 +851,21 @@ export function guardarEdicionExpediente(
   }
 
   const etapaFinal = cambios.etapa ?? objetivo.etapa
-  const ayudantiaFinal = cambios.ayudantia ?? ayudantiaEfectiva(objetivo)
+  const ayudantiaActual = ayudantiaEfectiva(objetivo)
+  const ayudantiaFinal = cambios.ayudantia ?? ayudantiaActual
+  if (!soyAdmin && cambios.ayudantia !== undefined && cambios.ayudantia !== ayudantiaActual) {
+    return Promise.reject(
+      new Error('Los cambios de ayudantía son exclusivos de Administración.'),
+    )
+  }
   if (ayJefe && ayudantiaFinal !== ayJefe) {
     return Promise.reject(
       new Error(`Como Jefe de Ayudantía solo puedes gestionar integrantes dentro de ${ayJefe}.`),
+    )
+  }
+  if (!soyAdmin && !ayJefe && etapaFinal === 'Grupo Operativo') {
+    return Promise.reject(
+      new Error('Un Encargado de etapa formativa solo puede ajustar entre etapas Alfa, Omega y SIERRA.'),
     )
   }
   const tocaAdscripcion =
@@ -955,11 +966,11 @@ export function guardarEdicionExpediente(
 
   const tipoEvento: TipoEventoAuditoria = hayCorreccionIdentidad
     ? 'CORRECCION_IDENTIDAD'
-    : payload.rol_sistema !== undefined
+    : soyAdmin && payload.rol_sistema !== undefined
       ? 'CAMBIO_ROL'
-      : payload.estatus === 'Inactivo'
+      : soyAdmin && payload.estatus === 'Inactivo'
         ? 'BAJA_USUARIO'
-        : payload.estatus === 'Activo' && objetivo.estatus === 'Pendiente'
+        : soyAdmin && payload.estatus === 'Activo' && objetivo.estatus === 'Pendiente'
           ? 'APROBACION_USUARIO'
           : 'ACTUALIZACION_PERSONAL'
 
@@ -1030,8 +1041,19 @@ export function actualizarPersonalOperativo(
   if (!puedeGestionarBrigadista(actor, objetivo)) {
     return Promise.reject(new Error('No tienes permiso para editar el perfil de este brigadista.'))
   }
+  const soyAdmin = esAdmin(actor)
+  const ayJefe = ayudantiaJefatura(actor)
   const etapaFinal = cambios.etapa ?? objetivo.etapa
-  const ayudantiaFinal = cambios.ayudantia ?? ayudantiaEfectiva(objetivo)
+  const ayudantiaActual = ayudantiaEfectiva(objetivo)
+  const ayudantiaFinal = cambios.ayudantia ?? ayudantiaActual
+  if (!soyAdmin && cambios.ayudantia !== undefined && cambios.ayudantia !== ayudantiaActual) {
+    return Promise.reject(new Error('Los cambios de ayudantía son exclusivos de Administración.'))
+  }
+  if (!soyAdmin && !ayJefe && etapaFinal === 'Grupo Operativo') {
+    return Promise.reject(
+      new Error('Solo Administración o un Jefe de Ayudantía puede promover a Grupo Operativo.'),
+    )
+  }
   if (!esAyudantiaValidaParaEtapa(etapaFinal, ayudantiaFinal)) {
     return Promise.reject(
       new Error('Para asignar a Grupo Operativo es obligatorio seleccionar una ayudantía.'),
@@ -1106,6 +1128,12 @@ export async function promoverIntegrantesEnLote(
     throw new Error('Selecciona un grupo activo de Omega como destino.')
   }
 
+  const soyAdmin = esAdmin(actor)
+  const ayJefe = ayudantiaJefatura(actor)
+  if (!soyAdmin && !ayJefe && destino.etapaDestino === 'Grupo Operativo') {
+    throw new Error('La graduación a Grupo Operativo requiere un Jefe de Ayudantía o Administración.')
+  }
+
   // Validar permisos y reglas de negocio antes de escribir un solo documento
   const actualizaciones: { uid: string; nombre: string; cambios: Record<string, unknown> }[] = []
 
@@ -1126,6 +1154,11 @@ export async function promoverIntegrantesEnLote(
       })
     } else {
       const actual = ayudantiaEfectiva(u)
+      if (!soyAdmin && actual === 'Ninguna') {
+        throw new Error(
+          `Solo Administración puede asignar una nueva ayudantía a ${nombreCompleto(u)}.`,
+        )
+      }
       const ayudantiaFinal: AyudantiaSlot =
         actual !== 'Ninguna' ? actual : (destino.ayudantiasPorUid?.[u.uid] ?? 'Ninguna')
       if (!esAyudantiaValidaParaEtapa('Grupo Operativo', ayudantiaFinal)) {

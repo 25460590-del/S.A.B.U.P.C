@@ -121,7 +121,11 @@ export function IncidenciasPersonalPanel({ actor }: IncidenciasPersonalPanelProp
     const cPers = escucharIncidenciasPersonalSegunRol(actor, setIncidenciasPers, (err) =>
       setError(mensajeDeError(err)),
     )
-    const cMat = escucharActasMaterialBupc(setActasMaterial, (err) => setError(mensajeDeError(err)))
+    const cMat = escucharActasMaterialBupc(
+      setActasMaterial,
+      (err) => setError(mensajeDeError(err)),
+      ayJefe,
+    )
 
     return () => {
       cOps()
@@ -129,7 +133,7 @@ export function IncidenciasPersonalPanel({ actor }: IncidenciasPersonalPanelProp
       cPers()
       cMat()
     }
-  }, [actor])
+  }, [actor, ayJefe])
 
   const mapaUsuarios = useMemo(() => new Map(usuarios.map((u) => [u.uid, u])), [usuarios])
   const mapaOperativos = useMemo(() => new Map(operativos.map((o) => [o.id, o])), [operativos])
@@ -470,7 +474,7 @@ export function IncidenciasPersonalPanel({ actor }: IncidenciasPersonalPanelProp
                 >
                   <option value="">Sin operativo específico</option>
                   {operativos
-                    .filter((o) => o.estatus !== 'Finalizado')
+                    .filter((o) => o.estatus !== 'Finalizado' && o.estatus !== 'Cancelado')
                     .map((op) => (
                       <option key={op.id} value={op.id}>
                         {op.nombre}

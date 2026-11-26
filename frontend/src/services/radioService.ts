@@ -15,6 +15,7 @@ import {
 import * as XLSX from 'xlsx'
 import { SEMILLA_REBACE_V2 } from '../constants/rebaceSeed'
 import { db } from '../lib/firebase'
+import { esEncargado } from '../lib/permisos'
 import type {
   CanalRadio,
   ClaveRebace,
@@ -57,15 +58,17 @@ export async function crearCanalRadio(actor: Usuario, datos: DatosNuevoCanal): P
     creado_en: serverTimestamp(),
     actualizado_en: serverTimestamp(),
   })
-  lote.set(doc(auditoriaRef), {
-    tipo: 'CREACION_CANAL_RADIO',
-    actor_uid: actor.uid,
-    actor_nombre: nombreCompleto(actor),
-    objetivo_uid: nuevo.id,
-    objetivo_nombre: datos.nombre_canal.trim(),
-    detalle: `Canal creado para operativo ${datos.operativo_id}`,
-    creado_en: serverTimestamp(),
-  })
+  if (esEncargado(actor)) {
+    lote.set(doc(auditoriaRef), {
+      tipo: 'CREACION_CANAL_RADIO',
+      actor_uid: actor.uid,
+      actor_nombre: nombreCompleto(actor),
+      objetivo_uid: nuevo.id,
+      objetivo_nombre: datos.nombre_canal.trim(),
+      detalle: `Canal creado para operativo ${datos.operativo_id}`,
+      creado_en: serverTimestamp(),
+    })
+  }
   await lote.commit()
   return nuevo.id
 }
@@ -193,15 +196,17 @@ export async function editarRegistroBitacoraRadio(
       actualizado_en: serverTimestamp(),
     })
 
-    tx.set(doc(auditoriaRef), {
-      tipo: 'EDICION_BITACORA_RADIO',
-      actor_uid: actor.uid,
-      actor_nombre: nombreCompleto(actor),
-      objetivo_uid: actual.id,
-      objetivo_nombre: `${actual.hora_original} · ${actual.origen}`,
-      detalle: `Anterior: "${actual.actividades}" → Nuevo: "${textoNuevo}"`,
-      creado_en: serverTimestamp(),
-    })
+    if (esEncargado(actor)) {
+      tx.set(doc(auditoriaRef), {
+        tipo: 'EDICION_BITACORA_RADIO',
+        actor_uid: actor.uid,
+        actor_nombre: nombreCompleto(actor),
+        objetivo_uid: actual.id,
+        objetivo_nombre: `${actual.hora_original} · ${actual.origen}`,
+        detalle: `Anterior: "${actual.actividades}" → Nuevo: "${textoNuevo}"`,
+        creado_en: serverTimestamp(),
+      })
+    }
   })
 }
 

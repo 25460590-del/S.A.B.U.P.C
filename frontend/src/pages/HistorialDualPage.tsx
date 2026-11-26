@@ -378,12 +378,13 @@ export function HistorialDualPage({
   const { totalHoras, desglose } = calcularDesgloseHoras(asistenciasCerradas, mapaOperativos)
 
   const operativosFiltrados = operativos.filter((op) => {
+    const cerrado = op.estatus === 'Finalizado' || op.estatus === 'Cancelado'
     if (filtroCategoria !== 'Todas' && op.categoria !== filtroCategoria) return false
-    if (filtroEstatus === 'Finalizado' && op.estatus !== 'Finalizado') return false
-    if (filtroEstatus === 'Abierta' && (op.estatus === 'Finalizado' || !op.recepcion_abierta)) {
+    if (filtroEstatus === 'Finalizado' && !cerrado) return false
+    if (filtroEstatus === 'Abierta' && (cerrado || !op.recepcion_abierta)) {
       return false
     }
-    if (filtroEstatus === 'Cerrada' && (op.estatus === 'Finalizado' || op.recepcion_abierta)) {
+    if (filtroEstatus === 'Cerrada' && (cerrado || op.recepcion_abierta)) {
       return false
     }
     const fechaOp = op.fecha_inicio.slice(0, 10)
@@ -755,7 +756,7 @@ export function HistorialDualPage({
                   </thead>
                   <tbody className="divide-y divide-borde dark:divide-noche-borde">
                     {operativosFiltrados.map((op) => {
-                      const finalizado = op.estatus === 'Finalizado'
+                      const finalizado = op.estatus === 'Finalizado' || op.estatus === 'Cancelado'
                       return (
                         <tr key={op.id}>
                           <td className="px-4 py-3">
@@ -784,11 +785,13 @@ export function HistorialDualPage({
                             >
                               {finalizado && <Lock size={11} strokeWidth={2} />}
                               <span>
-                                {finalizado
-                                  ? 'Finalizado'
-                                  : op.recepcion_abierta
-                                    ? 'Abierta'
-                                    : 'Cerrada'}
+                                {op.estatus === 'Cancelado'
+                                  ? 'Cancelado'
+                                  : op.estatus === 'Finalizado'
+                                    ? 'Finalizado'
+                                    : op.recepcion_abierta
+                                      ? 'Abierta'
+                                      : 'Cerrada'}
                               </span>
                             </span>
                           </td>

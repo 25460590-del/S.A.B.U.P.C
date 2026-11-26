@@ -20,6 +20,7 @@ import {
   ayudantiaJefatura,
   esAdmin,
   esEncargado,
+  esOperativoCerrado,
   grupoDesdeEtapa,
   normalizarOperativo,
   normalizarUsuario,
@@ -302,8 +303,10 @@ export async function registrarAsistenciaQR(
       throw new Error('El operativo indicado por el QR no existe.')
     }
     const operativo = normalizarOperativo(opSnap.data() as Operativo)
-    if (operativo.estatus === 'Finalizado') {
-      throw new Error(`El operativo "${operativo.nombre}" ya fue finalizado.`)
+    if (esOperativoCerrado(operativo)) {
+      throw new Error(
+        `El operativo "${operativo.nombre}" ya fue ${operativo.estatus === 'Cancelado' ? 'cancelado' : 'finalizado'}.`,
+      )
     }
 
     if (qr.tipo === 'operativo_estatico') {
@@ -376,8 +379,10 @@ export async function registrarAsistenciaQR(
     throw new Error('Selecciona primero un operativo activo antes de escanear una credencial.')
   }
   const opNormalizado = normalizarOperativo(operativoActual)
-  if (opNormalizado.estatus === 'Finalizado') {
-    throw new Error(`El operativo "${opNormalizado.nombre}" ya fue finalizado.`)
+  if (esOperativoCerrado(opNormalizado)) {
+    throw new Error(
+      `El operativo "${opNormalizado.nombre}" ya fue ${opNormalizado.estatus === 'Cancelado' ? 'cancelado' : 'finalizado'}.`,
+    )
   }
 
   const ayJefe = ayudantiaJefatura(actor)
@@ -484,8 +489,10 @@ export async function registrarAsistenciaManual(
     throw new Error(`Solo puedes pasar lista a integrantes de tu ayudantía (${ayJefe}).`)
   }
   const opNorm = normalizarOperativo(operativo)
-  if (opNorm.estatus === 'Finalizado') {
-    throw new Error(`El operativo "${opNorm.nombre}" ya fue finalizado.`)
+  if (esOperativoCerrado(opNorm)) {
+    throw new Error(
+      `El operativo "${opNorm.nombre}" ya fue ${opNorm.estatus === 'Cancelado' ? 'cancelado' : 'finalizado'}.`,
+    )
   }
   if (!opNorm.recepcion_abierta) {
     throw new Error(

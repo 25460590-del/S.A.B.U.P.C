@@ -106,7 +106,7 @@ beforeEach(async () => {
     await setDoc(doc(f, 'usuarios/brigOmega1'), usuarioBase('brigOmega1', { estatus: 'Activo', etapa: 'Omega', grupo_operativo: 'Omega', subgrupo: 'Omega 1' }));
     await setDoc(doc(f, 'usuarios/encargado1'), usuarioBase('encargado1', { estatus: 'Activo', rol_sistema: 'Encargado' }));
     await setDoc(doc(f, 'usuarios/encRadio'), usuarioBase('encRadio', { estatus: 'Activo', rol_sistema: 'Encargado', autorizado_radio: true, clave_radio: 'LINCE' }));
-    await setDoc(doc(f, 'usuarios/encAlfa1'), usuarioBase('encAlfa1', { estatus: 'Activo', rol_sistema: 'Encargado', grupos_a_cargo: ['Alfa 1'] }));
+    await setDoc(doc(f, 'usuarios/encAlfa1'), usuarioBase('encAlfa1', { estatus: 'Activo', rol_sistema: 'Encargado', grupos_a_cargo: ['Alfa 1', 'Alfa 2'] }));
     await setDoc(doc(f, 'usuarios/encAP'), usuarioBase('encAP', { estatus: 'Activo', rol_sistema: 'Encargado', ayudantia: 'Administración de Personal', ayudantia_slot: 'Administración de Personal' }));
     await setDoc(doc(f, 'usuarios/encTesla'), usuarioBase('encTesla', { estatus: 'Activo', rol_sistema: 'Encargado', ayudantia: 'Tesla', ayudantia_slot: 'Tesla' }));
     await setDoc(doc(f, 'usuarios/jefeSocorros'), usuarioBase('jefeSocorros', { estatus: 'Activo', rol_sistema: 'Encargado', etapa: 'Grupo Operativo', ayudantia: 'Socorros', ayudantia_slot: 'Socorros' }));
@@ -360,13 +360,14 @@ test('Admin no borra', () => assertFails(deleteDoc(doc(db('admin1'), 'usuarios/a
 test('dueño no se borra', () => assertFails(deleteDoc(doc(db('activo1'), 'usuarios/activo1'))));
 
 // ---------------- auditoria_eventos ----------------
-test('Activo crea evento', () => assertSucceeds(addDoc(collection(db('activo1'), 'auditoria_eventos'), eventoValido('activo1'))));
+test('Brigadista Activo NO crea eventos de auditoría (M-5)', () => assertFails(addDoc(collection(db('activo1'), 'auditoria_eventos'), eventoValido('activo1'))));
+test('Encargado crea evento operativo propio de su rol', () => assertSucceeds(addDoc(collection(db('encargado1'), 'auditoria_eventos'), eventoValido('encargado1', { tipo: 'ASIGNACION_EQUIPO' }))));
 test('Pendiente no crea evento', () => assertFails(addDoc(collection(db('pendiente1'), 'auditoria_eventos'), eventoValido('pendiente1'))));
-test('evento con actor suplantado', () => assertFails(addDoc(collection(db('activo1'), 'auditoria_eventos'), eventoValido('admin1'))));
-test('evento con fecha falsa', () => assertFails(addDoc(collection(db('activo1'), 'auditoria_eventos'), eventoValido('activo1', { creado_en: Timestamp.fromDate(new Date('2020-01-01')) }))));
-test('evento con tipo inválido', () => assertFails(addDoc(collection(db('activo1'), 'auditoria_eventos'), eventoValido('activo1', { tipo: 'OTRO' }))));
-test('evento con campo extra', () => assertFails(addDoc(collection(db('activo1'), 'auditoria_eventos'), eventoValido('activo1', { x: 1 }))));
-test('evento con detalle enorme', () => assertFails(addDoc(collection(db('activo1'), 'auditoria_eventos'), eventoValido('activo1', { detalle: 'x'.repeat(501) }))));
+test('evento con actor suplantado', () => assertFails(addDoc(collection(db('encargado1'), 'auditoria_eventos'), eventoValido('admin1', { tipo: 'ASIGNACION_EQUIPO' }))));
+test('evento con fecha falsa', () => assertFails(addDoc(collection(db('encargado1'), 'auditoria_eventos'), eventoValido('encargado1', { tipo: 'ASIGNACION_EQUIPO', creado_en: Timestamp.fromDate(new Date('2020-01-01')) }))));
+test('evento con tipo inválido', () => assertFails(addDoc(collection(db('admin1'), 'auditoria_eventos'), eventoValido('admin1', { tipo: 'OTRO' }))));
+test('evento con campo extra', () => assertFails(addDoc(collection(db('admin1'), 'auditoria_eventos'), eventoValido('admin1', { x: 1 }))));
+test('evento con detalle enorme', () => assertFails(addDoc(collection(db('admin1'), 'auditoria_eventos'), eventoValido('admin1', { detalle: 'x'.repeat(501) }))));
 test('Admin lista auditoría', () => assertSucceeds(getDocs(collection(db('admin1'), 'auditoria_eventos'))));
 test('Brigadista no lee auditoría', () => assertFails(getDoc(doc(db('activo1'), 'auditoria_eventos/e1'))));
 test('Admin no edita auditoría', () => assertFails(updateDoc(doc(db('admin1'), 'auditoria_eventos/e1'), { detalle: 'x' })));
@@ -492,6 +493,13 @@ test('Encargado AP NO puede modificar cuenta de Encargado o Administrador', () =
 test('Encargado Opción B lee y edita campos operativos de Brigadista en su grupo a cargo', async () => {
   await assertSucceeds(getDoc(doc(db('encAlfa1'), 'usuarios/brigAlfa1')));
   await assertSucceeds(updateDoc(doc(db('encAlfa1'), 'usuarios/brigAlfa1'), {
+    etapa: 'Alfa',
+    grupo_operativo: 'Alfa',
+    subgrupo: 'Alfa 2',
+    actualizado_en: serverTimestamp(),
+  }));
+  // Opción B NO puede mover al brigadista fuera de sus grupos a cargo ni a Omega ajena
+  await assertFails(updateDoc(doc(db('encAlfa1'), 'usuarios/brigAlfa1'), {
     etapa: 'Omega',
     grupo_operativo: 'Omega',
     subgrupo: 'Omega 1',
@@ -832,13 +840,14 @@ test('Radio en operativo Finalizado: bloquea create/update en canales y bitácor
 });
 
 test('Material Propio: Brigadista registra artículo propio y Encargado/Admin lo consulta en el operativo', async () => {
-  await assertSucceeds(setDoc(doc(db('activo1'), 'equipos_turno/eqPropio1'), {
+  const equipoPropio = (asistenciaId, operativoId) => ({
     id: 'eqPropio1',
-    asistencia_id: 'asisAbierto',
-    operativo_id: 'opAbierto',
-    operativo_nombre: 'Operativo opAbierto',
+    asistencia_id: asistenciaId,
+    operativo_id: operativoId,
+    operativo_nombre: `Operativo ${operativoId}`,
     usuario_uid: 'activo1',
     usuario_nombre: 'Ana Pérez',
+    ayudantia_slot: 'Ninguna',
     nombre_articulo: 'Uniforme de Alfa',
     codigo_inventario: '',
     cantidad: 1,
@@ -853,15 +862,19 @@ test('Material Propio: Brigadista registra artículo propio y Encargado/Admin lo
     creado_por_nombre: 'Ana Pérez',
     creado_en: serverTimestamp(),
     actualizado_en: serverTimestamp(),
-  }));
+  });
+  // M-6: asistencia ajena (asisAbierto pertenece a brigOmega1) -> rechazado
+  await assertFails(setDoc(doc(db('activo1'), 'equipos_turno/eqPropio1'), equipoPropio('asisAbierto', 'opAbierto')));
+  // Asistencia propia (asisCerradoOk de activo1 en opCerrado) -> permitido
+  await assertSucceeds(setDoc(doc(db('activo1'), 'equipos_turno/eqPropio1'), equipoPropio('asisCerradoOk', 'opCerrado')));
 
   await assertSucceeds(getDocs(query(
     collection(db('encargado1'), 'equipos_turno'),
-    where('operativo_id', '==', 'opAbierto'),
+    where('operativo_id', '==', 'opCerrado'),
   )));
   await assertSucceeds(getDocs(query(
     collection(db('admin1'), 'equipos_turno'),
-    where('operativo_id', '==', 'opAbierto'),
+    where('operativo_id', '==', 'opCerrado'),
   )));
 });
 
@@ -1469,6 +1482,7 @@ test('Jefe de Ayudantía en operativos: pasa/aprueba lista, asigna roles y consu
     nombre_articulo: 'Botiquín personal equipado',
     codigo_inventario: '',
     cantidad: 1,
+    ayudantia_slot: 'Socorros',
     origen_material: 'Propio',
     estado_reporte: 'OK',
     falla_reportada: '',
@@ -1482,6 +1496,12 @@ test('Jefe de Ayudantía en operativos: pasa/aprueba lista, asigna roles y consu
     actualizado_en: serverTimestamp(),
   }));
   await assertSucceeds(getDocs(query(
+    collection(fJefe, 'equipos_turno'),
+    where('usuario_uid', '==', 'brigSocorros'),
+    where('ayudantia_slot', '==', 'Socorros'),
+  )));
+  // Sin el filtro por ayudantía la consulta es rechazada (A-5)
+  await assertFails(getDocs(query(
     collection(fJefe, 'equipos_turno'),
     where('usuario_uid', '==', 'brigSocorros'),
   )));
@@ -2364,4 +2384,184 @@ test('4) Jefe de Ayudantía puede editar rol_en_turno en un prerregistro histór
       actualizado_en: serverTimestamp(),
     },
   ));
+});
+
+// ============================================================================
+// BONCHE 6: CICLO DE VIDA DE OPERATIVOS, AISLAMIENTO DE MATERIAL Y BRECHAS POR ROL
+// ============================================================================
+
+const asistenciaPropiaQr = (id, uid, extra = {}) => ({
+  id,
+  operativo_id: 'opAbierto',
+  operativo_nombre: 'Operativo opAbierto',
+  usuario_uid: uid,
+  usuario_nombre: 'Ana Pérez',
+  usuario_cuenta: '20201234',
+  grupo_operativo: 'Ninguno',
+  ayudantia_slot: 'Ninguna',
+  rol_en_turno: 'Sin definir',
+  estado_operativo: 'En servicio',
+  signos_vitales: null,
+  metodo_entrada: 'QR_Operativo_TOTP',
+  hora_entrada: serverTimestamp(),
+  hora_salida: null,
+  horas_totales: null,
+  salida_cerrada_manual: false,
+  equipos_bupc_pendientes: 0,
+  registrado_por_uid: uid,
+  creado_en: serverTimestamp(),
+  actualizado_en: serverTimestamp(),
+  ...extra,
+});
+
+const equipoSeed = (id, asistenciaId, operativoId, uid, extra = {}) => ({
+  id,
+  asistencia_id: asistenciaId,
+  operativo_id: operativoId,
+  usuario_uid: uid,
+  usuario_nombre: 'Ana Pérez',
+  nombre_articulo: 'Radio portátil',
+  codigo_inventario: `COD-${id}`,
+  origen_material: 'BUPC_Asignado',
+  estado_reporte: 'OK',
+  falla_reportada: '',
+  devuelto: false,
+  devuelto_en: null,
+  devuelto_por_uid: null,
+  acta_incidencia: null,
+  creado_por_uid: 'admin1',
+  creado_en: Timestamp.now(),
+  actualizado_en: Timestamp.now(),
+  ...extra,
+});
+
+test('B6-1) Jefe de Ayudantía y Encargado rechazados al cambiar estatus a Finalizado/Cancelado; Encargado solo toca su lista blanca; Admin sí cancela', async () => {
+  for (const uid of ['jefeSocorros', 'encargado1']) {
+    await assertFails(updateDoc(doc(db(uid), 'operativos/opAbierto'), { estatus: 'Finalizado', recepcion_abierta: false, actualizado_en: serverTimestamp() }));
+    await assertFails(updateDoc(doc(db(uid), 'operativos/opAbierto'), { estatus: 'Cancelado', recepcion_abierta: false, actualizado_en: serverTimestamp() }));
+    await assertFails(updateDoc(doc(db(uid), 'operativos/opAbierto'), { qr_token_estatico: 'robado', actualizado_en: serverTimestamp() }));
+  }
+  // Jefe de Ayudantía no modifica configuración global
+  await assertFails(updateDoc(doc(db('jefeSocorros'), 'operativos/opAbierto'), { recepcion_abierta: false, actualizado_en: serverTimestamp() }));
+  await assertFails(updateDoc(doc(db('jefeSocorros'), 'operativos/opAbierto'), { modo_qr: 'dinamico', actualizado_en: serverTimestamp() }));
+  // Encargado sin ayudantía sí puede abrir/cerrar recepción y convocatoria
+  await assertSucceeds(updateDoc(doc(db('encargado1'), 'operativos/opAbierto'), { recepcion_abierta: false, convocatoria_abierta: true, actualizado_en: serverTimestamp() }));
+  // Administrador sí cancela
+  await assertSucceeds(updateDoc(doc(db('admin1'), 'operativos/opAbierto'), { estatus: 'Cancelado', recepcion_abierta: false, convocatoria_abierta: false, actualizado_en: serverTimestamp() }));
+});
+
+test('B6-2) Válvula de escape: solo Administrador registra devolución/acta en equipos_turno de operativo Finalizado', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const f = ctx.firestore();
+    await updateDoc(doc(f, 'asistencias_personal/asisFinalizado'), { equipos_bupc_pendientes: 2 });
+    await setDoc(doc(f, 'equipos_turno/eqFin2'), equipoSeed('eqFin2', 'asisFinalizado', 'opFinalizado', 'activo1'));
+  });
+  const devolucion = { devuelto: true, estado_reporte: 'Devuelto', devuelto_en: serverTimestamp(), devuelto_por_uid: 'x', actualizado_en: serverTimestamp() };
+  const acta = (uid) => ({
+    estado_reporte: 'Incidencia',
+    acta_incidencia: { motivo: 'Extravío', evidencia_id: null, registrado_por_uid: uid, registrado_por_nombre: 'Admin Uno', registrado_en: serverTimestamp() },
+    actualizado_en: serverTimestamp(),
+  });
+  // Encargado y Brigadista dueño: rechazados
+  await assertFails(updateDoc(doc(db('encargado1'), 'equipos_turno/eqFinalizado'), { ...devolucion, devuelto_por_uid: 'encargado1' }));
+  await assertFails(updateDoc(doc(db('activo1'), 'equipos_turno/eqFinalizado'), { ...devolucion, devuelto_por_uid: 'activo1' }));
+  await assertFails(updateDoc(doc(db('encargado1'), 'equipos_turno/eqFin2'), acta('encargado1')));
+  // Admin: devolución con decremento atómico del contador
+  const fa = db('admin1');
+  const b = writeBatch(fa);
+  b.update(doc(fa, 'equipos_turno/eqFinalizado'), { ...devolucion, devuelto_por_uid: 'admin1' });
+  b.update(doc(fa, 'asistencias_personal/asisFinalizado'), { equipos_bupc_pendientes: 1, actualizado_en: serverTimestamp() });
+  await assertSucceeds(b.commit());
+  // Admin: acta de incidencia
+  const b2 = writeBatch(fa);
+  b2.update(doc(fa, 'equipos_turno/eqFin2'), acta('admin1'));
+  b2.update(doc(fa, 'asistencias_personal/asisFinalizado'), { equipos_bupc_pendientes: 0, actualizado_en: serverTimestamp() });
+  await assertSucceeds(b2.commit());
+  // La válvula NO permite alterar el dueño ni reabrir salidas
+  await assertFails(updateDoc(doc(fa, 'equipos_turno/eqFin2'), { usuario_uid: 'otro', actualizado_en: serverTimestamp() }));
+  await assertFails(updateDoc(doc(fa, 'asistencias_personal/asisFinalizado'), { hora_salida: serverTimestamp(), actualizado_en: serverTimestamp() }));
+});
+
+test('B6-3) Operativo Cancelado queda en solo lectura (incluso para Admin)', async () => {
+  await assertSucceeds(updateDoc(doc(db('admin1'), 'operativos/opAbierto'), { estatus: 'Cancelado', recepcion_abierta: false, actualizado_en: serverTimestamp() }));
+  // Lectura permitida
+  await assertSucceeds(getDoc(doc(db('admin1'), 'operativos/opAbierto')));
+  await assertSucceeds(getDoc(doc(db('encargado1'), 'operativos/opAbierto')));
+  // Escrituras bloqueadas: no reabrir, no editar, no altas
+  await assertFails(updateDoc(doc(db('admin1'), 'operativos/opAbierto'), { estatus: 'Activo', recepcion_abierta: true, actualizado_en: serverTimestamp() }));
+  await assertFails(updateDoc(doc(db('admin1'), 'operativos/opAbierto'), { nombre: 'Renombrado', actualizado_en: serverTimestamp() }));
+  await assertFails(updateDoc(doc(db('encargado1'), 'operativos/opAbierto'), { convocatoria_abierta: true, actualizado_en: serverTimestamp() }));
+  await assertFails(setDoc(doc(db('admin1'), 'asistencias_personal/asisCancelado'), asistenciaPropiaQr('asisCancelado', 'brigOmega1', { metodo_entrada: 'Manual', registrado_por_uid: 'admin1', grupo_operativo: 'Omega' })));
+  await assertFails(setDoc(doc(db('admin1'), 'operativos/opAbierto/prerregistros/brigAlfa1'), prerregistroBase('brigAlfa1', 'admin1', 'Manual_Encargado')));
+});
+
+test('B6-4) Jefe de Ayudantía solo lee equipos_turno y evidencias_equipos de su ayudantía', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const f = ctx.firestore();
+    await setDoc(doc(f, 'equipos_turno/eqSoc'), equipoSeed('eqSoc', 'asisAbierto', 'opAbierto', 'brigSocorros', { ayudantia_slot: 'Socorros' }));
+    await setDoc(doc(f, 'equipos_turno/eqLog'), equipoSeed('eqLog', 'asisAbierto', 'opAbierto', 'brigLogistica', { ayudantia_slot: 'Logística' }));
+    for (const [id, eq] of [['evSoc', 'eqSoc'], ['evLog', 'eqLog']]) {
+      await setDoc(doc(f, `evidencias_equipos/${id}`), {
+        id, equipo_id: eq, asistencia_id: 'asisAbierto', operativo_id: 'opAbierto',
+        imagen_webp_base64: `data:image/webp;base64,${'A'.repeat(80)}`,
+        creado_por_uid: 'admin1', creado_en: Timestamp.now(),
+      });
+    }
+  });
+  const fJefe = db('jefeSocorros');
+  await assertSucceeds(getDoc(doc(fJefe, 'equipos_turno/eqSoc')));
+  await assertFails(getDoc(doc(fJefe, 'equipos_turno/eqLog')));
+  await assertSucceeds(getDocs(query(collection(fJefe, 'equipos_turno'), where('operativo_id', '==', 'opAbierto'), where('ayudantia_slot', '==', 'Socorros'))));
+  await assertFails(getDocs(query(collection(fJefe, 'equipos_turno'), where('operativo_id', '==', 'opAbierto'), where('ayudantia_slot', '==', 'Logística'))));
+  await assertFails(getDocs(query(collection(fJefe, 'equipos_turno'), where('operativo_id', '==', 'opAbierto'))));
+  await assertSucceeds(getDoc(doc(fJefe, 'evidencias_equipos/evSoc')));
+  await assertFails(getDoc(doc(fJefe, 'evidencias_equipos/evLog')));
+  // Admin y Encargado sin ayudantía conservan su alcance
+  await assertSucceeds(getDoc(doc(db('admin1'), 'evidencias_equipos/evLog')));
+  await assertSucceeds(getDoc(doc(db('encargado1'), 'equipos_turno/eqLog')));
+});
+
+test('B6-5) Brigadista no falsifica auditoría, nombre/cuenta en auto-registro ni material Propio en asistencia ajena', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await updateDoc(doc(ctx.firestore(), 'operativos/opAbierto'), { convocatoria_abierta: true });
+  });
+  const f = db('activo1');
+  // Auditoría falsa
+  await assertFails(addDoc(collection(f, 'auditoria_eventos'), eventoValido('activo1', { tipo: 'APROBACION_USUARIO' })));
+  await assertFails(addDoc(collection(f, 'auditoria_eventos'), eventoValido('activo1', { tipo: 'FINALIZACION_OPERATIVO' })));
+  // Prerregistro propio con nombre o cuenta falsificados
+  const pre = (extra) => prerregistroBase('activo1', 'activo1', 'Autoregistro', {
+    etapa: 'Grupo Operativo', subgrupo: '', ayudantia: 'Ninguna', ayudantia_slot: 'Ninguna',
+    rol_en_turno: 'Sin definir', rol_editado_manual: false, actualizado_en: serverTimestamp(), ...extra,
+  });
+  await assertFails(setDoc(doc(f, 'operativos/opAbierto/prerregistros/activo1'), pre({ usuario_nombre: 'Falso Nombre' })));
+  await assertFails(setDoc(doc(f, 'operativos/opAbierto/prerregistros/activo1'), pre({ usuario_cuenta: '99999999' })));
+  await assertSucceeds(setDoc(doc(f, 'operativos/opAbierto/prerregistros/activo1'), pre({})));
+  // Auto-registro QR con nombre o cuenta falsificados
+  await assertFails(setDoc(doc(f, 'asistencias_personal/asisFalsa1'), asistenciaPropiaQr('asisFalsa1', 'activo1', { usuario_nombre: 'Falso Nombre' })));
+  await assertFails(setDoc(doc(f, 'asistencias_personal/asisFalsa2'), asistenciaPropiaQr('asisFalsa2', 'activo1', { usuario_cuenta: '99999999' })));
+  await assertSucceeds(setDoc(doc(f, 'asistencias_personal/asisPropiaOk'), asistenciaPropiaQr('asisPropiaOk', 'activo1')));
+  // Material Propio: asistencia ajena rechazada, propia permitida
+  const propio = (asistenciaId) => ({
+    ...equipoSeed('eqPropioB6', asistenciaId, 'opAbierto', 'activo1', {
+      origen_material: 'Propio', codigo_inventario: '', cantidad: 1, ayudantia_slot: 'Ninguna',
+      creado_por_uid: 'activo1', creado_por_nombre: 'Ana Pérez',
+      creado_en: serverTimestamp(), actualizado_en: serverTimestamp(),
+    }),
+  });
+  await assertFails(setDoc(doc(f, 'equipos_turno/eqPropioB6'), propio('asisAbierto')));
+  await assertSucceeds(setDoc(doc(f, 'equipos_turno/eqPropioB6'), propio('asisPropiaOk')));
+});
+
+test('B6-6) Encargado sin ayudantía (Opción B) no cambia ayudantia ni ayudantia_slot; Jefe tampoco reasigna ayudantía', async () => {
+  const f = db('encAlfa1');
+  await assertFails(updateDoc(doc(f, 'usuarios/brigAlfa1'), { ayudantia: 'Socorros', ayudantia_slot: 'Socorros', actualizado_en: serverTimestamp() }));
+  await assertFails(updateDoc(doc(f, 'usuarios/brigAlfa1'), { ayudantia_slot: 'Tesla', actualizado_en: serverTimestamp() }));
+  await assertFails(updateDoc(doc(f, 'usuarios/brigAlfa1'), { etapa: 'Grupo Operativo', grupo_operativo: 'Ninguno', subgrupo: '', actualizado_en: serverTimestamp() }));
+  // Ajuste permitido dentro de sus grupos a cargo
+  await assertSucceeds(updateDoc(doc(f, 'usuarios/brigAlfa1'), { subgrupo: 'Alfa 2', actualizado_en: serverTimestamp() }));
+  // Jefe de Ayudantía no puede reasignar la ayudantía de su integrante
+  await assertFails(updateDoc(doc(db('jefeSocorros'), 'usuarios/brigSocorros'), { ayudantia: 'Tesla', ayudantia_slot: 'Tesla', actualizado_en: serverTimestamp() }));
+  // Administrador sí puede
+  await assertSucceeds(updateDoc(doc(db('admin1'), 'usuarios/brigAlfa1'), { ayudantia: 'Socorros', ayudantia_slot: 'Socorros', actualizado_en: serverTimestamp() }));
 });

@@ -9,7 +9,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { normalizarNombrePropio } from '../lib/nombres'
-import { ayudantiaJefatura } from '../lib/permisos'
+import { ayudantiaJefatura, esAdmin, esOperativoCerrado } from '../lib/permisos'
 import { escucharDirectorioSegunRol, mensajeDeError } from '../services/authService'
 import {
   escucharResguardoGlobalBupc,
@@ -32,6 +32,7 @@ function formatearHoraCorta(ms?: number): string {
 }
 
 export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
+  const soyAdmin = esAdmin(encargado)
   const ayJefe = ayudantiaJefatura(encargado)
   const [equipos, setEquipos] = useState<EquipoTurno[]>([])
   const [operativos, setOperativos] = useState<Operativo[]>([])
@@ -61,6 +62,7 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
         setError(mensajeDeError(err))
         setCargando(false)
       },
+      ayJefe,
     )
     const cOps = escucharOperativos(setOperativos, () => undefined)
     const cUsr = ayJefe
@@ -79,8 +81,11 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
   )
 
   const equiposEnAlcance = useMemo(
-    () => (uidsAyudantia ? equipos.filter((e) => uidsAyudantia.has(e.usuario_uid)) : equipos),
-    [equipos, uidsAyudantia],
+    () =>
+      uidsAyudantia
+        ? equipos.filter((e) => e.ayudantia_slot === ayJefe || uidsAyudantia.has(e.usuario_uid))
+        : equipos,
+    [equipos, uidsAyudantia, ayJefe],
   )
 
   const mapaOperativos = useMemo(
@@ -105,7 +110,7 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
     const q = busqueda.trim().toLowerCase()
     return equiposEnAlcance.filter((eq) => {
       const op = mapaOperativos.get(eq.operativo_id)
-      if (soloActivos && op?.estatus === 'Finalizado') return false
+      if (soloActivos && esOperativoCerrado(op)) return false
       if (filtroOperativo !== 'TODOS' && eq.operativo_id !== filtroOperativo) return false
       if (filtroTipo !== 'TODOS' && eq.nombre_articulo !== filtroTipo) return false
       if (!q) return true
@@ -284,7 +289,8 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
           <div className="divide-y divide-borde md:hidden dark:divide-noche-borde">
             {filtrados.map((eq) => {
               const op = mapaOperativos.get(eq.operativo_id)
-              const opFinalizado = op?.estatus === 'Finalizado'
+              const opCerrado = esOperativoCerrado(op)
+              const puedeLiberar = !opCerrado || soyAdmin
               const opNombre = eq.operativo_nombre || op?.nombre || 'Operativo'
               const cantidad = eq.cantidad ?? 1
               return (
@@ -297,7 +303,8 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
                         {eq.codigo_inventario ? ` · ${eq.codigo_inventario}` : ''}
                       </p>
                       <p className="truncate text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
-                        {normalizarNombrePropio(eq.usuario_nombre)} · {opNombre} ·{' '}
+                        {normalizarNombrePropio(eq.usuario_nombre)} · {opNombre}
+                        {opCerrado ? ` (${op?.estatus})` : ''} ·{' '}
                         {formatearHoraCorta(eq.creado_en?.toMillis())}
                       </p>
                     </div>
@@ -308,7 +315,7 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
                     )}
                   </div>
 
-                  {!opFinalizado && (
+                  {puedeLiberar && (
                     <div className="flex items-center gap-1.5">
                       <button
                         type="button"
@@ -362,7 +369,8 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
               <tbody className="divide-y divide-borde dark:divide-noche-borde">
                 {filtrados.map((eq) => {
                   const op = mapaOperativos.get(eq.operativo_id)
-                  const opFinalizado = op?.estatus === 'Finalizado'
+                  const opCerrado = esOperativoCerrado(op)
+                  const puedeLiberar = !opCerrado || soyAdmin
                   const opNombre = eq.operativo_nombre || op?.nombre || 'Operativo'
                   const cantidad = eq.cantidad ?? 1
                   return (
@@ -398,6 +406,7 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
                       </td>
                       <td className="px-3 py-2 text-xs text-tinta-suave dark:text-noche-tinta-suave">
                         {opNombre}
+                        {opCerrado ? ` (${op?.estatus})` : ''}
                       </td>
                       <td className="px-3 py-2 text-xs tabular-nums text-tinta-suave dark:text-noche-tinta-suave">
                         <span>{formatearHoraCorta(eq.creado_en?.toMillis())}</span>
@@ -406,9 +415,9 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
                         )}
                       </td>
                       <td className="px-3 py-2 text-right whitespace-nowrap">
-                        {opFinalizado ? (
+                        {!puedeLiberar ? (
                           <span className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
-                            Finalizado
+                            {op?.estatus === 'Cancelado' ? 'Cancelado' : 'Finalizado'}
                           </span>
                         ) : (
                           <div className="inline-flex items-center gap-1.5">
@@ -449,7 +458,7 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
         <div
           role="dialog"
           aria-modal="true"
-          aria-label="Acta de Incidencia de Material"
+          aria-label="Levantar Acta de Incidencia"
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
         >
           <article className="tarjeta flex w-full max-w-md flex-col gap-4 border-2 border-alerta p-5">
@@ -462,10 +471,11 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
                 />
                 <div>
                   <h3 className="text-base font-bold text-alerta dark:text-noche-rojo-texto">
-                    Acta de Incidencia · Material BUPC
+                    Acta de Incidencia
                   </h3>
                   <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-                    {incidenciaObjetivo.nombre_articulo} · {incidenciaObjetivo.usuario_nombre}
+                    {incidenciaObjetivo.nombre_articulo} ·{' '}
+                    {normalizarNombrePropio(incidenciaObjetivo.usuario_nombre)}
                   </p>
                 </div>
               </div>
@@ -481,33 +491,33 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
 
             <form onSubmit={manejarLevantarIncidencia} className="flex flex-col gap-3">
               <div className="flex flex-col gap-1">
-                <label htmlFor="rg-motivo" className="etiqueta">
-                  Motivo de la incidencia (obligatorio)
+                <label htmlFor="resguardo-motivo" className="etiqueta">
+                  Motivo de daño, pérdida o no devolución
                 </label>
                 <textarea
-                  id="rg-motivo"
+                  id="resguardo-motivo"
                   rows={3}
                   maxLength={400}
-                  placeholder="Describe extravío, daño o faltante detectado..."
                   value={motivoIncidencia}
                   onChange={(e) => setMotivoIncidencia(e.target.value)}
-                  className="campo min-h-20 py-2 text-sm"
+                  placeholder="Describe lo sucedido con el material..."
+                  className="campo min-h-20 py-2 text-xs"
                   required
                 />
               </div>
 
               <div className="flex flex-col gap-1">
-                <span className="etiqueta">Evidencia fotográfica (opcional)</span>
-                <label className="btn-salvia min-h-10 cursor-pointer text-xs">
+                <label className="etiqueta">Evidencia fotográfica opcional (se comprime a WebP)</label>
+                <label className="flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-borde-fuerte bg-superficie-suave px-3 text-xs font-semibold text-tinta hover:border-udec dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta">
                   <Upload size={15} strokeWidth={2} />
-                  <span>
+                  <span className="truncate">
                     {archivoEvidencia ? archivoEvidencia.name : 'Adjuntar fotografía'}
                   </span>
                   <input
                     type="file"
                     accept="image/*"
-                    className="sr-only"
                     onChange={(e) => setArchivoEvidencia(e.target.files?.[0] ?? null)}
+                    className="sr-only"
                   />
                 </label>
               </div>
@@ -515,17 +525,18 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
               <div className="flex justify-end gap-2 pt-1">
                 <button
                   type="button"
+                  disabled={ocupadoId === incidenciaObjetivo.id}
                   onClick={() => setIncidenciaObjetivo(null)}
-                  className="btn-salvia"
+                  className="btn-salvia text-xs"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={ocupadoId === incidenciaObjetivo.id}
-                  className="btn-rojo"
+                  className="btn-rojo text-xs"
                 >
-                  {ocupadoId === incidenciaObjetivo.id ? 'Guardando...' : 'Levantar Acta y Liberar'}
+                  {ocupadoId === incidenciaObjetivo.id ? 'Registrando...' : 'Confirmar Acta'}
                 </button>
               </div>
             </form>

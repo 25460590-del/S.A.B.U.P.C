@@ -215,9 +215,17 @@ export async function obtenerDatosExpedienteOperativo(
       )
     : query(collection(db, 'asistencias_personal'), where('operativo_id', '==', operativoId))
 
+  const consultaEq = ayudantiaFiltro
+    ? query(
+        collection(db, 'equipos_turno'),
+        where('operativo_id', '==', operativoId),
+        where('ayudantia_slot', '==', ayudantiaFiltro),
+      )
+    : query(collection(db, 'equipos_turno'), where('operativo_id', '==', operativoId))
+
   const [asisSnap, eqSnap, radioSnap] = await Promise.all([
     getDocs(consultaAsis),
-    getDocs(query(collection(db, 'equipos_turno'), where('operativo_id', '==', operativoId))),
+    getDocs(consultaEq),
     getDocs(
       query(collection(db, 'bitacora_radio_registros'), where('operativo_id', '==', operativoId)),
     ).catch(() => null),

@@ -139,9 +139,10 @@ export function ExpedienteUnificadoModal({
       usuario.uid,
       setMaterialPropio,
       () => undefined,
+      ayJefe,
     )
     return cancelar
-  }, [pestana, usuario.uid])
+  }, [pestana, usuario.uid, ayJefe])
 
   useEffect(() => {
     if (pestana !== 'asistencias') return
@@ -163,7 +164,7 @@ export function ExpedienteUnificadoModal({
     if (pestana !== 'incidencias') return
     const manejarErr = (err: Parameters<typeof mensajeDeError>[0]) =>
       setError(mensajeDeError(err))
-    const cMat = escucharActasMaterialDeUsuario(usuario.uid, setActasMaterial, manejarErr)
+    const cMat = escucharActasMaterialDeUsuario(usuario.uid, setActasMaterial, manejarErr, ayJefe)
     const cPers = soyAdmin
       ? escucharIncidenciasPorUsuario(usuario.uid, setIncidenciasPers, manejarErr)
       : escucharIncidenciasPersonalSegunRol(
@@ -175,11 +176,22 @@ export function ExpedienteUnificadoModal({
       cMat()
       cPers()
     }
-  }, [pestana, usuario.uid, soyAdmin, actor])
+  }, [pestana, usuario.uid, soyAdmin, actor, ayJefe])
 
+  const esEncargadoOpcionB = !soyAdmin && !ayJefe
+  const etapasPermitidas = esEncargadoOpcionB
+    ? ETAPAS_BRIGADISTA.filter((et) => et !== 'Grupo Operativo')
+    : ETAPAS_BRIGADISTA
   const esOperativo = etapa === 'Grupo Operativo'
   const esJefeConfigurado = esConfiguracionJefeAyudantia(rol, etapa, ayudantia)
-  const opcionesSubgrupo = subgruposDeEtapa(subgruposActivos, etapa, usuario.subgrupo)
+  const opcionesSubgrupoBase = subgruposDeEtapa(subgruposActivos, etapa, usuario.subgrupo)
+  const opcionesSubgrupo = esEncargadoOpcionB
+    ? opcionesSubgrupoBase.filter(
+        (sg) =>
+          (actor.grupos_a_cargo ?? []).includes(sg) ||
+          (actor.grupos_a_cargo ?? []).includes(etapa),
+      )
+    : opcionesSubgrupoBase
   const cuentaLegadaSinAyudantia = faltaAyudantiaOperativo(usuario)
   const ayudantiaInvalidaOperativo = !esAyudantiaValidaParaEtapa(etapa, ayudantia)
 
@@ -629,7 +641,7 @@ export function ExpedienteUnificadoModal({
                       onChange={(e) => manejarCambioEtapa(e.target.value as EtapaBrigadista)}
                       className="campo min-h-10 text-xs"
                     >
-                      {ETAPAS_BRIGADISTA.map((et) => (
+                      {etapasPermitidas.map((et) => (
                         <option key={et} value={et}>
                           {et}
                         </option>
@@ -666,7 +678,7 @@ export function ExpedienteUnificadoModal({
                     <select
                       id="exp-ayudantia"
                       value={ayudantia}
-                      disabled={!puedoEditar || guardando || Boolean(ayJefe)}
+                      disabled={!soyAdmin || guardando}
                       onChange={(e) => setAyudantia(e.target.value as AyudantiaSlot)}
                       className={`campo min-h-10 text-xs ${
                         ayudantiaInvalidaOperativo
@@ -696,9 +708,11 @@ export function ExpedienteUnificadoModal({
                         </>
                       )}
                     </select>
-                    {ayJefe && (
+                    {!soyAdmin && (
                       <span className="text-[11px] font-medium text-tinta-suave dark:text-noche-tinta-suave">
-                        Adscrito a tu ayudantía ({ayJefe}).
+                        {ayJefe
+                          ? `Adscrito a tu ayudantía (${ayJefe}). Cambios exclusivos de Administración.`
+                          : 'Los cambios de ayudantía son exclusivos de Administración.'}
                       </span>
                     )}
                   </div>

@@ -20,8 +20,50 @@
       "collectionGroup": "equipos_turno",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "operativo_id", "order": "ASCENDING" },
+        { "fieldPath": "codigo_inventario", "order": "ASCENDING" },
+        { "fieldPath": "ayudantia_slot", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "equipos_turno",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "operativo_id", "order": "ASCENDING" },
+        { "fieldPath": "ayudantia_slot", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "equipos_turno",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "origen_material", "order": "ASCENDING" },
         { "fieldPath": "devuelto", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "equipos_turno",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "origen_material", "order": "ASCENDING" },
+        { "fieldPath": "devuelto", "order": "ASCENDING" },
+        { "fieldPath": "ayudantia_slot", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "equipos_turno",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "estado_reporte", "order": "ASCENDING" },
+        { "fieldPath": "ayudantia_slot", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "equipos_turno",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "usuario_uid", "order": "ASCENDING" },
+        { "fieldPath": "ayudantia_slot", "order": "ASCENDING" }
       ]
     },
     {

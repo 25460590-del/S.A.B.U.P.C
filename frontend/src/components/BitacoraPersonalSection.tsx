@@ -27,7 +27,12 @@ import {
   rolOperativoPorAyudantia,
 } from '../constants/catalogos'
 import { normalizarNombrePropio } from '../lib/nombres'
-import { ayudantiaEfectiva, ayudantiaJefatura, etiquetaAyudantia } from '../lib/permisos'
+import {
+  ayudantiaEfectiva,
+  ayudantiaJefatura,
+  esOperativoCerrado,
+  etiquetaAyudantia,
+} from '../lib/permisos'
 import {
   actualizarEstadoOperativo,
   actualizarRolEnTurno,
@@ -102,7 +107,7 @@ function etiquetaGrupoAsistencia(a: AsistenciaPersonal, mapaUsuarios: Map<string
 }
 
 export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPersonalSectionProps) {
-  const esFinalizado = operativo.estatus === 'Finalizado'
+  const esFinalizado = esOperativoCerrado(operativo)
   const recepcionAbierta = operativo.recepcion_abierta && !esFinalizado
   const ayJefe = ayudantiaJefatura(encargado)
 
@@ -185,8 +190,11 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
       undefined,
       ayJefe,
     )
-    const cancelarEq = escucharEquiposDeOperativo(operativo.id, setEquipos, (err) =>
-      setError(mensajeDeError(err)),
+    const cancelarEq = escucharEquiposDeOperativo(
+      operativo.id,
+      setEquipos,
+      (err) => setError(mensajeDeError(err)),
+      ayJefe,
     )
     const cancelarUsr = escucharUsuariosParaBitacora(encargado, setUsuarios, () => undefined)
 

@@ -2,9 +2,11 @@ import {
   collection,
   doc,
   getDocs,
+  limit,
   onSnapshot,
   query,
   serverTimestamp,
+  updateDoc,
   where,
   writeBatch,
   type FirestoreError,
@@ -12,7 +14,14 @@ import {
 } from 'firebase/firestore'
 import * as OTPAuth from 'otpauth'
 import { db } from '../lib/firebase'
-import { normalizarOperativo, puedeEliminarOperativo } from '../lib/permisos'
+import {
+  esAdmin,
+  esOperativoCerrado,
+  normalizarOperativo,
+  puedeConfigurarOperativoActivo,
+  puedeEliminarOperativo,
+  puedeFinalizarOperativo,
+} from '../lib/permisos'
 import type {
   AsistenciaPersonal,
   CategoriaOperativo,
@@ -145,7 +154,7 @@ export function escucharOperativosConConvocatoriaAbierta(
     (snap) => {
       const lista = snap.docs
         .map((d) => normalizarOperativo(d.data() as Operativo))
-        .filter((op) => op.estatus !== 'Finalizado')
+        .filter((op) => !esOperativoCerrado(op))
       lista.sort((a, b) => a.fecha_inicio.localeCompare(b.fecha_inicio))
       alCambiar(lista)
     },
@@ -157,14 +166,17 @@ export function escucharOperativosConConvocatoriaAbierta(
 }
 
 /**
- * Permite a Encargado o Administrador abrir/cerrar la convocatoria y ajustar el cupo sugerido
- * mientras el operativo no esté Finalizado.
+ * Permite a Administración o Encargado sin ayudantía abrir/cerrar la convocatoria y ajustar
+ * el cupo sugerido mientras el operativo siga Activo.
  */
 export async function actualizarConvocatoriaOperativo(
   actor: Usuario,
   operativo: Operativo,
   cambios: { convocatoria_abierta: boolean; cupo_sugerido: number | null },
 ): Promise<void> {
+  if (!puedeConfigurarOperativoActivo(actor)) {
+    throw new Error('No tienes permiso para modificar la convocatoria global del operativo.')
+  }
   const cupo = normalizarCupoSugerido(cambios.cupo_sugerido)
   const lote = writeBatch(db)
   lote.update(doc(operativosRef, operativo.id), {
@@ -206,6 +218,9 @@ export async function cambiarRecepcionOperativo(
   operativo: Operativo,
   recepcionAbierta: boolean,
 ): Promise<void> {
+  if (!puedeConfigurarOperativoActivo(actor)) {
+    throw new Error('No tienes permiso para abrir o cerrar la recepción global del operativo.')
+  }
   const lote = writeBatch(db)
   lote.update(doc(operativosRef, operativo.id), {
     recepcion_abierta: recepcionAbierta,
@@ -228,6 +243,9 @@ export async function cambiarModoQrOperativo(
   operativo: Operativo,
   modoQr: ModoQrOperativo,
 ): Promise<void> {
+  if (!puedeConfigurarOperativoActivo(actor)) {
+    throw new Error('No tienes permiso para cambiar el modo QR del operativo.')
+  }
   const lote = writeBatch(db)
   lote.update(doc(operativosRef, operativo.id), {
     modo_qr: modoQr,
@@ -300,32 +318,59 @@ export async function verificarPreCierreOperativo(
   }
 }
 
+export class ErrorDeudoresEnCierre extends Error {
+  readonly preCierre: ResultadoPreCierreOperativo
+
+  constructor(mensaje: string, preCierre: ResultadoPreCierreOperativo) {
+    super(mensaje)
+    this.name = 'ErrorDeudoresEnCierre'
+    this.preCierre = preCierre
+  }
+}
+
 /**
- * Cierre definitivo e irreversible del operativo (escala hasta 300+ personas):
- * 1. Verifica en vivo que ningún asistente tenga `equipos_bupc_pendientes > 0`.
- * 2. Cierra automáticamente todas las asistencias abiertas en bloques de ≤ 400 operaciones.
- * 3. Marca el operativo como `estatus: 'Finalizado'`, `recepcion_abierta: false` y registra auditoría.
+ * Cierre definitivo e irreversible del operativo en secuencia segura (exclusivo Administración):
+ * 1. Primera escritura independiente: cierra `recepcion_abierta: false` y `convocatoria_abierta: false`
+ *    para frenar nuevas entradas o entregas mientras se verifica.
+ * 2. Re-ejecuta `verificarPreCierreOperativo`; si apareció material BUPC pendiente en ese instante,
+ *    aborta el cierre dejando recepción cerrada preventivamente y expone los deudores para resolverlos.
+ * 3. Cierra las asistencias abiertas en bloques de ≤ 400 operaciones y marca `estatus: 'Finalizado'`.
  */
 export async function finalizarOperativoConCierreAsistencias(
   actor: Usuario,
   operativo: Operativo,
 ): Promise<{ salidasCerradas: number }> {
-  if (operativo.estatus === 'Finalizado') {
-    throw new Error('Este operativo ya se encuentra finalizado.')
+  if (!puedeFinalizarOperativo(actor)) {
+    throw new Error('Solo un Administrador activo puede finalizar operativos.')
+  }
+  if (esOperativoCerrado(operativo)) {
+    throw new Error(
+      operativo.estatus === 'Cancelado'
+        ? 'Este operativo ya fue cancelado.'
+        : 'Este operativo ya se encuentra finalizado.',
+    )
   }
 
-  const pre = await verificarPreCierreOperativo(operativo.id)
-  if (pre.deudores.length > 0) {
-    throw new Error(
-      `No se puede finalizar: ${pre.deudores.length} brigadista(s) aún tienen material BUPC pendiente de devolución.`,
+  // Paso 1: Escritura independiente para frenar nuevas entradas o prerregistros antes de re-verificar
+  await updateDoc(doc(operativosRef, operativo.id), {
+    recepcion_abierta: false,
+    convocatoria_abierta: false,
+    actualizado_en: serverTimestamp(),
+  })
+
+  // Paso 2: Re-verificación en vivo tras cerrar recepción
+  const post = await verificarPreCierreOperativo(operativo.id)
+  if (post.deudores.length > 0) {
+    throw new ErrorDeudoresEnCierre(
+      `Se cerró preventivamente la recepción, pero se detectó que ${post.deudores.length} brigadista(s) aún tienen material BUPC pendiente. Resuelve la devolución o levanta Acta de Incidencia (o reabre recepción si fue prematuro) antes de finalizar.`,
+      post,
     )
   }
 
   const ahoraMs = Date.now()
-  // 1. Cerrar primero todas las asistencias abiertas en lotes seguros ≤ 400 ops
-  //    (antes de marcar el operativo como Finalizado para cumplir firestore.rules).
-  for (let i = 0; i < pre.asistenciasAbiertas.length; i += MAX_OPS_LOTE) {
-    const segmento = pre.asistenciasAbiertas.slice(i, i + MAX_OPS_LOTE)
+  // Paso 3a: Cerrar todas las asistencias abiertas en lotes seguros ≤ 400 ops
+  for (let i = 0; i < post.asistenciasAbiertas.length; i += MAX_OPS_LOTE) {
+    const segmento = post.asistenciasAbiertas.slice(i, i + MAX_OPS_LOTE)
     const loteAsis = writeBatch(db)
     for (const a of segmento) {
       const entradaMs = a.hora_entrada?.toMillis() ?? ahoraMs
@@ -341,7 +386,7 @@ export async function finalizarOperativoConCierreAsistencias(
     await loteAsis.commit()
   }
 
-  // 2. Marcar operativo como Finalizado de forma irreversible + evento de auditoría
+  // Paso 3b: Marcar operativo como Finalizado de forma irreversible + evento de auditoría
   const loteCierre = writeBatch(db)
   loteCierre.update(doc(operativosRef, operativo.id), {
     estatus: 'Finalizado',
@@ -355,26 +400,100 @@ export async function finalizarOperativoConCierreAsistencias(
     actor_nombre: nombreCompleto(actor),
     objetivo_uid: operativo.id,
     objetivo_nombre: operativo.nombre,
-    detalle: `Operativo finalizado de forma irreversible · ${pre.asistenciasAbiertas.length} salida(s) cerrada(s) automáticamente · ${pre.totalAsistencias} asistente(s) totales`,
+    detalle: `Operativo finalizado de forma irreversible · ${post.asistenciasAbiertas.length} salida(s) cerrada(s) automáticamente · ${post.totalAsistencias} asistente(s) totales`,
     creado_en: serverTimestamp(),
   })
   await loteCierre.commit()
 
-  return { salidasCerradas: pre.asistenciasAbiertas.length }
+  return { salidasCerradas: post.asistenciasAbiertas.length }
 }
 
-/** Alias retrocompatible para cierre rápido sin asistencias abiertas. */
-export async function finalizarOperativo(actor: Usuario, operativo: Operativo): Promise<void> {
-  await finalizarOperativoConCierreAsistencias(actor, operativo)
+export interface VerificacionBorradoOperativo {
+  vacio: boolean
+  tieneAsistencias: boolean
+  tieneEquipos: boolean
+  tienePrerregistros: boolean
 }
 
 /**
- * Eliminación controlada de un operativo (exclusivo Administrador activo)
- * con metadatos completos en `auditoria_eventos`.
+ * Verifica con consultas livianas `limit(1)` si el operativo tiene registros asociados
+ * en `asistencias_personal`, `equipos_turno` o `prerregistros` para impedir huérfanos.
+ */
+export async function verificarOperativoVacioParaBorrado(
+  operativoId: string,
+): Promise<VerificacionBorradoOperativo> {
+  const [asisSnap, eqSnap, preSnap] = await Promise.all([
+    getDocs(query(asistenciasRef, where('operativo_id', '==', operativoId), limit(1))),
+    getDocs(query(equiposRef, where('operativo_id', '==', operativoId), limit(1))),
+    getDocs(query(collection(db, 'operativos', operativoId, 'prerregistros'), limit(1))),
+  ])
+  const tieneAsistencias = !asisSnap.empty
+  const tieneEquipos = !eqSnap.empty
+  const tienePrerregistros = !preSnap.empty
+  return {
+    vacio: !tieneAsistencias && !tieneEquipos && !tienePrerregistros,
+    tieneAsistencias,
+    tieneEquipos,
+    tienePrerregistros,
+  }
+}
+
+/**
+ * Baja lógica de un operativo con registros asociados (`estatus: 'Cancelado'`, solo lectura irreversible).
+ * Exclusivo de Administrador activo.
+ */
+export async function cancelarOperativo(
+  admin: Usuario,
+  operativo: Operativo,
+  motivo?: string,
+): Promise<void> {
+  if (!esAdmin(admin)) {
+    throw new Error('Solo un Administrador activo puede cancelar operativos.')
+  }
+  if (esOperativoCerrado(operativo)) {
+    throw new Error(
+      operativo.estatus === 'Cancelado'
+        ? 'Este operativo ya fue cancelado.'
+        : 'Este operativo ya fue finalizado y no puede cancelarse.',
+    )
+  }
+
+  const motivoLimpio = (motivo ?? '').trim()
+  const lote = writeBatch(db)
+  lote.update(doc(operativosRef, operativo.id), {
+    estatus: 'Cancelado',
+    recepcion_abierta: false,
+    convocatoria_abierta: false,
+    actualizado_en: serverTimestamp(),
+  })
+  lote.set(doc(auditoriaRef), {
+    tipo: 'CANCELACION_OPERATIVO',
+    actor_uid: admin.uid,
+    actor_nombre: nombreCompleto(admin),
+    objetivo_uid: operativo.id,
+    objetivo_nombre: operativo.nombre,
+    detalle: `Baja lógica (Cancelado) · ${operativo.categoria} · Sede: ${operativo.sede}${motivoLimpio ? ` · Motivo: ${motivoLimpio}` : ''}`.slice(
+      0,
+      500,
+    ),
+    creado_en: serverTimestamp(),
+  })
+  await lote.commit()
+}
+
+/**
+ * Eliminación física controlada de un operativo (exclusivo Administrador activo):
+ * bloquea el borrado si existen asistencias, equipos o prerregistros asociados.
  */
 export async function eliminarOperativo(admin: Usuario, operativo: Operativo): Promise<void> {
   if (!puedeEliminarOperativo(admin)) {
     throw new Error('Solo un Administrador activo puede eliminar operativos.')
+  }
+  const estado = await verificarOperativoVacioParaBorrado(operativo.id)
+  if (!estado.vacio) {
+    throw new Error(
+      'No se puede eliminar físicamente un operativo que ya cuenta con asistencias, material o prerregistros asociados. Usa la baja lógica ("Cancelar operativo") para conservar el historial sin registros huérfanos.',
+    )
   }
   const lote = writeBatch(db)
   lote.delete(doc(operativosRef, operativo.id))
@@ -384,7 +503,7 @@ export async function eliminarOperativo(admin: Usuario, operativo: Operativo): P
     actor_nombre: nombreCompleto(admin),
     objetivo_uid: operativo.id,
     objetivo_nombre: operativo.nombre,
-    detalle: `Operativo eliminado · ${operativo.categoria} · Sede: ${operativo.sede} · Inicio: ${operativo.fecha_inicio} · Estatus previo: ${operativo.estatus}`,
+    detalle: `Operativo vacío eliminado físicamente · ${operativo.categoria} · Sede: ${operativo.sede} · Inicio: ${operativo.fecha_inicio} · Estatus previo: ${operativo.estatus}`,
     creado_en: serverTimestamp(),
   })
   await lote.commit()

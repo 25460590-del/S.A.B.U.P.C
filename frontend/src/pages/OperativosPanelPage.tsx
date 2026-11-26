@@ -2,6 +2,7 @@ import {
   AlertCircle,
   AlertTriangle,
   ArrowLeft,
+  Ban,
   Calendar,
   CheckCircle2,
   ClipboardList,
@@ -25,21 +26,32 @@ import { BitacoraPersonalSection } from '../components/BitacoraPersonalSection'
 import { IndicadorAlcanceAyudantia } from '../components/IndicadorAlcanceAyudantia'
 import { CATEGORIAS_OPERATIVO } from '../constants/catalogos'
 import { normalizarNombrePropio } from '../lib/nombres'
-import { ayudantiaJefatura, esAdmin, esEncargado } from '../lib/permisos'
+import {
+  ayudantiaJefatura,
+  esAdmin,
+  esEncargado,
+  esOperativoCerrado,
+  puedeConfigurarOperativoActivo,
+  puedeFinalizarOperativo,
+} from '../lib/permisos'
 import { mensajeDeError } from '../services/authService'
 import {
   actualizarConvocatoriaOperativo,
   cambiarModoQrOperativo,
   cambiarRecepcionOperativo,
+  cancelarOperativo,
   construirPayloadQrEstatico,
   crearYConfigurarOperativo,
   eliminarOperativo,
+  ErrorDeudoresEnCierre,
   escucharOperativos,
   escucharSecretoTotp,
   finalizarOperativoConCierreAsistencias,
   generarEstadoTotpOffline,
+  verificarOperativoVacioParaBorrado,
   verificarPreCierreOperativo,
   type ResultadoPreCierreOperativo,
+  type VerificacionBorradoOperativo,
 } from '../services/operativosService'
 import type {
   CategoriaOperativo,
@@ -76,7 +88,7 @@ function valorDatetimeLocalActual(): string {
 }
 
 function clasificarOperativo(op: Operativo, referenciaMs: number): FiltroEstadoOperativo {
-  if (op.estatus === 'Finalizado') return 'finalizados'
+  if (esOperativoCerrado(op)) return 'finalizados'
   const inicioMs = Date.parse(op.fecha_inicio)
   if (!op.recepcion_abierta && !Number.isNaN(inicioMs) && inicioMs > referenciaMs) {
     return 'programados'
@@ -86,6 +98,8 @@ function clasificarOperativo(op: Operativo, referenciaMs: number): FiltroEstadoO
 
 export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
   const puedeGestionar = esEncargado(usuario)
+  const puedeConfigurarGlobal = puedeConfigurarOperativoActivo(usuario)
+  const puedeFinalizar = puedeFinalizarOperativo(usuario)
   const soyAdmin = esAdmin(usuario)
   const ayJefe = ayudantiaJefatura(usuario)
 
@@ -122,12 +136,15 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
   // Confirmación ligera antes de abrir/cerrar convocatoria (evita clics accidentales)
   const [confirmandoConvocatoria, setConfirmandoConvocatoria] = useState<boolean | null>(null)
 
-  // Modales de Finalizar Operativo (pre-verificación + confirmación irreversible) y Borrado (Admin)
+  // Modales de Finalizar Operativo (pre-verificación + confirmación irreversible) y Borrado/Baja lógica (Admin)
   const [preCierre, setPreCierre] = useState<ResultadoPreCierreOperativo | null>(null)
   const [verificandoCierre, setVerificandoCierre] = useState(false)
   const [finalizando, setFinalizando] = useState(false)
 
   const [modalEliminarAbierto, setModalEliminarAbierto] = useState(false)
+  const [verificandoBorrado, setVerificandoBorrado] = useState(false)
+  const [estadoBorrado, setEstadoBorrado] = useState<VerificacionBorradoOperativo | null>(null)
+  const [motivoCancelacion, setMotivoCancelacion] = useState('')
   const [confirmacionNombreEliminar, setConfirmacionNombreEliminar] = useState('')
   const [eliminando, setEliminando] = useState(false)
 
@@ -183,9 +200,11 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
   const operativoActivo = operativos.find((op) => op.id === seleccionadoId) ?? null
   const opActivoId = operativoActivo?.id ?? null
   const opModoQr = operativoActivo?.modo_qr ?? null
-  const opEsFinalizado = operativoActivo?.estatus === 'Finalizado'
-  const opRecepcionAbierta = Boolean(operativoActivo?.recepcion_abierta && !opEsFinalizado)
-  // El QR SOLO se monta y rota cuando estamos en la sub-vista QR, con recepción abierta y no finalizado.
+  const opEsCerrado = esOperativoCerrado(operativoActivo)
+  const opEsCancelado = operativoActivo?.estatus === 'Cancelado'
+  const etiquetaCerrado = opEsCancelado ? 'Cancelado' : 'Finalizado'
+  const opRecepcionAbierta = Boolean(operativoActivo?.recepcion_abierta && !opEsCerrado)
+  // El QR SOLO se monta y rota cuando estamos en la sub-vista QR, con recepción abierta y operativo activo.
   const mostrarQrActivo = subVista === 'qr' && opRecepcionAbierta
 
   useEffect(() => {
@@ -198,8 +217,8 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
     return cancelar
   }, [opActivoId, puedeGestionar, opRecepcionAbierta])
 
-  // FIX CRÍTICO: el setInterval TOTP se detiene y limpia completamente cuando
-  // recepcion_abierta === false, estatus === 'Finalizado', o fuera de la sub-vista QR.
+  // El setInterval TOTP se detiene y limpia completamente cuando recepcion_abierta === false,
+  // el operativo está Finalizado/Cancelado, o fuera de la sub-vista QR.
   useEffect(() => {
     if (!opActivoId || opModoQr !== 'dinamico' || !mostrarQrActivo) return
     const id = window.setInterval(() => setAhoraMs(Date.now()), 1000)
@@ -268,7 +287,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
   }
 
   async function aplicarCambioConvocatoria(siguiente: boolean) {
-    if (!operativoActivo || !puedeGestionar || opEsFinalizado) return
+    if (!operativoActivo || !puedeConfigurarGlobal || opEsCerrado) return
     setCambiandoEstado(true)
     setError(null)
     setAviso(null)
@@ -299,7 +318,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
 
   async function guardarCupoSugerido(e: FormEvent) {
     e.preventDefault()
-    if (!operativoActivo || !puedeGestionar || opEsFinalizado) return
+    if (!operativoActivo || !puedeConfigurarGlobal || opEsCerrado) return
     const limpio = cupoEdicionActual.trim()
     const cupoNum = limpio ? Number(limpio) : null
     if (cupoNum !== null && (!Number.isInteger(cupoNum) || cupoNum < 1 || cupoNum > 1000)) {
@@ -328,7 +347,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
   }
 
   async function alternarRecepcion() {
-    if (!operativoActivo || !puedeGestionar || opEsFinalizado) return
+    if (!operativoActivo || !puedeConfigurarGlobal || opEsCerrado) return
     setCambiandoEstado(true)
     setError(null)
     setAviso(null)
@@ -348,7 +367,12 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
   }
 
   async function cambiarModoQr(modo: ModoQrOperativo) {
-    if (!operativoActivo || !puedeGestionar || opEsFinalizado || operativoActivo.modo_qr === modo) {
+    if (
+      !operativoActivo ||
+      !puedeConfigurarGlobal ||
+      opEsCerrado ||
+      operativoActivo.modo_qr === modo
+    ) {
       return
     }
     setCambiandoEstado(true)
@@ -383,7 +407,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
   }
 
   async function iniciarFlujoFinalizar() {
-    if (!operativoActivo || !puedeGestionar || opEsFinalizado) return
+    if (!operativoActivo || !puedeFinalizar || opEsCerrado) return
     setVerificandoCierre(true)
     setError(null)
     setAviso(null)
@@ -412,9 +436,32 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
         `Operativo "${operativoActivo.nombre}" finalizado de forma definitiva (${salidasCerradas} salida${salidasCerradas === 1 ? '' : 's'} cerrada${salidasCerradas === 1 ? '' : 's'} automáticamente).`,
       )
     } catch (err) {
-      setError(err instanceof Error ? err.message : mensajeDeError(err))
+      if (err instanceof ErrorDeudoresEnCierre) {
+        setPreCierre(err.preCierre)
+        setError(err.message)
+      } else {
+        setError(err instanceof Error ? err.message : mensajeDeError(err))
+      }
     } finally {
       setFinalizando(false)
+    }
+  }
+
+  async function abrirModalEliminarOCancelar() {
+    if (!operativoActivo || !soyAdmin) return
+    setModalEliminarAbierto(true)
+    setConfirmacionNombreEliminar('')
+    setMotivoCancelacion('')
+    setEstadoBorrado(null)
+    setVerificandoBorrado(true)
+    setError(null)
+    try {
+      const verif = await verificarOperativoVacioParaBorrado(operativoActivo.id)
+      setEstadoBorrado(verif)
+    } catch (err) {
+      setError(mensajeDeError(err))
+    } finally {
+      setVerificandoBorrado(false)
     }
   }
 
@@ -433,8 +480,35 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
       await eliminarOperativo(usuario, operativoActivo)
       setModalEliminarAbierto(false)
       setConfirmacionNombreEliminar('')
+      setEstadoBorrado(null)
       setSeleccionadoId(null)
-      setAviso(`Operativo "${nombreEliminado}" eliminado y registrado en auditoría.`)
+      setAviso(`Operativo "${nombreEliminado}" eliminado físicamente y registrado en auditoría.`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : mensajeDeError(err))
+    } finally {
+      setEliminando(false)
+    }
+  }
+
+  async function confirmarBajaLogicaCancelado(e: FormEvent) {
+    e.preventDefault()
+    if (!operativoActivo || !soyAdmin || opEsCerrado) return
+    if (confirmacionNombreEliminar.trim() !== operativoActivo.nombre.trim()) {
+      setError('Escribe el nombre exacto del operativo para confirmar su cancelación.')
+      return
+    }
+    setEliminando(true)
+    setError(null)
+    setAviso(null)
+    try {
+      await cancelarOperativo(usuario, operativoActivo, motivoCancelacion)
+      setModalEliminarAbierto(false)
+      setConfirmacionNombreEliminar('')
+      setMotivoCancelacion('')
+      setEstadoBorrado(null)
+      setAviso(
+        `Operativo "${operativoActivo.nombre}" marcado como Cancelado (solo lectura) conservando intacto su historial.`,
+      )
     } catch (err) {
       setError(err instanceof Error ? err.message : mensajeDeError(err))
     } finally {
@@ -472,13 +546,13 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
           />
         )}
 
-        {/* Chips de filtro con contador discreto: En curso, Programados, Finalizados */}
+        {/* Chips de filtro con contador discreto: En curso, Programados, Finalizados / Cancelados */}
         <div className="flex flex-wrap items-center gap-2">
           {(
             [
               { id: 'en_curso', label: 'En curso', count: conteosEstado.en_curso },
               { id: 'programados', label: 'Programados', count: conteosEstado.programados },
-              { id: 'finalizados', label: 'Finalizados', count: conteosEstado.finalizados },
+              { id: 'finalizados', label: 'Cerrados', count: conteosEstado.finalizados },
             ] as const
           ).map((chip) => {
             const activo = filtroEstado === chip.id
@@ -732,7 +806,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
         ) : (
           <div className="tarjeta divide-y divide-borde overflow-hidden dark:divide-noche-borde">
             {filtrados.map((op) => {
-              const finalizado = op.estatus === 'Finalizado'
+              const cerrado = esOperativoCerrado(op)
               return (
                 <button
                   key={op.id}
@@ -770,7 +844,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                   </div>
 
                   <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-                    {!finalizado && op.convocatoria_abierta && (
+                    {!cerrado && op.convocatoria_abierta && (
                       <span className="inline-flex items-center gap-1 rounded-full bg-salvia px-2.5 py-0.5 text-[11px] font-bold tabular-nums text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
                         <Megaphone size={11} strokeWidth={2} />
                         <span>
@@ -783,10 +857,14 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                         </span>
                       </span>
                     )}
-                    {finalizado ? (
+                    {cerrado ? (
                       <span className="inline-flex items-center gap-1 rounded-full bg-superficie-suave px-2.5 py-0.5 text-[11px] font-bold text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave">
-                        <Lock size={11} strokeWidth={2} />
-                        <span>Finalizado</span>
+                        {op.estatus === 'Cancelado' ? (
+                          <Ban size={11} strokeWidth={2} />
+                        ) : (
+                          <Lock size={11} strokeWidth={2} />
+                        )}
+                        <span>{op.estatus === 'Cancelado' ? 'Cancelado' : 'Finalizado'}</span>
                       </span>
                     ) : op.recepcion_abierta ? (
                       <span className="inline-flex items-center gap-1 rounded-full bg-activo-suave px-2.5 py-0.5 text-[11px] font-bold text-activo dark:bg-noche-campo dark:text-activo-claro">
@@ -841,15 +919,15 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
 
           <span
             className={`shrink-0 rounded-full px-3 py-1 text-xs font-bold ${
-              opEsFinalizado
+              opEsCerrado
                 ? 'bg-superficie-suave text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave'
                 : opRecepcionAbierta
                   ? 'bg-activo-suave text-activo dark:bg-noche-campo dark:text-activo-claro'
                   : 'bg-ambar-suave text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto'
             }`}
           >
-            {opEsFinalizado
-              ? 'Finalizado'
+            {opEsCerrado
+              ? etiquetaCerrado
               : opRecepcionAbierta
                 ? 'Recepción abierta'
                 : 'Recepción cerrada'}
@@ -996,8 +1074,8 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                     Convocatoria y prerregistro previo
                   </h4>
                   <p className="mt-0.5 text-xs text-tinta-suave dark:text-noche-tinta-suave">
-                    {opEsFinalizado
-                      ? 'Este operativo está finalizado en modo solo lectura.'
+                    {opEsCerrado
+                      ? `Este operativo está ${opEsCancelado ? 'cancelado' : 'finalizado'} en modo solo lectura.`
                       : operativoActivo.convocatoria_abierta
                         ? 'Convocatoria abierta: los brigadistas pueden apuntarse por su cuenta antes del operativo y confirmar con QR al llegar.'
                         : 'Convocatoria cerrada: no admite nuevos prerregistros de brigadistas. Puedes seguir registrando altas manuales, editando roles y confirmando asistencias por QR.'}
@@ -1016,19 +1094,19 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                 </span>
                 <span
                   className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
-                    operativoActivo.convocatoria_abierta && !opEsFinalizado
+                    operativoActivo.convocatoria_abierta && !opEsCerrado
                       ? 'bg-activo-suave text-activo dark:bg-noche-tarjeta dark:text-activo-claro'
                       : 'bg-ambar-suave text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto'
                   }`}
                 >
-                  {operativoActivo.convocatoria_abierta && !opEsFinalizado
+                  {operativoActivo.convocatoria_abierta && !opEsCerrado
                     ? 'Convocatoria abierta'
                     : 'Convocatoria cerrada'}
                 </span>
               </div>
             </div>
 
-            {puedeGestionar && !opEsFinalizado && (
+            {puedeConfigurarGlobal && !opEsCerrado && (
               <div className="flex flex-col gap-3 border-t border-borde pt-3 dark:border-noche-borde">
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <div className="flex flex-col gap-1">
@@ -1143,32 +1221,34 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
           {/* Acciones operativas */}
           {puedeGestionar && (
             <div className="flex flex-wrap items-center gap-2.5 border-t border-borde pt-4 dark:border-noche-borde">
-              {!opEsFinalizado ? (
+              {!opEsCerrado ? (
                 <>
-                  <button
-                    type="button"
-                    onClick={() => void alternarRecepcion()}
-                    disabled={cambiandoEstado}
-                    className={`btn min-h-10 px-4 text-xs ${
-                      opRecepcionAbierta
-                        ? 'border border-ambar bg-ambar-suave text-ambar-texto hover:bg-amber-100 dark:bg-noche-ambar dark:text-noche-ambar-texto'
-                        : 'btn-verde'
-                    }`}
-                  >
-                    {opRecepcionAbierta ? (
-                      <>
-                        <Lock size={15} strokeWidth={2} />
-                        <span>Cerrar Recepción</span>
-                      </>
-                    ) : (
-                      <>
-                        <Unlock size={15} strokeWidth={2} />
-                        <span>Abrir Recepción</span>
-                      </>
-                    )}
-                  </button>
+                  {puedeConfigurarGlobal && (
+                    <button
+                      type="button"
+                      onClick={() => void alternarRecepcion()}
+                      disabled={cambiandoEstado}
+                      className={`btn min-h-10 px-4 text-xs ${
+                        opRecepcionAbierta
+                          ? 'border border-ambar bg-ambar-suave text-ambar-texto hover:bg-amber-100 dark:bg-noche-ambar dark:text-noche-ambar-texto'
+                          : 'btn-verde'
+                      }`}
+                    >
+                      {opRecepcionAbierta ? (
+                        <>
+                          <Lock size={15} strokeWidth={2} />
+                          <span>Cerrar Recepción</span>
+                        </>
+                      ) : (
+                        <>
+                          <Unlock size={15} strokeWidth={2} />
+                          <span>Abrir Recepción</span>
+                        </>
+                      )}
+                    </button>
+                  )}
 
-                  {!ayJefe ? (
+                  {puedeFinalizar ? (
                     <button
                       type="button"
                       disabled={verificandoCierre}
@@ -1190,8 +1270,8 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                 <p className="inline-flex items-center gap-1.5 text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
                   <Lock size={14} strokeWidth={2} />
                   <span>
-                    Este operativo fue finalizado de forma irreversible. Consulta su bitácora en modo
-                    solo lectura.
+                    Este operativo fue {opEsCancelado ? 'cancelado' : 'finalizado'} de forma
+                    irreversible. Consulta su bitácora en modo solo lectura.
                   </span>
                 </p>
               )}
@@ -1199,14 +1279,11 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
               {soyAdmin && (
                 <button
                   type="button"
-                  onClick={() => {
-                    setModalEliminarAbierto(true)
-                    setConfirmacionNombreEliminar('')
-                  }}
+                  onClick={() => void abrirModalEliminarOCancelar()}
                   className="btn ml-auto min-h-10 border border-alerta bg-tarjeta px-3.5 text-xs text-alerta hover:bg-alerta-suave dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
                 >
                   <Trash2 size={15} strokeWidth={2} />
-                  <span>Eliminar Operativo</span>
+                  <span>Eliminar o Cancelar</span>
                 </button>
               )}
             </div>
@@ -1214,16 +1291,16 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
         </article>
       )}
 
-      {/* SUB-VISTA B: CONTROL QR (CON FIX CRÍTICO DE RECEPCIÓN CERRADA / FINALIZADO) */}
+      {/* SUB-VISTA B: CONTROL QR */}
       {subVista === 'qr' && (
         <article className="tarjeta mx-auto flex w-full max-w-2xl flex-col gap-4 p-5">
-          {opEsFinalizado ? (
+          {opEsCerrado ? (
             <div className="flex flex-col items-center gap-3 py-8 text-center">
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-superficie-suave text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave">
                 <Lock size={24} strokeWidth={2} />
               </div>
               <h3 className="text-base font-bold text-tinta dark:text-noche-tinta">
-                Operativo finalizado
+                Operativo {opEsCancelado ? 'cancelado' : 'finalizado'}
               </h3>
               <p className="max-w-md text-xs text-tinta-suave dark:text-noche-tinta-suave">
                 Los códigos QR de entrada y salida se encuentran deshabilitados de forma definitiva.
@@ -1241,7 +1318,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                 Recepción cerrada — no se admiten nuevas entradas; las salidas siguen habilitadas
                 desde el escáner de credenciales o la bitácora.
               </p>
-              {puedeGestionar && (
+              {puedeConfigurarGlobal && (
                 <button
                   type="button"
                   disabled={cambiandoEstado}
@@ -1265,7 +1342,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                   </p>
                 </div>
 
-                {puedeGestionar && (
+                {puedeConfigurarGlobal && (
                   <button
                     type="button"
                     disabled={cambiandoEstado}
@@ -1278,7 +1355,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                 )}
               </div>
 
-              {puedeGestionar && (
+              {puedeConfigurarGlobal && (
                 <div className="grid grid-cols-2 gap-1.5 rounded-lg bg-superficie-suave p-1 dark:bg-noche-campo">
                   <button
                     type="button"
@@ -1462,7 +1539,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                   ))}
                 </div>
 
-                <div className="flex justify-end gap-2">
+                <div className="flex flex-wrap justify-end gap-2">
                   <button
                     type="button"
                     onClick={() => setPreCierre(null)}
@@ -1470,6 +1547,19 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                   >
                     Cerrar
                   </button>
+                  {!opRecepcionAbierta && !opEsCerrado && puedeConfigurarGlobal && (
+                    <button
+                      type="button"
+                      disabled={cambiandoEstado}
+                      onClick={() => {
+                        setPreCierre(null)
+                        void alternarRecepcion()
+                      }}
+                      className="btn-salvia text-xs"
+                    >
+                      Reabrir recepción
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => {
@@ -1486,12 +1576,13 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
               <>
                 <div className="flex flex-col gap-2 rounded-lg bg-naranja-suave p-3 text-xs text-tinta dark:bg-noche-campo dark:text-noche-tinta">
                   <p className="font-bold">
-                    Esta acción es definitiva e irreversible. Nadie podrá reabrir el operativo,
-                    registrar nuevas asistencias ni asignar material posteriormente.
+                    Al confirmar, primero se cerrará preventivamente la recepción y convocatoria, se
+                    volverá a verificar que no existan entregas pendientes y el operativo quedará
+                    finalizado de forma irreversible.
                   </p>
                   <p className="tabular-nums">
                     • Asistentes totales: <strong>{preCierre.totalAsistencias}</strong>
-                    <br />• Salidas abiertas que se cerrarán automáticamente ahora:{' '}
+                    <br />• Salidas abiertas que se cerrarán automáticamente:{' '}
                     <strong>{preCierre.asistenciasAbiertas.length}</strong>
                     <br />• Material BUPC pendiente: <strong>0</strong>
                   </p>
@@ -1521,12 +1612,12 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
         </div>
       )}
 
-      {/* MODAL: BORRADO CONTROLADO (EXCLUSIVO ADMINISTRADOR CON CONFIRMACIÓN REFORZADA) */}
+      {/* MODAL: PROTECCIÓN CONTRA HUÉRFANOS (BORRADO FÍSICO SI VACÍO / BAJA LÓGICA CANCELADO SI TIENE REGISTROS) */}
       {modalEliminarAbierto && soyAdmin && (
         <div
           role="dialog"
           aria-modal="true"
-          aria-label="Eliminar Operativo"
+          aria-label="Eliminar o cancelar operativo"
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
         >
           <article className="tarjeta flex w-full max-w-md flex-col gap-4 border-2 border-alerta p-5">
@@ -1539,11 +1630,12 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                 />
                 <div>
                   <h3 className="text-base font-bold text-alerta dark:text-noche-rojo-texto">
-                    Eliminar Operativo
+                    {estadoBorrado && !estadoBorrado.vacio
+                      ? 'Borrado físico bloqueado por registros asociados'
+                      : 'Eliminar Operativo'}
                   </h3>
                   <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-                    Acción exclusiva de Administrador. Quedará registrada en el historial de
-                    auditoría.
+                    Acción exclusiva de Administrador con trazabilidad en auditoría.
                   </p>
                 </div>
               </div>
@@ -1557,42 +1649,142 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
               </button>
             </div>
 
-            <form onSubmit={confirmarEliminacionOperativo} className="flex flex-col gap-3">
-              <p className="text-xs text-tinta dark:text-noche-tinta">
-                Para confirmar, escribe exactamente el nombre del operativo:{' '}
-                <strong className="select-all">{operativoActivo.nombre}</strong>
+            {verificandoBorrado || !estadoBorrado ? (
+              <p className="py-4 text-center text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                Verificando registros asociados del operativo...
               </p>
+            ) : estadoBorrado.vacio ? (
+              <form onSubmit={confirmarEliminacionOperativo} className="flex flex-col gap-3">
+                <p className="rounded-lg bg-superficie-suave p-2.5 text-xs text-tinta dark:bg-noche-campo dark:text-noche-tinta">
+                  El operativo está completamente vacío (sin asistencias, material ni
+                  prerregistros). Puede eliminarse físicamente sin dejar registros huérfanos.
+                </p>
+                <p className="text-xs text-tinta dark:text-noche-tinta">
+                  Para confirmar, escribe exactamente el nombre del operativo:{' '}
+                  <strong className="select-all">{operativoActivo.nombre}</strong>
+                </p>
 
-              <input
-                type="text"
-                value={confirmacionNombreEliminar}
-                onChange={(e) => setConfirmacionNombreEliminar(e.target.value)}
-                placeholder={operativoActivo.nombre}
-                className="campo text-sm"
-                required
-              />
+                <input
+                  type="text"
+                  value={confirmacionNombreEliminar}
+                  onChange={(e) => setConfirmacionNombreEliminar(e.target.value)}
+                  placeholder={operativoActivo.nombre}
+                  className="campo text-sm"
+                  required
+                />
 
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  disabled={eliminando}
-                  onClick={() => setModalEliminarAbierto(false)}
-                  className="btn-salvia text-xs"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={
-                    eliminando ||
-                    confirmacionNombreEliminar.trim() !== operativoActivo.nombre.trim()
-                  }
-                  className="btn-rojo text-xs"
-                >
-                  {eliminando ? 'Eliminando...' : 'Eliminar definitivamente'}
-                </button>
-              </div>
-            </form>
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    disabled={eliminando}
+                    onClick={() => setModalEliminarAbierto(false)}
+                    className="btn-salvia text-xs"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={
+                      eliminando ||
+                      confirmacionNombreEliminar.trim() !== operativoActivo.nombre.trim()
+                    }
+                    className="btn-rojo text-xs"
+                  >
+                    {eliminando ? 'Eliminando...' : 'Eliminar definitivamente'}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={confirmarBajaLogicaCancelado} className="flex flex-col gap-3">
+                <div className="flex flex-col gap-1.5 rounded-lg border border-ambar bg-ambar-suave p-3 text-xs text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
+                  <p className="font-bold">
+                    No se permite borrar físicamente este operativo porque ya tiene actividad
+                    registrada (evita registros huérfanos):
+                  </p>
+                  <ul className="list-inside list-disc text-[11px] font-medium">
+                    {estadoBorrado.tieneAsistencias && <li>Asistencias de personal registradas</li>}
+                    {estadoBorrado.tieneEquipos && <li>Material de turno registrado</li>}
+                    {estadoBorrado.tienePrerregistros && <li>Prerregistros en convocatoria</li>}
+                  </ul>
+                </div>
+
+                {opEsCerrado ? (
+                  <>
+                    <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
+                      Este operativo ya se encuentra en estado <strong>{etiquetaCerrado}</strong>{' '}
+                      (solo lectura) y su historial permanece resguardado.
+                    </p>
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setModalEliminarAbierto(false)}
+                        className="btn-salvia text-xs"
+                      >
+                        Entendido
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-xs text-tinta dark:text-noche-tinta">
+                      Puedes darlo de <strong>baja lógica marcándolo como Cancelado</strong>:
+                      quedará bloqueado en modo solo lectura igual que un operativo finalizado y
+                      conservará sus registros históricos.
+                    </p>
+
+                    <div className="flex flex-col gap-1">
+                      <label htmlFor="op-motivo-cancelar" className="etiqueta">
+                        Motivo de cancelación (opcional)
+                      </label>
+                      <input
+                        id="op-motivo-cancelar"
+                        type="text"
+                        maxLength={200}
+                        value={motivoCancelacion}
+                        onChange={(e) => setMotivoCancelacion(e.target.value)}
+                        placeholder="Ej. Suspendido por condiciones meteorológicas / creado por error"
+                        className="campo text-xs"
+                      />
+                    </div>
+
+                    <p className="text-xs text-tinta dark:text-noche-tinta">
+                      Escribe exactamente <strong className="select-all">{operativoActivo.nombre}</strong>{' '}
+                      para confirmar:
+                    </p>
+
+                    <input
+                      type="text"
+                      value={confirmacionNombreEliminar}
+                      onChange={(e) => setConfirmacionNombreEliminar(e.target.value)}
+                      placeholder={operativoActivo.nombre}
+                      className="campo text-sm"
+                      required
+                    />
+
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        disabled={eliminando}
+                        onClick={() => setModalEliminarAbierto(false)}
+                        className="btn-salvia text-xs"
+                      >
+                        Volver
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={
+                          eliminando ||
+                          confirmacionNombreEliminar.trim() !== operativoActivo.nombre.trim()
+                        }
+                        className="btn-rojo text-xs"
+                      >
+                        {eliminando ? 'Cancelando...' : 'Cancelar operativo (baja lógica)'}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </form>
+            )}
           </article>
         </div>
       )}

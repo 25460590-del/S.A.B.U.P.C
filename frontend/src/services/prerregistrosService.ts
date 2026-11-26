@@ -16,6 +16,7 @@ import { db } from '../lib/firebase'
 import {
   ayudantiaEfectiva,
   ayudantiaJefatura,
+  esOperativoCerrado,
   etapaEfectiva,
   normalizarOperativo,
   type AyudantiaActiva,
@@ -129,8 +130,12 @@ export async function apuntarseAOperativo(
       throw new Error('El operativo ya no se encuentra disponible.')
     }
     const op = normalizarOperativo(opSnap.data() as Operativo)
-    if (op.estatus === 'Finalizado') {
-      throw new Error('Este operativo ya fue finalizado.')
+    if (esOperativoCerrado(op)) {
+      throw new Error(
+        op.estatus === 'Cancelado'
+          ? 'Este operativo fue cancelado.'
+          : 'Este operativo ya fue finalizado.',
+      )
     }
     if (!op.convocatoria_abierta) {
       throw new Error('La convocatoria de este operativo ya fue cerrada.')
@@ -168,8 +173,10 @@ export async function cancelarMiPrerregistro(
       throw new Error('El operativo ya no se encuentra disponible.')
     }
     const op = normalizarOperativo(opSnap.data() as Operativo)
-    if (op.estatus === 'Finalizado') {
-      throw new Error('No se puede cancelar porque el operativo ya fue finalizado.')
+    if (esOperativoCerrado(op)) {
+      throw new Error(
+        `No se puede cancelar porque el operativo ya fue ${op.estatus === 'Cancelado' ? 'cancelado' : 'finalizado'}.`,
+      )
     }
     if (!op.convocatoria_abierta) {
       throw new Error('La convocatoria está cerrada; solicita el cambio a tu Encargado.')
@@ -206,8 +213,10 @@ export async function registrarPrerregistroManual(
       throw new Error('El operativo ya no se encuentra disponible.')
     }
     const op = normalizarOperativo(opSnap.data() as Operativo)
-    if (op.estatus === 'Finalizado') {
-      throw new Error('No se puede modificar la lista previa de un operativo finalizado.')
+    if (esOperativoCerrado(op)) {
+      throw new Error(
+        `No se puede modificar la lista previa de un operativo ${op.estatus === 'Cancelado' ? 'cancelado' : 'finalizado'}.`,
+      )
     }
     if (preSnap.exists()) {
       throw new Error(`${nombreCompleto(integrante)} ya se encuentra prerregistrado.`)
@@ -238,8 +247,10 @@ export async function quitarPrerregistroManual(
       throw new Error('El operativo ya no se encuentra disponible.')
     }
     const op = normalizarOperativo(opSnap.data() as Operativo)
-    if (op.estatus === 'Finalizado') {
-      throw new Error('No se puede modificar la lista previa de un operativo finalizado.')
+    if (esOperativoCerrado(op)) {
+      throw new Error(
+        `No se puede modificar la lista previa de un operativo ${op.estatus === 'Cancelado' ? 'cancelado' : 'finalizado'}.`,
+      )
     }
     const conteoActual = op.prerregistros_count ?? 0
     tx.delete(preRef)

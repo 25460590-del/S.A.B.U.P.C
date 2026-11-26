@@ -99,7 +99,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
         const actualId = opActivoIdRef.current
         if (actualId) {
           const opActualizado = lista.find((o) => o.id === actualId)
-          if (opActualizado?.estatus === 'Finalizado') {
+          if (opActualizado && (opActualizado.estatus === 'Finalizado' || opActualizado.estatus === 'Cancelado')) {
             setOperativoIdSel('')
             setCanalIdSel('')
             setRegistroEditando(null)
@@ -107,7 +107,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
             setMostrandoNuevoCanal(false)
             setMostrandoNuevaUnidad(false)
             setAviso(
-              `El operativo "${opActualizado.nombre}" fue finalizado. Su bitácora de radio quedó disponible solo para consulta en Archivo Operativo Global.`,
+              `El operativo "${opActualizado.nombre}" fue ${opActualizado.estatus === 'Cancelado' ? 'cancelado' : 'finalizado'}. Su bitácora de radio quedó disponible solo para consulta en Archivo Operativo Global.`,
             )
           }
         }
@@ -128,7 +128,9 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
     }
   }, [])
 
-  const operativosActivos = operativos.filter((o) => o.estatus !== 'Finalizado')
+  const operativosActivos = operativos.filter(
+    (o) => o.estatus !== 'Finalizado' && o.estatus !== 'Cancelado',
+  )
 
   const operativoActivo =
     operativosActivos.find((o) => o.id === operativoIdSel) ??
@@ -208,7 +210,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
 
   async function manejarAgregarUnidad(e: FormEvent) {
     e.preventDefault()
-    if (!operativoActivo || operativoActivo.estatus === 'Finalizado') return
+    if (!operativoActivo || operativoActivo.estatus === 'Finalizado' || operativoActivo.estatus === 'Cancelado') return
     if (!canalActivo || !nuevaUnidad.trim()) return
     setError(null)
     try {
@@ -225,7 +227,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
     etiqueta: string,
     unidadesBase: string[] = ['CECOM', '58A', 'BUPC 1'],
   ) {
-    if (!operativoActivo || operativoActivo.estatus === 'Finalizado' || !nombre.trim()) return
+    if (!operativoActivo || operativoActivo.estatus === 'Finalizado' || operativoActivo.estatus === 'Cancelado' || !nombre.trim()) return
     setError(null)
     setAviso(null)
     try {
@@ -247,7 +249,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
 
   async function manejarEnviarMensaje(e: FormEvent) {
     e.preventDefault()
-    if (!operativoActivo || operativoActivo.estatus === 'Finalizado' || !canalActivo) return
+    if (!operativoActivo || operativoActivo.estatus === 'Finalizado' || operativoActivo.estatus === 'Cancelado' || !canalActivo) return
     setError(null)
     setAviso(null)
 
@@ -280,7 +282,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
 
   async function manejarGuardarEdicion(e: FormEvent) {
     e.preventDefault()
-    if (!operativoActivo || operativoActivo.estatus === 'Finalizado' || !registroEditando) return
+    if (!operativoActivo || operativoActivo.estatus === 'Finalizado' || operativoActivo.estatus === 'Cancelado' || !registroEditando) return
     setError(null)
     setAviso(null)
     setEnviando(true)
@@ -921,7 +923,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
       )}
 
       {/* Modal de edición de actividad (hora_original inmutable) */}
-      {registroEditando && operativoActivo && operativoActivo.estatus !== 'Finalizado' && (
+      {registroEditando && operativoActivo && operativoActivo.estatus !== 'Finalizado' && operativoActivo.estatus !== 'Cancelado' && (
         <div
           role="dialog"
           aria-modal="true"

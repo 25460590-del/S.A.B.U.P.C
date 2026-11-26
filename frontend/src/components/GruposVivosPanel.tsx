@@ -434,7 +434,9 @@ export function GruposVivosPanel({
           </div>
 
           {/* Barra de acciones en lote (solo en grupos formativos con integrantes gestionables) */}
-          {esFormativo && integrantesGestionables.length > 0 && (
+          {esFormativo &&
+            integrantesGestionables.length > 0 &&
+            (grupoAbierto.etapa === 'Alfa' || soyAdmin || Boolean(ayJefe)) && (
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-borde pt-3 dark:border-noche-borde">
               <button
                 type="button"
