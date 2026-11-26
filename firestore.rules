@@ -87,7 +87,8 @@ rules_version = '2';
 //
 // Colección: auditoria_eventos/{eventoId}   (bitácora inmutable)
 //   - tipo: 'APROBACION_USUARIO' | 'RECHAZO_USUARIO' | 'BAJA_USUARIO' | 'CAMBIO_ROL' |
-//           'CREACION_OPERATIVO' | 'CAMBIO_RECEPCION_OPERATIVO' | 'CAMBIO_MODO_QR' |
+//           'CREACION_OPERATIVO' | 'CAMBIO_RECEPCION_OPERATIVO' |
+//           'CAMBIO_CONVOCATORIA_OPERATIVO' | 'CAMBIO_MODO_QR' |
 //           'ASIGNACION_EQUIPO' | 'DEVOLUCION_EQUIPO' | 'ACTA_INCIDENCIA' |
 //           'SALIDA_MANUAL' | 'INTENTO_ACCESO_INACTIVO' |
 //           'CREACION_CANAL_RADIO' | 'EDICION_BITACORA_RADIO' | 'SEED_CLAVES_REBACE' |
@@ -119,6 +120,9 @@ rules_version = '2';
 //   - modo_qr: 'estatico' | 'dinamico'
 //   - qr_token_estatico: string 1..128
 //   - estatus: 'Activo' | 'Finalizado' (opcional, por defecto 'Activo'; Finalizado es irreversible)
+//   - convocatoria_abierta: bool (opcional, por defecto false)
+//   - cupo_sugerido: int 1..1000 | null (opcional, por defecto null = sin límite)
+//   - prerregistros_count: int >= 0 (opcional, 0 al crear; conteo sincronizado)
 //   - creado_por_uid: string 1..128 (== request.auth.uid al crear, inmutable)
 //   - creado_por_nombre: string 1..200 (inmutable)
 //   - creado_en: timestamp (== request.time al crear, inmutable)
@@ -129,6 +133,18 @@ rules_version = '2';
 //   - periodo_segundos: int (== 30)
 //   - digitos: int (== 6)
 //   - actualizado_en: timestamp (== request.time)
+//
+// Subcolección: operativos/{operativoId}/prerregistros/{uid}   (ID = usuario_uid)
+//   - usuario_uid: string (== ID del documento, inmutable)
+//   - usuario_nombre: string 1..200
+//   - usuario_cuenta: string 1..12
+//   - etapa: 'Alfa' | 'Omega' | 'SIERRA' | 'Grupo Operativo'
+//   - subgrupo: string 0..60
+//   - ayudantia: 'Capacitación' | 'Administración de Personal' |
+//                'Tesla' | 'Socorros' | 'Logística' | 'Ninguna'
+//   - origen: 'Autoregistro' | 'Manual_Encargado'
+//   - registrado_por_uid: string (== request.auth.uid)
+//   - fecha_registro: timestamp (== request.time)
 //
 // Colección: asistencias_personal/{asistenciaId}
 //   - id: string (== ID del documento, inmutable)
@@ -421,6 +437,81 @@ service cloud.firestore {
           && get(/databases/$(database)/documents/operativos/$(opId)).data.recepcion_abierta == true;
     }
 
+    // Actualización atómica del contador prerregistros_count por un brigadista Activo
+    // dentro de una transacción con su propio documento prerregistros/{request.auth.uid}.
+    function actualizacionContadorPrerregistroPropia(operativoId, changed) {
+      let prev = resource.data.get('prerregistros_count', 0);
+      let next = request.resource.data.get('prerregistros_count', -1);
+      let cupo = resource.data.get('cupo_sugerido', null);
+      let prePath = /databases/$(database)/documents/operativos/$(operativoId)/prerregistros/$(request.auth.uid);
+      return resource.data.get('convocatoria_abierta', false) == true
+          && changed.hasOnly(['prerregistros_count', 'actualizado_en'])
+          && next is int
+          && next >= 0
+          && (
+            (next == prev + 1
+             && (cupo == null || next <= cupo)
+             && !exists(prePath)
+             && existsAfter(prePath))
+            || (next == prev - 1
+                && exists(prePath)
+                && !existsAfter(prePath))
+          );
+    }
+
+    // Actualización unificada de operativos/{operativoId}: lee perfilPropio() y
+    // camposCambiados() una sola vez (cortocircuito rápido para Encargado/Admin).
+    function puedeActualizarOperativo(operativoId) {
+      let p = perfilPropio();
+      let changed = camposCambiados();
+      return p.estatus == 'Activo'
+          && (
+            (p.rol_sistema in ['Encargado', 'Administrador']
+             && !changed.hasAny(['id', 'creado_por_uid', 'creado_por_nombre', 'creado_en']))
+            || actualizacionContadorPrerregistroPropia(operativoId, changed)
+          )
+          && esOperativoValido(request.resource.data, operativoId);
+    }
+
+    // Sub-helper para crear prerregistro usando el mapa ya leído del operativo padre.
+    function puedeCrearPrerregistroEnOperativo(op, uid) {
+      let p = perfilPropio();
+      return op.get('estatus', 'Activo') != 'Finalizado'
+          && p.estatus == 'Activo'
+          && (
+            p.rol_sistema in ['Encargado', 'Administrador']
+            || (request.auth.uid == uid
+                && request.resource.data.origen == 'Autoregistro'
+                && op.get('convocatoria_abierta', false) == true)
+          );
+    }
+
+    // ¿Puede crear operativos/{operativoId}/prerregistros/{uid}? (1 solo get() al padre).
+    function puedeCrearPrerregistro(operativoId, uid) {
+      let opPath = /databases/$(database)/documents/operativos/$(operativoId);
+      return exists(opPath)
+          && puedeCrearPrerregistroEnOperativo(get(opPath).data, uid);
+    }
+
+    // Sub-helper para eliminar prerregistro usando el mapa ya leído del operativo padre.
+    function puedeEliminarPrerregistroEnOperativo(op, uid) {
+      let p = perfilPropio();
+      return op.get('estatus', 'Activo') != 'Finalizado'
+          && p.estatus == 'Activo'
+          && (
+            p.rol_sistema in ['Encargado', 'Administrador']
+            || (request.auth.uid == uid
+                && op.get('convocatoria_abierta', false) == true)
+          );
+    }
+
+    // ¿Puede eliminar operativos/{operativoId}/prerregistros/{uid}? (1 solo get() al padre).
+    function puedeEliminarPrerregistro(operativoId, uid) {
+      let opPath = /databases/$(database)/documents/operativos/$(operativoId);
+      return exists(opPath)
+          && puedeEliminarPrerregistroEnOperativo(get(opPath).data, uid);
+    }
+
     // -------------------------------------------------------------
     // Utilidades de validación
     // -------------------------------------------------------------
@@ -648,7 +739,8 @@ service cloud.firestore {
           && d.keys().hasOnly(campos)
           && d.tipo in ['APROBACION_USUARIO', 'RECHAZO_USUARIO', 'BAJA_USUARIO',
                         'CAMBIO_ROL', 'CREACION_OPERATIVO',
-                        'CAMBIO_RECEPCION_OPERATIVO', 'CAMBIO_MODO_QR',
+                        'CAMBIO_RECEPCION_OPERATIVO',
+                        'CAMBIO_CONVOCATORIA_OPERATIVO', 'CAMBIO_MODO_QR',
                         'ASIGNACION_EQUIPO', 'DEVOLUCION_EQUIPO', 'ACTA_INCIDENCIA',
                         'SALIDA_MANUAL', 'INTENTO_ACCESO_INACTIVO',
                         'CREACION_CANAL_RADIO', 'EDICION_BITACORA_RADIO',
@@ -688,8 +780,10 @@ service cloud.firestore {
                         'fecha_fin', 'descripcion', 'recepcion_abierta', 'modo_qr',
                         'qr_token_estatico', 'creado_por_uid', 'creado_por_nombre',
                         'creado_en', 'actualizado_en'];
-      return d.keys().hasAll(camposBase)
-          && d.keys().hasOnly(camposBase.concat(['estatus']))
+      let keys = d.keys();
+      return keys.hasAll(camposBase)
+          && keys.hasOnly(camposBase.concat(['estatus', 'convocatoria_abierta',
+                                             'cupo_sugerido', 'prerregistros_count']))
           && d.id == operativoId
           && cadena(d.nombre, 1, 120)
           && d.categoria in ['Operativos Masivos', 'Proyectos y Soporte Técnico',
@@ -703,6 +797,12 @@ service cloud.firestore {
           && d.modo_qr in ['estatico', 'dinamico']
           && cadena(d.qr_token_estatico, 1, 128)
           && (!('estatus' in d) || d.estatus in ['Activo', 'Finalizado'])
+          && (!('convocatoria_abierta' in d) || d.convocatoria_abierta is bool)
+          && (!('cupo_sugerido' in d)
+              || d.cupo_sugerido == null
+              || (d.cupo_sugerido is int && d.cupo_sugerido >= 1 && d.cupo_sugerido <= 1000))
+          && (!('prerregistros_count' in d)
+              || (d.prerregistros_count is int && d.prerregistros_count >= 0))
           && cadena(d.creado_por_uid, 1, 128)
           && cadena(d.creado_por_nombre, 1, 200)
           && d.creado_en is timestamp
@@ -725,6 +825,28 @@ service cloud.firestore {
           && d.digitos is int
           && d.digitos == 6
           && d.actualizado_en == request.time;
+    }
+
+    // -------------------------------------------------------------
+    // Validador de dominio: operativos/{operativoId}/prerregistros/{uid}
+    // -------------------------------------------------------------
+    function esPrerregistroValido(d, uid) {
+      let campos = ['usuario_uid', 'usuario_nombre', 'usuario_cuenta', 'etapa',
+                    'subgrupo', 'ayudantia', 'origen', 'registrado_por_uid',
+                    'fecha_registro'];
+      let keys = d.keys();
+      return keys.hasAll(campos)
+          && keys.hasOnly(campos)
+          && d.usuario_uid == uid
+          && cadena(d.usuario_nombre, 1, 200)
+          && cadena(d.usuario_cuenta, 1, 12)
+          && d.etapa in ['Alfa', 'Omega', 'SIERRA', 'Grupo Operativo']
+          && cadenaMax(d.subgrupo, 60)
+          && d.ayudantia in ['Capacitación', 'Administración de Personal',
+                             'Tesla', 'Socorros', 'Logística', 'Ninguna']
+          && d.origen in ['Autoregistro', 'Manual_Encargado']
+          && d.registrado_por_uid == request.auth.uid
+          && d.fecha_registro == request.time;
     }
 
     // -------------------------------------------------------------
@@ -1090,23 +1212,27 @@ service cloud.firestore {
       allow get, list: if esActivo();
 
       // Alta: Encargado o Administrador Activo, con esquema completo,
-      // estatus inicial ausente o 'Activo', autoría propia y timestamps del servidor.
+      // estatus inicial ausente o 'Activo', prerregistros_count ausente o 0,
+      // autoría propia y timestamps del servidor.
       allow create: if esEncargadoOAdminActivo()
                     && esOperativoValido(request.resource.data, operativoId)
                     && (!('estatus' in request.resource.data)
                         || request.resource.data.estatus == 'Activo')
+                    && (!('prerregistros_count' in request.resource.data)
+                        || request.resource.data.prerregistros_count == 0)
                     && request.resource.data.creado_por_uid == request.auth.uid
                     && request.resource.data.creado_en == request.time
                     && request.resource.data.actualizado_en == request.time;
 
-      // Actualización: Encargado o Administrador Activo, siempre que el operativo
-      // NO esté Finalizado (cierre irreversible), esquema válido e inmutables intactos.
-      allow update: if esEncargadoOAdminActivo()
+      // Actualización mientras el operativo NO esté Finalizado (cierre irreversible):
+      // (a) Encargado o Administrador Activo (cortocircuito rápido): esquema válido
+      //     e inmutables intactos.
+      // (b) Brigadista Activo: únicamente ['prerregistros_count', 'actualizado_en']
+      //     con atomicidad estricta respecto a su propio prerregistros/{uid}.
+      allow update: if isSignedIn()
                     && resource.data.get('estatus', 'Activo') != 'Finalizado'
-                    && esOperativoValido(request.resource.data, operativoId)
-                    && !camposCambiados().hasAny(['id', 'creado_por_uid',
-                                                  'creado_por_nombre', 'creado_en'])
-                    && request.resource.data.actualizado_en == request.time;
+                    && request.resource.data.actualizado_en == request.time
+                    && puedeActualizarOperativo(operativoId);
 
       // Eliminación: exclusiva de Administrador Activo.
       allow delete: if esAdminActivo();
@@ -1129,6 +1255,35 @@ service cloud.firestore {
 
         // Nunca se elimina el secreto TOTP.
         allow delete: if false;
+      }
+
+      // -----------------------------------------------------------
+      // operativos/{operativoId}/prerregistros/{uid} — lista previa
+      // -----------------------------------------------------------
+      match /prerregistros/{uid} {
+
+        // Lectura individual: el propio brigadista Activo (cortocircuito en 1 get())
+        // o un Encargado/Administrador Activo.
+        allow get: if (esPropietario(uid) && esActivo())
+                   || esEncargadoOAdminActivo();
+
+        // Listado: exclusivo de Encargado o Administrador Activo.
+        allow list: if esEncargadoOAdminActivo();
+
+        // Alta: esquema estricto + operativo existente y no Finalizado.
+        // Encargado/Admin Activo (cualquier origen) o propio Brigadista Activo
+        // con origen 'Autoregistro' y convocatoria_abierta == true.
+        allow create: if isSignedIn()
+                      && esPrerregistroValido(request.resource.data, uid)
+                      && puedeCrearPrerregistro(operativoId, uid);
+
+        // Inmutable: para corregir se elimina y se vuelve a registrar.
+        allow update: if false;
+
+        // Baja: operativo existente y no Finalizado. Encargado/Admin Activo
+        // o propio Brigadista Activo mientras convocatoria_abierta == true.
+        allow delete: if isSignedIn()
+                      && puedeEliminarPrerregistro(operativoId, uid);
       }
     }
 

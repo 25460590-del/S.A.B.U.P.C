@@ -993,3 +993,203 @@ test('Retrocompatibilidad Grupo Operativo sin ayudantía: lectura y Ficha de Eme
     actualizado_en: serverTimestamp(),
   }));
 });
+
+// ============================================================================
+// PRUEBAS: PRERREGISTRO PREVIO EN OPERATIVOS Y CONFIRMACIÓN VÍA QR
+// ============================================================================
+
+function prerregistroBase(uid, registradoPorUid, origen, extra = {}) {
+  return {
+    usuario_uid: uid,
+    usuario_nombre: 'Ana Pérez',
+    usuario_cuenta: '20201234',
+    etapa: 'Alfa',
+    subgrupo: 'Alfa 1',
+    ayudantia: 'Ninguna',
+    origen,
+    registrado_por_uid: registradoPorUid,
+    fecha_registro: serverTimestamp(),
+    ...extra,
+  };
+}
+
+test('Prerregistro propio: Brigadista Activo se apunta, lee su doc y cancela en operativo con convocatoria abierta', async () => {
+  // Encargado abre convocatoria con cupo sugerido = 2 en operativo Programado (opCerrado)
+  await assertSucceeds(updateDoc(doc(db('encargado1'), 'operativos/opCerrado'), {
+    convocatoria_abierta: true,
+    cupo_sugerido: 2,
+    prerregistros_count: 0,
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // 1. Brigadista se apunta atómicamente actualizando contador +1
+  const f = db('brigAlfa1');
+  const bAlta = writeBatch(f);
+  bAlta.set(
+    doc(f, 'operativos/opCerrado/prerregistros/brigAlfa1'),
+    prerregistroBase('brigAlfa1', 'brigAlfa1', 'Autoregistro'),
+  );
+  bAlta.update(doc(f, 'operativos/opCerrado'), {
+    prerregistros_count: 1,
+    actualizado_en: serverTimestamp(),
+  });
+  await assertSucceeds(bAlta.commit());
+
+  // 2. Brigadista lee su propio documento puntualmente (get), pero NO puede listar (list) ni leer ajenos
+  await assertSucceeds(getDoc(doc(f, 'operativos/opCerrado/prerregistros/brigAlfa1')));
+  await assertFails(getDocs(collection(f, 'operativos/opCerrado/prerregistros')));
+  await assertFails(getDoc(doc(f, 'operativos/opCerrado/prerregistros/brigOmega1')));
+
+  // 3. No se permite update sobre prerregistros (solo create/delete limpios)
+  await assertFails(updateDoc(doc(f, 'operativos/opCerrado/prerregistros/brigAlfa1'), {
+    subgrupo: 'Alfa 2',
+  }));
+
+  // 4. Brigadista cancela su prerregistro atómicamente bajando contador -1
+  const bBaja = writeBatch(f);
+  bBaja.delete(doc(f, 'operativos/opCerrado/prerregistros/brigAlfa1'));
+  bBaja.update(doc(f, 'operativos/opCerrado'), {
+    prerregistros_count: 0,
+    actualizado_en: serverTimestamp(),
+  });
+  await assertSucceeds(bBaja.commit());
+});
+
+test('Prerregistro propio: rechaza apuntar a otro uid, convocatoria cerrada, operativo Finalizado y exceso de cupo', async () => {
+  // Convocatoria cerrada (opAbierto no tiene convocatoria_abierta=true)
+  await assertFails(setDoc(
+    doc(db('brigAlfa1'), 'operativos/opAbierto/prerregistros/brigAlfa1'),
+    prerregistroBase('brigAlfa1', 'brigAlfa1', 'Autoregistro'),
+  ));
+
+  // Operativo Finalizado
+  await assertFails(setDoc(
+    doc(db('brigAlfa1'), 'operativos/opFinalizado/prerregistros/brigAlfa1'),
+    prerregistroBase('brigAlfa1', 'brigAlfa1', 'Autoregistro'),
+  ));
+
+  // Encargado abre convocatoria con cupo = 1 en opAbierto
+  await assertSucceeds(updateDoc(doc(db('encargado1'), 'operativos/opAbierto'), {
+    convocatoria_abierta: true,
+    cupo_sugerido: 1,
+    prerregistros_count: 0,
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // Brigadista intenta apuntar a otro uid -> rechazado
+  await assertFails(setDoc(
+    doc(db('brigAlfa1'), 'operativos/opAbierto/prerregistros/brigOmega1'),
+    prerregistroBase('brigOmega1', 'brigAlfa1', 'Autoregistro'),
+  ));
+
+  // Brigadista intenta usar origen Manual_Encargado -> rechazado
+  await assertFails(setDoc(
+    doc(db('brigAlfa1'), 'operativos/opAbierto/prerregistros/brigAlfa1'),
+    prerregistroBase('brigAlfa1', 'brigAlfa1', 'Manual_Encargado'),
+  ));
+
+  // Brigadista NO puede editar convocatoria_abierta ni cupo_sugerido ni alterar contador sin su doc
+  await assertFails(updateDoc(doc(db('brigAlfa1'), 'operativos/opAbierto'), {
+    convocatoria_abierta: false,
+    actualizado_en: serverTimestamp(),
+  }));
+  await assertFails(updateDoc(doc(db('brigAlfa1'), 'operativos/opAbierto'), {
+    prerregistros_count: 1,
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // Primer brigadista llena el cupo (1/1)
+  const f1 = db('brigAlfa1');
+  const b1 = writeBatch(f1);
+  b1.set(
+    doc(f1, 'operativos/opAbierto/prerregistros/brigAlfa1'),
+    prerregistroBase('brigAlfa1', 'brigAlfa1', 'Autoregistro'),
+  );
+  b1.update(doc(f1, 'operativos/opAbierto'), {
+    prerregistros_count: 1,
+    actualizado_en: serverTimestamp(),
+  });
+  await assertSucceeds(b1.commit());
+
+  // Segundo brigadista intenta superar cupo_sugerido (2 > 1) -> rechazado
+  const f2 = db('brigOmega1');
+  const b2 = writeBatch(f2);
+  b2.set(
+    doc(f2, 'operativos/opAbierto/prerregistros/brigOmega1'),
+    prerregistroBase('brigOmega1', 'brigOmega1', 'Autoregistro', { etapa: 'Omega', subgrupo: 'Omega 1' }),
+  );
+  b2.update(doc(f2, 'operativos/opAbierto'), {
+    prerregistros_count: 2,
+    actualizado_en: serverTimestamp(),
+  });
+  await assertFails(b2.commit());
+});
+
+test('Prerregistro manual: Encargado/Admin registra, lista y quita en Programado/Activo, rechazado en Finalizado', async () => {
+  // Encargado registra manualmente en operativo Programado (recepcion_abierta: false, convocatoria_abierta: false)
+  await assertSucceeds(setDoc(
+    doc(db('encargado1'), 'operativos/opCerrado/prerregistros/brigAlfa1'),
+    prerregistroBase('brigAlfa1', 'encargado1', 'Manual_Encargado'),
+  ));
+  await assertSucceeds(getDocs(collection(db('encargado1'), 'operativos/opCerrado/prerregistros')));
+  await assertSucceeds(deleteDoc(doc(db('encargado1'), 'operativos/opCerrado/prerregistros/brigAlfa1')));
+
+  // Admin registra manualmente en operativo Activo
+  await assertSucceeds(setDoc(
+    doc(db('admin1'), 'operativos/opAbierto/prerregistros/brigOmega1'),
+    prerregistroBase('brigOmega1', 'admin1', 'Manual_Encargado', { etapa: 'Omega', subgrupo: 'Omega 1' }),
+  ));
+
+  // Rechazo total en operativo Finalizado (ni Admin puede crear ni borrar prerregistros)
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(
+      doc(ctx.firestore(), 'operativos/opFinalizado/prerregistros/brigAlfa1'),
+      prerregistroBase('brigAlfa1', 'admin1', 'Manual_Encargado'),
+    );
+  });
+  await assertFails(setDoc(
+    doc(db('admin1'), 'operativos/opFinalizado/prerregistros/brigOmega1'),
+    prerregistroBase('brigOmega1', 'admin1', 'Manual_Encargado'),
+  ));
+  await assertFails(deleteDoc(doc(db('admin1'), 'operativos/opFinalizado/prerregistros/brigAlfa1')));
+  // En operativo finalizado sí se permite lectura histórica de prerregistros ("No asistió")
+  await assertSucceeds(getDocs(collection(db('encargado1'), 'operativos/opFinalizado/prerregistros')));
+});
+
+test('Brigadista SIN prerregistro puede escanear QR y registrar asistencia normalmente', async () => {
+  // Abrimos convocatoria en opAbierto y apuntamos a brigAlfa1, pero NO a activo1
+  await assertSucceeds(updateDoc(doc(db('encargado1'), 'operativos/opAbierto'), {
+    convocatoria_abierta: true,
+    cupo_sugerido: 1,
+    prerregistros_count: 1,
+    actualizado_en: serverTimestamp(),
+  }));
+  await assertSucceeds(setDoc(
+    doc(db('encargado1'), 'operativos/opAbierto/prerregistros/brigAlfa1'),
+    prerregistroBase('brigAlfa1', 'encargado1', 'Manual_Encargado'),
+  ));
+
+  // activo1 NO está prerregistrado y el cupo sugerido ya está en 1/1: igual entra con QR sin bloqueos
+  await assertSucceeds(setDoc(doc(db('activo1'), 'asistencias_personal/asisSinPre'), {
+    id: 'asisSinPre',
+    operativo_id: 'opAbierto',
+    operativo_nombre: 'Operativo opAbierto',
+    usuario_uid: 'activo1',
+    usuario_nombre: 'Ana Pérez',
+    usuario_cuenta: '20201234',
+    grupo_operativo: 'Ninguno',
+    ayudantia_slot: 'Ninguna',
+    rol_en_turno: 'Sin asignar',
+    estado_operativo: 'En servicio',
+    signos_vitales: null,
+    metodo_entrada: 'QR_Operativo_TOTP',
+    hora_entrada: serverTimestamp(),
+    hora_salida: null,
+    horas_totales: null,
+    salida_cerrada_manual: false,
+    equipos_bupc_pendientes: 0,
+    registrado_por_uid: 'activo1',
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  }));
+});

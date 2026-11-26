@@ -2,14 +2,18 @@ import {
   Activity,
   AlertCircle,
   CheckCircle2,
+  ClipboardCheck,
+  Clock,
   FileWarning,
   Lock,
   Package,
   PackagePlus,
   QrCode,
   Search,
+  Trash2,
   Upload,
   UserPlus,
+  Users,
   X,
   Zap,
 } from 'lucide-react'
@@ -36,11 +40,17 @@ import {
   levantarActaIncidencia,
   marcarEquipoDevueltoOk,
 } from '../services/equiposService'
+import {
+  escucharPrerregistrosDeOperativo,
+  quitarPrerregistroManual,
+  registrarPrerregistroManual,
+} from '../services/prerregistrosService'
 import type {
   AsistenciaPersonal,
   EquipoTurno,
   EstadoOperativo,
   Operativo,
+  PrerregistroOperativo,
   RolEnTurno,
   Usuario,
 } from '../types'
@@ -53,7 +63,7 @@ interface BitacoraPersonalSectionProps {
   operativo: Operativo
 }
 
-type FiltroEstadoBitacora = 'todos' | 'en_turno' | 'con_adeudo' | 'salidos'
+type FiltroEstadoBitacora = 'todos' | 'en_turno' | 'con_adeudo' | 'salidos' | 'por_llegar'
 
 function formatearHoraCorta(ms?: number): string {
   if (!ms) return '--:--'
@@ -87,6 +97,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
   const recepcionAbierta = operativo.recepcion_abierta && !esFinalizado
 
   const [asistencias, setAsistencias] = useState<AsistenciaPersonal[]>([])
+  const [prerregistros, setPrerregistros] = useState<PrerregistroOperativo[]>([])
   const [equipos, setEquipos] = useState<EquipoTurno[]>([])
   const [usuarios, setUsuarios] = useState<Usuario[]>([])
   const [cargando, setCargando] = useState(true)
@@ -96,6 +107,10 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
   const [filtroEstado, setFiltroEstado] = useState<FiltroEstadoBitacora>('todos')
   const [filtroGrupo, setFiltroGrupo] = useState('TODOS')
   const [filtroAyudantia, setFiltroAyudantia] = useState('TODAS')
+
+  // Modal Prerregistro Manual previo
+  const [modalPrerregistro, setModalPrerregistro] = useState(false)
+  const [busquedaPrerregistro, setBusquedaPrerregistro] = useState('')
 
   // Selección múltiple para asignación rápida de equipo repetitivo
   const [seleccionadosIds, setSeleccionadosIds] = useState<string[]>([])
@@ -150,6 +165,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
         setCargando(false)
       },
     )
+    const cancelarPre = escucharPrerregistrosDeOperativo(operativo.id, setPrerregistros)
     const cancelarEq = escucharEquiposDeOperativo(operativo.id, setEquipos, (err) =>
       setError(mensajeDeError(err)),
     )
@@ -157,6 +173,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
 
     return () => {
       cancelarAsis()
+      cancelarPre()
       cancelarEq()
       cancelarUsr()
     }
@@ -166,6 +183,23 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
     () => new Map(usuarios.map((u) => [u.uid, u])),
     [usuarios],
   )
+
+  // Cruce en memoria prerregistros <-> asistencias_personal (0 escrituras extra al escanear QR)
+  const { uidsPrerregistrados, pendientesDeLlegar, confirmadosCount } = useMemo(() => {
+    const uidsAsis = new Set(asistencias.map((a) => a.usuario_uid))
+    const uidsPre = new Set(prerregistros.map((p) => p.usuario_uid))
+    const pendientes: PrerregistroOperativo[] = []
+    let confirmados = 0
+    for (const p of prerregistros) {
+      if (uidsAsis.has(p.usuario_uid)) confirmados++
+      else pendientes.push(p)
+    }
+    return {
+      uidsPrerregistrados: uidsPre,
+      pendientesDeLlegar: pendientes,
+      confirmadosCount: confirmados,
+    }
+  }, [asistencias, prerregistros])
 
   const { equiposBupcPorAsistencia, equiposPropiosPorAsistencia } = useMemo(() => {
     const mapaBupc = new Map<string, EquipoTurno[]>()
@@ -184,16 +218,22 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
     for (const a of asistencias) {
       set.add(etiquetaGrupoAsistencia(a, mapaUsuarios))
     }
+    for (const p of prerregistros) {
+      set.add(p.subgrupo || p.etapa)
+    }
     return Array.from(set).sort((x, y) => x.localeCompare(y, 'es-MX'))
-  }, [asistencias, mapaUsuarios])
+  }, [asistencias, prerregistros, mapaUsuarios])
 
   const ayudantiasDisponibles = useMemo(() => {
     const set = new Set<string>()
     for (const a of asistencias) {
       set.add(a.ayudantia_slot)
     }
+    for (const p of prerregistros) {
+      set.add(p.ayudantia)
+    }
     return Array.from(set).sort((x, y) => x.localeCompare(y, 'es-MX'))
-  }, [asistencias])
+  }, [asistencias, prerregistros])
 
   // Contadores discretos para chips de estatus
   const conteos = useMemo(() => {
@@ -205,8 +245,14 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
       else enTurno++
       if (a.equipos_bupc_pendientes > 0) conAdeudo++
     }
-    return { todos: asistencias.length, enTurno, conAdeudo, salidos }
-  }, [asistencias])
+    return {
+      todos: asistencias.length,
+      enTurno,
+      conAdeudo,
+      salidos,
+      porLlegar: pendientesDeLlegar.length,
+    }
+  }, [asistencias, pendientesDeLlegar.length])
 
   const filtradas = useMemo(() => {
     const q = busqueda.trim().toLowerCase()
@@ -232,7 +278,40 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
     })
   }, [asistencias, filtroEstado, filtroGrupo, filtroAyudantia, busqueda, mapaUsuarios])
 
-  const usuariosActivos = usuarios.filter((u) => u.estatus === 'Activo')
+  const pendientesFiltrados = useMemo(() => {
+    const q = busqueda.trim().toLowerCase()
+    return pendientesDeLlegar.filter((p) => {
+      const grupo = p.subgrupo || p.etapa
+      if (filtroGrupo !== 'TODOS' && grupo !== filtroGrupo) return false
+      if (filtroAyudantia !== 'TODAS' && p.ayudantia !== filtroAyudantia) return false
+      if (!q) return true
+      return (
+        p.usuario_nombre.toLowerCase().includes(q) ||
+        p.usuario_cuenta.toLowerCase().includes(q) ||
+        grupo.toLowerCase().includes(q)
+      )
+    })
+  }, [pendientesDeLlegar, filtroGrupo, filtroAyudantia, busqueda])
+
+  const usuariosActivos = useMemo(
+    () => usuarios.filter((u) => u.estatus === 'Activo'),
+    [usuarios],
+  )
+
+  const candidatosPrerregistro = useMemo(() => {
+    const q = busquedaPrerregistro.trim().toLowerCase()
+    const uidsConAsis = new Set(asistencias.map((a) => a.usuario_uid))
+    return usuariosActivos.filter((u) => {
+      if (uidsPrerregistrados.has(u.uid) || uidsConAsis.has(u.uid)) return false
+      if (!q) return true
+      const grupo = (u.subgrupo || u.etapa || '').toLowerCase()
+      return (
+        nombreCompleto(u).toLowerCase().includes(q) ||
+        u.numero_cuenta.toLowerCase().includes(q) ||
+        grupo.includes(q)
+      )
+    })
+  }, [usuariosActivos, uidsPrerregistrados, asistencias, busquedaPrerregistro])
   const asistenciaMaterialActiva =
     asistencias.find((a) => a.id === materialAsistenciaId) ?? null
   const equiposBupcMaterialActivo = asistenciaMaterialActiva
@@ -462,6 +541,58 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
     }
   }
 
+  async function manejarAgregarPrerregistro(u: Usuario) {
+    setOcupadoId(`pre-${u.uid}`)
+    setError(null)
+    setAviso(null)
+    try {
+      await registrarPrerregistroManual(operativo.id, encargado, u)
+      setAviso(`${nombreCompleto(u)} agregado a la lista previa del operativo.`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : mensajeDeError(err))
+    } finally {
+      setOcupadoId(null)
+    }
+  }
+
+  async function manejarQuitarPrerregistro(p: PrerregistroOperativo) {
+    setOcupadoId(`delpre-${p.usuario_uid}`)
+    setError(null)
+    setAviso(null)
+    try {
+      await quitarPrerregistroManual(operativo.id, p.usuario_uid)
+      setAviso(`${normalizarNombrePropio(p.usuario_nombre)} fue retirado de la lista previa.`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : mensajeDeError(err))
+    } finally {
+      setOcupadoId(null)
+    }
+  }
+
+  async function manejarEntradaDesdePrerregistro(p: PrerregistroOperativo) {
+    if (!recepcionAbierta) return
+    const u = mapaUsuarios.get(p.usuario_uid)
+    if (!u) {
+      setError('No se encontró el perfil activo de este integrante para registrar entrada manual.')
+      return
+    }
+    setOcupadoId(`inpre-${p.usuario_uid}`)
+    setError(null)
+    setAviso(null)
+    try {
+      const res = await registrarAsistenciaManual(encargado, operativo, u, 'Sin asignar')
+      if (res.accion === 'perfil_inactivo') {
+        setAlertaInactivo(res.usuario)
+      } else if (res.accion === 'entrada') {
+        setAviso(`Asistencia confirmada para ${res.usuarioNombre}.`)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : mensajeDeError(err))
+    } finally {
+      setOcupadoId(null)
+    }
+  }
+
   async function manejarCerrarSalidaManual(a: AsistenciaPersonal) {
     setOcupadoId(a.id)
     setError(null)
@@ -547,6 +678,19 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
 
               <button
                 type="button"
+                onClick={() => {
+                  setBusquedaPrerregistro('')
+                  setModalPrerregistro(true)
+                }}
+                title="Agregar o gestionar asistentes prerregistrados antes del operativo"
+                className="btn-salvia min-h-9 px-2.5 text-xs"
+              >
+                <ClipboardCheck size={14} strokeWidth={2} />
+                <span>Prerregistrar</span>
+              </button>
+
+              <button
+                type="button"
                 disabled={!recepcionAbierta}
                 title={
                   recepcionAbierta
@@ -563,7 +707,34 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
           )}
         </div>
 
-        {/* Fila 2: chips de estatus + filtros por Etapa/Subgrupo y Ayudantía */}
+        {/* Resumen rápido de convocatoria/prerregistro cuando aplica */}
+        {(prerregistros.length > 0 || operativo.convocatoria_abierta) && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-borde bg-superficie-suave px-3 py-1.5 text-[11px] font-semibold text-tinta-suave dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta-suave">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 tabular-nums">
+              <span className="inline-flex items-center gap-1 text-tinta dark:text-noche-tinta">
+                <Users size={12} strokeWidth={2} className="text-udec dark:text-activo-claro" />
+                <span>
+                  Apuntados: <strong>{prerregistros.length}</strong>
+                  {operativo.cupo_sugerido ? `/${operativo.cupo_sugerido}` : ''}
+                </span>
+              </span>
+              <span className="text-activo dark:text-activo-claro">
+                Confirmados: <strong>{confirmadosCount}</strong>
+              </span>
+              <span className={esFinalizado ? 'text-tinta-suave' : 'text-ambar-texto dark:text-noche-ambar-texto'}>
+                {esFinalizado ? 'No asistió' : 'Por llegar'}:{' '}
+                <strong>{pendientesDeLlegar.length}</strong>
+              </span>
+            </div>
+            {!esFinalizado && (
+              <span className="text-[10px]">
+                {operativo.convocatoria_abierta ? 'Convocatoria abierta' : 'Convocatoria cerrada'}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Fila 2: chips de estatus + filtros por Etapa/Grupo y Ayudantía */}
         <div className="flex flex-wrap items-center gap-1.5">
           {(
             [
@@ -571,6 +742,11 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
               { id: 'en_turno', label: 'En turno', count: conteos.enTurno },
               { id: 'con_adeudo', label: 'Con adeudo', count: conteos.conAdeudo },
               { id: 'salidos', label: 'Salidos', count: conteos.salidos },
+              {
+                id: 'por_llegar',
+                label: esFinalizado ? 'No asistió' : 'Por llegar',
+                count: conteos.porLlegar,
+              },
             ] as const
           ).map((chip) => {
             const activo = filtroEstado === chip.id
@@ -717,13 +893,98 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
         </div>
       )}
 
-      {/* Listado denso (40-80 personas): filas 2 líneas en móvil + tabla compacta en escritorio */}
+      {/* Listado denso (40-80 personas): Por llegar / No asistió O Asistencias reales */}
       {cargando ? (
         <div className="flex flex-col gap-2 p-3">
           <div className="h-9 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
           <div className="h-9 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
           <div className="h-9 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
         </div>
+      ) : filtroEstado === 'por_llegar' ? (
+        pendientesFiltrados.length === 0 ? (
+          <div className="flex flex-col items-center gap-1.5 p-8 text-center">
+            <p className="text-sm font-semibold text-tinta dark:text-noche-tinta">
+              {pendientesDeLlegar.length === 0
+                ? esFinalizado
+                  ? 'Todos los prerregistrados asistieron al operativo'
+                  : 'No hay integrantes pendientes por llegar'
+                : 'Sin coincidencias con los filtros activos'}
+            </p>
+            <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
+              {pendientesDeLlegar.length === 0 && !esFinalizado
+                ? 'Usa "Prerregistrar" para apuntar integrantes previamente o abre la convocatoria en Resumen.'
+                : 'Ajusta el buscador o los filtros de etapa y ayudantía.'}
+            </p>
+          </div>
+        ) : (
+          <div className="divide-y divide-borde dark:divide-noche-borde">
+            {pendientesFiltrados.map((p) => {
+              const grupo = p.subgrupo || p.etapa
+              return (
+                <div
+                  key={p.usuario_uid}
+                  className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5 hover:bg-superficie-suave/60 dark:hover:bg-noche-campo/50"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="truncate text-xs font-bold text-tinta dark:text-noche-tinta">
+                        {normalizarNombrePropio(p.usuario_nombre)}
+                      </span>
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                          esFinalizado
+                            ? 'bg-superficie-suave text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave'
+                            : 'bg-ambar-suave text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto'
+                        }`}
+                      >
+                        <Clock size={10} strokeWidth={2} />
+                        <span>{esFinalizado ? 'No asistió' : 'Por llegar'}</span>
+                      </span>
+                      <span className="rounded bg-superficie-suave px-1.5 py-0.5 text-[10px] font-semibold text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave">
+                        {p.origen === 'Autoregistro' ? 'Autoregistro' : 'Manual'}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 truncate text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
+                      {grupo} · {etiquetaAyudantia(p.ayudantia)} ·{' '}
+                      <span className="tabular-nums">{p.usuario_cuenta}</span>
+                    </p>
+                  </div>
+
+                  {!esFinalizado && (
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {recepcionAbierta && (
+                        <button
+                          type="button"
+                          disabled={ocupadoId === `inpre-${p.usuario_uid}`}
+                          onClick={() => void manejarEntradaDesdePrerregistro(p)}
+                          className="btn-verde min-h-8 px-2.5 text-[11px]"
+                        >
+                          <UserPlus size={12} strokeWidth={2} />
+                          <span>
+                            {ocupadoId === `inpre-${p.usuario_uid}`
+                              ? 'Registrando...'
+                              : 'Confirmar entrada'}
+                          </span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        disabled={ocupadoId === `delpre-${p.usuario_uid}`}
+                        onClick={() => void manejarQuitarPrerregistro(p)}
+                        title="Quitar de la lista previa"
+                        aria-label={`Quitar a ${p.usuario_nombre} del prerregistro`}
+                        className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-lg border border-borde-fuerte bg-tarjeta px-2.5 text-[11px] font-semibold text-tinta-suave hover:border-alerta hover:text-alerta disabled:opacity-50 dark:border-noche-borde dark:bg-noche-tarjeta dark:text-noche-tinta-suave dark:hover:text-noche-rojo-texto"
+                      >
+                        <Trash2 size={12} strokeWidth={2} />
+                        <span>Quitar</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )
       ) : filtradas.length === 0 ? (
         <div className="flex flex-col items-center gap-1.5 p-8 text-center">
           <p className="text-sm font-semibold text-tinta dark:text-noche-tinta">
@@ -746,12 +1007,13 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
               const grupo = etiquetaGrupoAsistencia(a, mapaUsuarios)
               const marcado = seleccionadosIds.includes(a.id)
               const propios = equiposPropiosPorAsistencia.get(a.id) ?? []
+              const estabaPrerregistrado = uidsPrerregistrados.has(a.usuario_uid)
 
               return (
                 <div key={a.id} className="flex flex-col gap-1.5 px-3 py-2">
                   {/* Línea 1: Selección + Nombre + Badge de estado + Material propio */}
                   <div className="flex items-center justify-between gap-2">
-                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                    <div className="flex min-w-0 flex-1 items-center gap-1.5">
                       {!esFinalizado && modoRapidoAbierto && !cerrada && (
                         <input
                           type="checkbox"
@@ -764,6 +1026,15 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                       <span className="truncate text-xs font-bold text-tinta dark:text-noche-tinta">
                         {normalizarNombrePropio(a.usuario_nombre)}
                       </span>
+                      {estabaPrerregistrado ? (
+                        <span className="shrink-0 rounded bg-salvia px-1.5 py-0.5 text-[9px] font-bold text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
+                          Confirmado
+                        </span>
+                      ) : (
+                        <span className="shrink-0 rounded border border-borde px-1.5 py-0.5 text-[9px] font-semibold text-tinta-suave dark:border-noche-borde dark:text-noche-tinta-suave">
+                          Sin prerregistro
+                        </span>
+                      )}
                     </div>
 
                     <div className="flex shrink-0 items-center gap-1.5">
@@ -794,7 +1065,8 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                   {/* Línea 2: Metadatos compactos + Acciones 1 toque */}
                   <div className="flex items-center justify-between gap-2">
                     <p className="truncate text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
-                      {grupo} · {a.ayudantia_slot} · {formatearHoraCorta(a.hora_entrada?.toMillis())}
+                      {grupo} · {etiquetaAyudantia(a.ayudantia_slot)} ·{' '}
+                      {formatearHoraCorta(a.hora_entrada?.toMillis())}
                     </p>
 
                     <div className="flex shrink-0 items-center gap-1">
@@ -891,6 +1163,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                   const claveRadio = u?.clave_radio || u?.clave_personal_radio || ''
                   const marcado = seleccionadosIds.includes(a.id)
                   const propios = equiposPropiosPorAsistencia.get(a.id) ?? []
+                  const estabaPrerregistrado = uidsPrerregistrados.has(a.usuario_uid)
 
                   return (
                     <tr
@@ -912,11 +1185,22 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                       )}
 
                       <td className="px-3 py-1.5">
-                        <span className="block text-xs font-bold text-tinta dark:text-noche-tinta">
-                          {normalizarNombrePropio(a.usuario_nombre)}
-                        </span>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-xs font-bold text-tinta dark:text-noche-tinta">
+                            {normalizarNombrePropio(a.usuario_nombre)}
+                          </span>
+                          {estabaPrerregistrado ? (
+                            <span className="rounded bg-salvia px-1.5 py-0.5 text-[9px] font-bold text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
+                              Confirmado
+                            </span>
+                          ) : (
+                            <span className="rounded border border-borde px-1.5 py-0.5 text-[9px] font-semibold text-tinta-suave dark:border-noche-borde dark:text-noche-tinta-suave">
+                              Sin prerregistro
+                            </span>
+                          )}
+                        </div>
                         <span className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
-                          {grupo} · {a.ayudantia_slot} ·{' '}
+                          {grupo} · {etiquetaAyudantia(a.ayudantia_slot)} ·{' '}
                           <span className="tabular-nums">{a.usuario_cuenta}</span>
                           {claveRadio ? ` · ${claveRadio}` : ''}
                         </span>
@@ -1352,6 +1636,142 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                     })}
                   </div>
                 )}
+              </div>
+            </div>
+          </article>
+        </div>
+      )}
+
+      {/* Modal Prerregistro Manual previo (buscar integrantes activos y agregar/quitar en 1 clic) */}
+      {modalPrerregistro && !esFinalizado && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Prerregistro previo de asistentes"
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/75 sm:items-center sm:p-4"
+        >
+          <article className="tarjeta flex max-h-[88dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl sm:rounded-xl">
+            <header className="flex shrink-0 items-center justify-between gap-2 border-b-3 border-naranja bg-udec px-4 py-3 text-white">
+              <div className="min-w-0">
+                <h3 className="truncate text-sm font-bold">
+                  Prerregistro previo · {operativo.nombre}
+                </h3>
+                <p className="text-[11px] text-white/85 tabular-nums">
+                  Apuntados: {prerregistros.length}
+                  {operativo.cupo_sugerido ? ` / ${operativo.cupo_sugerido}` : ''} · Confirmados:{' '}
+                  {confirmadosCount} · Por llegar: {pendientesDeLlegar.length}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalPrerregistro(false)}
+                aria-label="Cerrar prerregistro"
+                className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/25"
+              >
+                <X size={17} strokeWidth={2} />
+              </button>
+            </header>
+
+            <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
+              <div className="relative">
+                <Search
+                  size={15}
+                  strokeWidth={2}
+                  className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-tinta-suave dark:text-noche-tinta-suave"
+                />
+                <input
+                  type="search"
+                  placeholder="Buscar integrante activo por nombre, cuenta o grupo..."
+                  value={busquedaPrerregistro}
+                  onChange={(e) => setBusquedaPrerregistro(e.target.value)}
+                  className="campo min-h-10 pl-9 text-xs"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-wide text-tinta-suave dark:text-noche-tinta-suave">
+                  Integrantes disponibles ({candidatosPrerregistro.length})
+                </span>
+                {candidatosPrerregistro.length === 0 ? (
+                  <p className="rounded-lg border border-borde bg-superficie-suave py-4 text-center text-xs text-tinta-suave dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta-suave">
+                    {busquedaPrerregistro.trim()
+                      ? 'Sin integrantes disponibles con esa búsqueda.'
+                      : 'Todos los integrantes activos disponibles ya están apuntados o en turno.'}
+                  </p>
+                ) : (
+                  <div className="flex max-h-56 flex-col divide-y divide-borde overflow-y-auto rounded-lg border border-borde dark:divide-noche-borde dark:border-noche-borde">
+                    {candidatosPrerregistro.slice(0, 40).map((u) => (
+                      <div
+                        key={u.uid}
+                        className="flex items-center justify-between gap-2 px-3 py-2"
+                      >
+                        <div className="min-w-0">
+                          <span className="block truncate text-xs font-bold text-tinta dark:text-noche-tinta">
+                            {nombreCompleto(u)}
+                          </span>
+                          <span className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
+                            {u.subgrupo || u.etapa} · {etiquetaAyudantia(u.ayudantia)} ·{' '}
+                            <span className="tabular-nums">{u.numero_cuenta}</span>
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={ocupadoId === `pre-${u.uid}`}
+                          onClick={() => void manejarAgregarPrerregistro(u)}
+                          className="btn-verde min-h-8 shrink-0 px-2.5 text-[11px]"
+                        >
+                          <UserPlus size={12} strokeWidth={2} />
+                          <span>{ocupadoId === `pre-${u.uid}` ? '...' : 'Agregar'}</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {pendientesDeLlegar.length > 0 && (
+                <div className="flex flex-col gap-1.5 border-t border-borde pt-3 dark:border-noche-borde">
+                  <span className="text-[11px] font-bold uppercase tracking-wide text-tinta-suave dark:text-noche-tinta-suave">
+                    Apuntados por llegar ({pendientesDeLlegar.length})
+                  </span>
+                  <div className="flex max-h-44 flex-col divide-y divide-borde overflow-y-auto rounded-lg border border-borde dark:divide-noche-borde dark:border-noche-borde">
+                    {pendientesDeLlegar.map((p) => (
+                      <div
+                        key={p.usuario_uid}
+                        className="flex items-center justify-between gap-2 px-3 py-2"
+                      >
+                        <div className="min-w-0">
+                          <span className="block truncate text-xs font-semibold text-tinta dark:text-noche-tinta">
+                            {normalizarNombrePropio(p.usuario_nombre)}
+                          </span>
+                          <span className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
+                            {p.subgrupo || p.etapa} ·{' '}
+                            {p.origen === 'Autoregistro' ? 'Autoregistro' : 'Manual'}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={ocupadoId === `delpre-${p.usuario_uid}`}
+                          onClick={() => void manejarQuitarPrerregistro(p)}
+                          className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-1 rounded-lg border border-borde-fuerte bg-tarjeta px-2 text-[11px] font-semibold text-tinta-suave hover:border-alerta hover:text-alerta disabled:opacity-50 dark:border-noche-borde dark:bg-noche-tarjeta dark:text-noche-tinta-suave dark:hover:text-noche-rojo-texto"
+                        >
+                          <Trash2 size={12} strokeWidth={2} />
+                          <span>Quitar</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={() => setModalPrerregistro(false)}
+                  className="btn-salvia min-h-9 px-4 text-xs"
+                >
+                  Listo
+                </button>
               </div>
             </div>
           </article>

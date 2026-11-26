@@ -44,6 +44,14 @@ export interface DatosNuevoOperativo {
   descripcion: string
   modo_qr: ModoQrOperativo
   recepcion_abierta: boolean
+  convocatoria_abierta?: boolean
+  cupo_sugerido?: number | null
+}
+
+function normalizarCupoSugerido(cupo?: number | null): number | null {
+  if (typeof cupo !== 'number' || !Number.isFinite(cupo)) return null
+  const entero = Math.floor(cupo)
+  return entero > 0 ? Math.min(entero, 1000) : null
 }
 
 function generarSecretoBase32(): string {
@@ -63,6 +71,8 @@ export async function crearYConfigurarOperativo(
   const secretoDoc = doc(db, 'operativos', opDoc.id, 'secretos', 'totp')
   const qrTokenEstatico = `BUPC-OP-${crypto.randomUUID()}`
   const secretoBase32 = generarSecretoBase32()
+  const convocatoriaAbierta = Boolean(datos.convocatoria_abierta)
+  const cupoSugerido = normalizarCupoSugerido(datos.cupo_sugerido)
 
   const lote = writeBatch(db)
   lote.set(opDoc, {
@@ -75,6 +85,9 @@ export async function crearYConfigurarOperativo(
     descripcion: datos.descripcion.trim(),
     estatus: 'Activo',
     recepcion_abierta: datos.recepcion_abierta,
+    convocatoria_abierta: convocatoriaAbierta,
+    cupo_sugerido: cupoSugerido,
+    prerregistros_count: 0,
     modo_qr: datos.modo_qr,
     qr_token_estatico: qrTokenEstatico,
     creado_por_uid: actor.uid,
@@ -96,7 +109,7 @@ export async function crearYConfigurarOperativo(
     actor_nombre: nombreCompleto(actor),
     objetivo_uid: opDoc.id,
     objetivo_nombre: datos.nombre.trim(),
-    detalle: `${datos.categoria} · Sede: ${datos.sede.trim()} · Modo QR: ${datos.modo_qr}`,
+    detalle: `${datos.categoria} · Sede: ${datos.sede.trim()} · Modo QR: ${datos.modo_qr}${convocatoriaAbierta ? ` · Convocatoria abierta${cupoSugerido ? ` (cupo ${cupoSugerido})` : ''}` : ''}`,
     creado_en: serverTimestamp(),
   })
 
@@ -117,6 +130,58 @@ export function escucharOperativos(
     },
     alFallar,
   )
+}
+
+/**
+ * Escucha únicamente los operativos con convocatoria abierta (`convocatoria_abierta == true`)
+ * y no finalizados (consulta acotada para ahorrar lecturas en Plan Spark en la vista del brigadista).
+ */
+export function escucharOperativosConConvocatoriaAbierta(
+  alCambiar: (operativos: Operativo[]) => void,
+  alFallar?: (error: FirestoreError) => void,
+): Unsubscribe {
+  return onSnapshot(
+    query(operativosRef, where('convocatoria_abierta', '==', true)),
+    (snap) => {
+      const lista = snap.docs
+        .map((d) => normalizarOperativo(d.data() as Operativo))
+        .filter((op) => op.estatus !== 'Finalizado')
+      lista.sort((a, b) => a.fecha_inicio.localeCompare(b.fecha_inicio))
+      alCambiar(lista)
+    },
+    (err) => {
+      if (alFallar) alFallar(err)
+      else console.warn('[SABUPC] Error al consultar convocatorias abiertas:', err.code)
+    },
+  )
+}
+
+/**
+ * Permite a Encargado o Administrador abrir/cerrar la convocatoria y ajustar el cupo sugerido
+ * mientras el operativo no esté Finalizado.
+ */
+export async function actualizarConvocatoriaOperativo(
+  actor: Usuario,
+  operativo: Operativo,
+  cambios: { convocatoria_abierta: boolean; cupo_sugerido: number | null },
+): Promise<void> {
+  const cupo = normalizarCupoSugerido(cambios.cupo_sugerido)
+  const lote = writeBatch(db)
+  lote.update(doc(operativosRef, operativo.id), {
+    convocatoria_abierta: cambios.convocatoria_abierta,
+    cupo_sugerido: cupo,
+    actualizado_en: serverTimestamp(),
+  })
+  lote.set(doc(auditoriaRef), {
+    tipo: 'CAMBIO_CONVOCATORIA_OPERATIVO',
+    actor_uid: actor.uid,
+    actor_nombre: nombreCompleto(actor),
+    objetivo_uid: operativo.id,
+    objetivo_nombre: operativo.nombre,
+    detalle: `${cambios.convocatoria_abierta ? 'Convocatoria abierta' : 'Convocatoria cerrada'} · Cupo sugerido: ${cupo ?? 'Sin límite'}`,
+    creado_en: serverTimestamp(),
+  })
+  await lote.commit()
 }
 
 export function escucharSecretoTotp(
@@ -281,6 +346,7 @@ export async function finalizarOperativoConCierreAsistencias(
   loteCierre.update(doc(operativosRef, operativo.id), {
     estatus: 'Finalizado',
     recepcion_abierta: false,
+    convocatoria_abierta: false,
     actualizado_en: serverTimestamp(),
   })
   loteCierre.set(doc(auditoriaRef), {

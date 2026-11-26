@@ -124,13 +124,20 @@ export function normalizarUsuario(raw: Usuario): Usuario {
 }
 
 /**
- * Normaliza un documento `operativos/{id}` garantizando `estatus: 'Activo'`
- * cuando un operativo fue creado antes de v1.1.
+ * Normaliza un documento `operativos/{id}` garantizando valores retrocompatibles
+ * (`estatus: 'Activo'`, `convocatoria_abierta: false`, `cupo_sugerido: null`, `prerregistros_count: 0`).
  */
 export function normalizarOperativo(raw: Operativo): Operativo {
   return {
     ...raw,
     estatus: raw.estatus ?? 'Activo',
+    convocatoria_abierta: Boolean(raw.convocatoria_abierta),
+    cupo_sugerido:
+      typeof raw.cupo_sugerido === 'number' && raw.cupo_sugerido > 0 ? raw.cupo_sugerido : null,
+    prerregistros_count:
+      typeof raw.prerregistros_count === 'number' && raw.prerregistros_count >= 0
+        ? raw.prerregistros_count
+        : 0,
   }
 }
 

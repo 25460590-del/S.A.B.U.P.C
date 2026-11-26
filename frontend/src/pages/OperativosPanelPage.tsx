@@ -9,12 +9,14 @@ import {
   FileText,
   Lock,
   MapPin,
+  Megaphone,
   Plus,
   QrCode,
   RefreshCw,
   ShieldAlert,
   Trash2,
   Unlock,
+  Users,
   X,
 } from 'lucide-react'
 import { QRCodeCanvas } from 'qrcode.react'
@@ -25,6 +27,7 @@ import { normalizarNombrePropio } from '../lib/nombres'
 import { esAdmin, esEncargado } from '../lib/permisos'
 import { mensajeDeError } from '../services/authService'
 import {
+  actualizarConvocatoriaOperativo,
   cambiarModoQrOperativo,
   cambiarRecepcionOperativo,
   construirPayloadQrEstatico,
@@ -106,6 +109,14 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
   const [descripcion, setDescripcion] = useState('')
   const [modoQrInicial, setModoQrInicial] = useState<ModoQrOperativo>('dinamico')
   const [recepcionInicial, setRecepcionInicial] = useState(true)
+  const [convocatoriaInicial, setConvocatoriaInicial] = useState(false)
+  const [cupoInicial, setCupoInicial] = useState('')
+
+  // Edición rápida de cupo sugerido en Resumen (sin sincronizar estado en useEffect)
+  const [cupoEditadoPorOp, setCupoEditadoPorOp] = useState<{
+    opId: string
+    valor: string
+  } | null>(null)
 
   // Modales de Finalizar Operativo (pre-verificación + confirmación irreversible) y Borrado (Admin)
   const [preCierre, setPreCierre] = useState<ResultadoPreCierreOperativo | null>(null)
@@ -215,6 +226,11 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
     if (!sede.trim()) return setError('Ingresa la sede o ubicación.')
     if (!fechaInicio.trim()) return setError('Selecciona la fecha y hora de inicio.')
 
+    const cupoNum = cupoInicial.trim() ? Number(cupoInicial.trim()) : null
+    if (cupoNum !== null && (!Number.isInteger(cupoNum) || cupoNum < 1 || cupoNum > 1000)) {
+      return setError('El cupo sugerido debe ser un número entero entre 1 y 1000.')
+    }
+
     setGuardando(true)
     try {
       const nuevoId = await crearYConfigurarOperativo(usuario, {
@@ -226,6 +242,8 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
         descripcion,
         modo_qr: modoQrInicial,
         recepcion_abierta: recepcionInicial,
+        convocatoria_abierta: convocatoriaInicial,
+        cupo_sugerido: cupoNum,
       })
       setSeleccionadoId(nuevoId)
       setSubVista('resumen')
@@ -235,11 +253,73 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
       setDescripcion('')
       setFechaInicio(valorDatetimeLocalActual())
       setFechaFin('')
+      setConvocatoriaInicial(false)
+      setCupoInicial('')
       setAviso('Operativo creado y listo para pase de lista con código QR.')
     } catch (err) {
       setError(mensajeDeError(err))
     } finally {
       setGuardando(false)
+    }
+  }
+
+  async function alternarConvocatoria() {
+    if (!operativoActivo || !puedeGestionar || opEsFinalizado) return
+    setCambiandoEstado(true)
+    setError(null)
+    setAviso(null)
+    try {
+      const siguiente = !operativoActivo.convocatoria_abierta
+      await actualizarConvocatoriaOperativo(usuario, operativoActivo, {
+        convocatoria_abierta: siguiente,
+        cupo_sugerido: operativoActivo.cupo_sugerido ?? null,
+      })
+      setAviso(
+        siguiente
+          ? `Convocatoria abierta para "${operativoActivo.nombre}". Los brigadistas ya pueden apuntarse.`
+          : `Convocatoria cerrada para "${operativoActivo.nombre}".`,
+      )
+    } catch (err) {
+      setError(mensajeDeError(err))
+    } finally {
+      setCambiandoEstado(false)
+    }
+  }
+
+  const cupoEdicionActual =
+    operativoActivo && cupoEditadoPorOp?.opId === operativoActivo.id
+      ? cupoEditadoPorOp.valor
+      : operativoActivo?.cupo_sugerido
+        ? String(operativoActivo.cupo_sugerido)
+        : ''
+
+  async function guardarCupoSugerido(e: FormEvent) {
+    e.preventDefault()
+    if (!operativoActivo || !puedeGestionar || opEsFinalizado) return
+    const limpio = cupoEdicionActual.trim()
+    const cupoNum = limpio ? Number(limpio) : null
+    if (cupoNum !== null && (!Number.isInteger(cupoNum) || cupoNum < 1 || cupoNum > 1000)) {
+      setError('El cupo sugerido debe ser un número entero entre 1 y 1000 (o vacío para sin límite).')
+      return
+    }
+    setCambiandoEstado(true)
+    setError(null)
+    setAviso(null)
+    try {
+      await actualizarConvocatoriaOperativo(usuario, operativoActivo, {
+        convocatoria_abierta: Boolean(operativoActivo.convocatoria_abierta),
+        cupo_sugerido: cupoNum,
+      })
+      setCupoEditadoPorOp(null)
+      setAviso(
+        cupoNum !== null
+          ? `Cupo sugerido actualizado a ${cupoNum} lugares.`
+          : 'Cupo sugerido establecido sin límite.',
+      )
+    } catch (err) {
+      setError(mensajeDeError(err))
+    } finally {
+      setCambiandoEstado(false)
     }
   }
 
@@ -561,17 +641,47 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                 />
               </div>
 
-              <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-borde bg-salvia px-3 dark:border-noche-borde dark:bg-noche-campo">
-                <input
-                  type="checkbox"
-                  checked={recepcionInicial}
-                  onChange={(e) => setRecepcionInicial(e.target.checked)}
-                  className="h-4 w-4 rounded accent-udec"
-                />
-                <span className="text-xs font-semibold text-udec-oscuro dark:text-noche-tinta">
-                  Abrir recepción de asistencias inmediatamente
-                </span>
-              </label>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-borde bg-salvia px-3 dark:border-noche-borde dark:bg-noche-campo">
+                  <input
+                    type="checkbox"
+                    checked={recepcionInicial}
+                    onChange={(e) => setRecepcionInicial(e.target.checked)}
+                    className="h-4 w-4 rounded accent-udec"
+                  />
+                  <span className="text-xs font-semibold text-udec-oscuro dark:text-noche-tinta">
+                    Abrir recepción de asistencias inmediatamente
+                  </span>
+                </label>
+
+                <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-borde bg-salvia px-3 dark:border-noche-borde dark:bg-noche-campo">
+                  <input
+                    type="checkbox"
+                    checked={convocatoriaInicial}
+                    onChange={(e) => setConvocatoriaInicial(e.target.checked)}
+                    className="h-4 w-4 rounded accent-udec"
+                  />
+                  <span className="text-xs font-semibold text-udec-oscuro dark:text-noche-tinta">
+                    Convocatoria abierta (permitir prerregistro previo)
+                  </span>
+                </label>
+
+                <div className="flex flex-col gap-1 md:col-span-2">
+                  <label htmlFor="op-cupo" className="etiqueta">
+                    Cupo sugerido (opcional)
+                  </label>
+                  <input
+                    id="op-cupo"
+                    type="number"
+                    min={1}
+                    max={1000}
+                    placeholder="Sin límite"
+                    value={cupoInicial}
+                    onChange={(e) => setCupoInicial(e.target.value)}
+                    className="campo max-w-xs tabular-nums"
+                  />
+                </div>
+              </div>
 
               <div className="flex flex-wrap justify-end gap-2">
                 <button
@@ -647,7 +757,20 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                     </div>
                   </div>
 
-                  <div className="flex shrink-0 items-center gap-2">
+                  <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                    {!finalizado && op.convocatoria_abierta && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-salvia px-2.5 py-0.5 text-[11px] font-bold tabular-nums text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
+                        <Megaphone size={11} strokeWidth={2} />
+                        <span>
+                          Convocatoria
+                          {op.cupo_sugerido
+                            ? ` (${op.prerregistros_count ?? 0}/${op.cupo_sugerido})`
+                            : op.prerregistros_count
+                              ? ` (${op.prerregistros_count})`
+                              : ''}
+                        </span>
+                      </span>
+                    )}
                     {finalizado ? (
                       <span className="inline-flex items-center gap-1 rounded-full bg-superficie-suave px-2.5 py-0.5 text-[11px] font-bold text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave">
                         <Lock size={11} strokeWidth={2} />
@@ -838,6 +961,96 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
               </dd>
             </div>
           </dl>
+
+          {/* Convocatoria y Prerregistro previo */}
+          <div className="flex flex-col gap-3 rounded-xl border border-borde bg-superficie-suave p-4 dark:border-noche-borde dark:bg-noche-campo">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Megaphone size={16} strokeWidth={2} className="text-udec dark:text-activo-claro" />
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-wide text-tinta dark:text-noche-tinta">
+                    Convocatoria y prerregistro previo
+                  </h4>
+                  <p className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
+                    Permite que los brigadistas se apunten antes del operativo y confirmen su
+                    llegada escaneando el QR.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="inline-flex items-center gap-1 rounded-full bg-tarjeta px-2.5 py-0.5 text-[11px] font-bold tabular-nums text-tinta dark:bg-noche-tarjeta dark:text-noche-tinta">
+                  <Users size={11} strokeWidth={2} />
+                  <span>
+                    {operativoActivo.prerregistros_count ?? 0} apuntado
+                    {(operativoActivo.prerregistros_count ?? 0) === 1 ? '' : 's'}
+                    {operativoActivo.cupo_sugerido ? ` / ${operativoActivo.cupo_sugerido}` : ''}
+                  </span>
+                </span>
+                <span
+                  className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
+                    operativoActivo.convocatoria_abierta && !opEsFinalizado
+                      ? 'bg-activo-suave text-activo dark:bg-noche-tarjeta dark:text-activo-claro'
+                      : 'bg-tarjeta text-tinta-suave dark:bg-noche-tarjeta dark:text-noche-tinta-suave'
+                  }`}
+                >
+                  {operativoActivo.convocatoria_abierta && !opEsFinalizado
+                    ? 'Convocatoria abierta'
+                    : 'Convocatoria cerrada'}
+                </span>
+              </div>
+            </div>
+
+            {puedeGestionar && !opEsFinalizado && (
+              <div className="flex flex-wrap items-end justify-between gap-3 border-t border-borde pt-3 dark:border-noche-borde">
+                <button
+                  type="button"
+                  disabled={cambiandoEstado}
+                  onClick={() => void alternarConvocatoria()}
+                  className={`btn min-h-9 px-3.5 text-xs ${
+                    operativoActivo.convocatoria_abierta
+                      ? 'border border-borde-fuerte bg-tarjeta text-tinta hover:bg-salvia dark:border-noche-borde dark:bg-noche-tarjeta dark:text-noche-tinta'
+                      : 'btn-verde'
+                  }`}
+                >
+                  <Megaphone size={14} strokeWidth={2} />
+                  <span>
+                    {operativoActivo.convocatoria_abierta
+                      ? 'Cerrar convocatoria'
+                      : 'Abrir convocatoria'}
+                  </span>
+                </button>
+
+                <form onSubmit={guardarCupoSugerido} className="flex flex-wrap items-end gap-2">
+                  <div className="flex flex-col gap-1">
+                    <label htmlFor="resumen-cupo" className="text-[11px] font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                      Cupo sugerido (vacío = sin límite)
+                    </label>
+                    <input
+                      id="resumen-cupo"
+                      type="number"
+                      min={1}
+                      max={1000}
+                      placeholder="Sin límite"
+                      value={cupoEdicionActual}
+                      onChange={(e) =>
+                        setCupoEditadoPorOp({ opId: operativoActivo.id, valor: e.target.value })
+                      }
+                      className="campo min-h-9 w-36 text-xs tabular-nums"
+                      disabled={cambiandoEstado}
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={cambiandoEstado}
+                    className="btn-salvia min-h-9 px-3 text-xs"
+                  >
+                    Guardar cupo
+                  </button>
+                </form>
+              </div>
+            )}
+          </div>
 
           {/* Acciones operativas */}
           {puedeGestionar && (

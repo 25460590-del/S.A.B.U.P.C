@@ -122,12 +122,33 @@ export interface Operativo {
   descripcion: string
   estatus: EstatusOperativo
   recepcion_abierta: boolean
+  /** Convocatoria de prerregistro previo (opcional, false por defecto en docs legados). */
+  convocatoria_abierta?: boolean
+  /** Cupo sugerido opcional (null = sin límite). */
+  cupo_sugerido?: number | null
+  /** Conteo sincronizado de prerregistros para validar cupo sin listar subcolección. */
+  prerregistros_count?: number
   modo_qr: ModoQrOperativo
   qr_token_estatico: string
   creado_por_uid: string
   creado_por_nombre: string
   creado_en: Timestamp
   actualizado_en: Timestamp
+}
+
+export type OrigenPrerregistro = 'Autoregistro' | 'Manual_Encargado'
+
+/** Subcolección `operativos/{operativoId}/prerregistros/{usuarioUid}` (ID = usuario_uid). */
+export interface PrerregistroOperativo {
+  usuario_uid: string
+  usuario_nombre: string
+  usuario_cuenta: string
+  etapa: EtapaBrigadista
+  subgrupo: string
+  ayudantia: AyudantiaSlot
+  origen: OrigenPrerregistro
+  registrado_por_uid: string
+  fecha_registro: Timestamp
 }
 
 export interface SecretoTotpOperativo {
@@ -352,6 +373,7 @@ export type TipoEventoAuditoria =
   | 'ASIGNACION_RADIO'
   | 'CREACION_OPERATIVO'
   | 'CAMBIO_RECEPCION_OPERATIVO'
+  | 'CAMBIO_CONVOCATORIA_OPERATIVO'
   | 'CAMBIO_MODO_QR'
   | 'FINALIZACION_OPERATIVO'
   | 'ELIMINACION_OPERATIVO'

@@ -1,13 +1,19 @@
 import {
   AlertCircle,
+  Calendar,
   CheckCircle2,
   ChevronRight,
   Lock,
+  MapPin,
+  Megaphone,
   Package,
   QrCode,
   Stethoscope,
+  UserCheck,
+  UserMinus,
+  UserPlus,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { BupcLogo } from '../components/BupcLogo'
 import { CandadoDuroModal } from '../components/CandadoDuroModal'
 import { QrScannerModal } from '../components/QrScannerModal'
@@ -22,7 +28,19 @@ import {
   escucharEquiposDeAsistencia,
   escucharMisEquiposBupc,
 } from '../services/equiposService'
-import type { AsistenciaPersonal, EquipoTurno, Usuario } from '../types'
+import { escucharOperativosConConvocatoriaAbierta } from '../services/operativosService'
+import {
+  apuntarseAOperativo,
+  cancelarMiPrerregistro,
+  obtenerMiPrerregistro,
+} from '../services/prerregistrosService'
+import type {
+  AsistenciaPersonal,
+  EquipoTurno,
+  Operativo,
+  PrerregistroOperativo,
+  Usuario,
+} from '../types'
 
 interface BrigadistaDashboardPageProps {
   perfil: Usuario
@@ -62,6 +80,13 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
   const [aviso, setAviso] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  // Convocatorias abiertas y estado propio de prerregistro (getDoc puntual, 0 list)
+  const [convocatoriasAbiertas, setConvocatoriasAbiertas] = useState<Operativo[]>([])
+  const [misPrerregistros, setMisPrerregistros] = useState<
+    Record<string, PrerregistroOperativo | null>
+  >({})
+  const [ocupadoConvocatoriaId, setOcupadoConvocatoriaId] = useState<string | null>(null)
+
   useEffect(() => {
     const cancelar = escucharMisAsistencias(
       perfil.uid,
@@ -77,11 +102,97 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
     const cancelarBupc = escucharMisEquiposBupc(perfil.uid, setMisEquiposBupc, (err) =>
       setError(mensajeDeError(err)),
     )
+    const cancelarConv = escucharOperativosConConvocatoriaAbierta(setConvocatoriasAbiertas)
     return () => {
       cancelar()
       cancelarBupc()
+      cancelarConv()
     }
   }, [perfil.uid])
+
+  const idsConvocatorias = useMemo(
+    () => convocatoriasAbiertas.map((op) => op.id).join('|'),
+    [convocatoriasAbiertas],
+  )
+
+  useEffect(() => {
+    if (!idsConvocatorias) return
+    let activo = true
+    const ids = idsConvocatorias.split('|')
+    void Promise.all(
+      ids.map(async (opId) => {
+        try {
+          const docPre = await obtenerMiPrerregistro(opId, perfil.uid)
+          return [opId, docPre] as const
+        } catch {
+          return [opId, null] as const
+        }
+      }),
+    ).then((pares) => {
+      if (!activo) return
+      const mapa: Record<string, PrerregistroOperativo | null> = {}
+      for (const [opId, docPre] of pares) {
+        mapa[opId] = docPre
+      }
+      setMisPrerregistros(mapa)
+    })
+    return () => {
+      activo = false
+    }
+  }, [idsConvocatorias, perfil.uid])
+
+  const operativosConAsistenciaPropia = useMemo(
+    () => new Set(asistencias.map((a) => a.operativo_id)),
+    [asistencias],
+  )
+
+  async function manejarApuntarme(op: Operativo) {
+    setOcupadoConvocatoriaId(op.id)
+    setError(null)
+    setAviso(null)
+    try {
+      await apuntarseAOperativo(op.id, perfil)
+      const actualizado = await obtenerMiPrerregistro(op.id, perfil.uid).catch(() => null)
+      setMisPrerregistros((prev) => ({
+        ...prev,
+        [op.id]:
+          actualizado ??
+          ({
+            usuario_uid: perfil.uid,
+            usuario_nombre: nombreCompleto(perfil),
+            usuario_cuenta: perfil.numero_cuenta,
+            etapa: perfil.etapa,
+            subgrupo: perfil.subgrupo,
+            ayudantia: perfil.ayudantia,
+            origen: 'Autoregistro',
+            registrado_por_uid: perfil.uid,
+          } as PrerregistroOperativo),
+      }))
+      setAviso(`Te apuntaste a "${op.nombre}". Confirma tu asistencia escaneando el QR al llegar.`)
+    } catch (err) {
+      const tieneCodigoFirebase = Boolean((err as { code?: string })?.code)
+      setError(!tieneCodigoFirebase && err instanceof Error ? err.message : mensajeDeError(err))
+    } finally {
+      setOcupadoConvocatoriaId(null)
+    }
+  }
+
+  async function manejarCancelarPrerregistro(op: Operativo) {
+    if (operativosConAsistenciaPropia.has(op.id)) return
+    setOcupadoConvocatoriaId(op.id)
+    setError(null)
+    setAviso(null)
+    try {
+      await cancelarMiPrerregistro(op.id, perfil.uid)
+      setMisPrerregistros((prev) => ({ ...prev, [op.id]: null }))
+      setAviso(`Se canceló tu prerregistro en "${op.nombre}".`)
+    } catch (err) {
+      const tieneCodigoFirebase = Boolean((err as { code?: string })?.code)
+      setError(!tieneCodigoFirebase && err instanceof Error ? err.message : mensajeDeError(err))
+    } finally {
+      setOcupadoConvocatoriaId(null)
+    }
+  }
 
   const turnoAbierto = asistencias.find((a) => a.hora_salida === null) ?? null
   const ultimoRegistro = turnoAbierto ?? asistencias[0] ?? null
@@ -223,6 +334,123 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
         <QrCode size={22} strokeWidth={2} className="shrink-0" />
         <span>Escanear QR para Registrar Entrada / Salida</span>
       </button>
+
+      {/* Próximos operativos con convocatoria abierta (autoregistro previo) */}
+      {convocatoriasAbiertas.length > 0 && (
+        <section
+          aria-label="Próximos operativos con convocatoria abierta"
+          className="tarjeta flex flex-col gap-3 p-4"
+        >
+          <div className="flex items-center justify-between gap-2 border-b border-borde pb-2.5 dark:border-noche-borde">
+            <div className="flex items-center gap-2">
+              <Megaphone size={16} strokeWidth={2} className="shrink-0 text-udec dark:text-activo-claro" />
+              <h3 className="text-sm font-bold text-tinta dark:text-noche-tinta">
+                Próximos operativos con convocatoria
+              </h3>
+            </div>
+            <span className="rounded-full bg-salvia px-2 py-0.5 text-[11px] font-bold tabular-nums text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
+              {convocatoriasAbiertas.length}
+            </span>
+          </div>
+
+          <div className="flex flex-col gap-2.5">
+            {convocatoriasAbiertas.map((op) => {
+              const yaAsistio = operativosConAsistenciaPropia.has(op.id)
+              const prerregistrado = Boolean(misPrerregistros[op.id])
+              const apuntados = op.prerregistros_count ?? 0
+              const cupo = op.cupo_sugerido ?? null
+              const cupoLleno = cupo !== null && apuntados >= cupo
+              const ocupado = ocupadoConvocatoriaId === op.id
+
+              return (
+                <div
+                  key={op.id}
+                  className="flex flex-col gap-2 rounded-lg border border-borde bg-superficie-suave p-3 dark:border-noche-borde dark:bg-noche-campo"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <h4 className="truncate text-xs font-bold text-tinta dark:text-noche-tinta">
+                        {op.nombre}
+                      </h4>
+                      <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
+                        <span className="inline-flex items-center gap-1 tabular-nums">
+                          <Calendar size={11} strokeWidth={2} />
+                          <span>{op.fecha_inicio.replace('T', ' ')}</span>
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <MapPin size={11} strokeWidth={2} />
+                          <span className="truncate">{op.sede}</span>
+                        </span>
+                      </div>
+                    </div>
+                    {cupo !== null && (
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold tabular-nums ${
+                          cupoLleno
+                            ? 'bg-ambar-suave text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto'
+                            : 'bg-salvia text-udec-oscuro dark:bg-noche-tarjeta dark:text-activo-claro'
+                        }`}
+                      >
+                        {apuntados}/{cupo}
+                      </span>
+                    )}
+                  </div>
+
+                  {yaAsistio ? (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-activo-suave px-2.5 py-1 text-[11px] font-bold text-activo dark:bg-noche-tarjeta dark:text-activo-claro">
+                        <UserCheck size={13} strokeWidth={2} />
+                        <span>Asistencia confirmada con QR</span>
+                      </span>
+                    </div>
+                  ) : prerregistrado ? (
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-salvia px-2.5 py-1 text-[11px] font-bold text-udec-oscuro dark:bg-noche-tarjeta dark:text-activo-claro">
+                        <CheckCircle2 size={13} strokeWidth={2} />
+                        <span>Prerregistrado · Confirma con QR al llegar</span>
+                      </span>
+                      <button
+                        type="button"
+                        disabled={ocupado}
+                        onClick={() => void manejarCancelarPrerregistro(op)}
+                        className="inline-flex min-h-8 cursor-pointer items-center gap-1 rounded-lg border border-borde-fuerte bg-tarjeta px-2.5 text-[11px] font-semibold text-tinta-suave hover:border-alerta hover:text-alerta disabled:opacity-50 dark:border-noche-borde dark:bg-noche-tarjeta dark:text-noche-tinta-suave dark:hover:text-noche-rojo-texto"
+                      >
+                        <UserMinus size={12} strokeWidth={2} />
+                        <span>{ocupado ? 'Cancelando...' : 'Cancelar registro'}</span>
+                      </button>
+                    </div>
+                  ) : cupoLleno ? (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-semibold text-ambar-texto dark:text-noche-ambar-texto">
+                        Cupo sugerido completo ({apuntados}/{cupo})
+                      </span>
+                      <button
+                        type="button"
+                        disabled
+                        className="btn-salvia min-h-8 px-3 text-[11px] opacity-55"
+                      >
+                        Cupo lleno
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        disabled={ocupado}
+                        onClick={() => void manejarApuntarme(op)}
+                        className="btn-verde min-h-8 px-3.5 text-xs"
+                      >
+                        <UserPlus size={14} strokeWidth={2} />
+                        <span>{ocupado ? 'Apuntando...' : 'Apuntarme'}</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      )}
 
       {/* Tarjeta "Último registro confirmado" */}
       {cargando ? (
