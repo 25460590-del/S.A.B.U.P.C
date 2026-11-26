@@ -18,6 +18,7 @@ import {
   type QueryDocumentSnapshot,
   type Unsubscribe,
 } from 'firebase/firestore'
+import { estaEnLinea } from '../lib/colaOffline'
 import { db } from '../lib/firebase'
 import {
   esAdmin,
@@ -97,6 +98,11 @@ export async function crearYConfigurarOperativo(
   actor: Usuario,
   datos: DatosNuevoOperativo,
 ): Promise<string> {
+  if (!estaEnLinea()) {
+    throw new Error(
+      'Sin conexión a internet. Crear un operativo nuevo requiere conexión para inicializar sus códigos QR y contadores en el servidor.',
+    )
+  }
   const opDoc = doc(operativosRef)
   const secretoEstaticoDoc = doc(db, 'operativos', opDoc.id, 'secretos', 'estatico')
   const secretoVigenteDoc = doc(db, 'operativos', opDoc.id, 'secretos', 'vigente')
@@ -225,6 +231,9 @@ export async function actualizarConvocatoriaOperativo(
   operativo: Operativo,
   cambios: { convocatoria_abierta: boolean; cupo_sugerido: number | null },
 ): Promise<void> {
+  if (!estaEnLinea()) {
+    throw new Error('Sin conexión a internet. Cambiar la convocatoria requiere conexión con el servidor.')
+  }
   if (!puedeConfigurarOperativoActivo(actor)) {
     throw new Error('No tienes permiso para modificar la convocatoria global del operativo.')
   }
@@ -352,6 +361,9 @@ export async function cambiarRecepcionOperativo(
   operativo: Operativo,
   recepcionAbierta: boolean,
 ): Promise<void> {
+  if (!estaEnLinea()) {
+    throw new Error('Sin conexión a internet. Abrir o cerrar la recepción requiere conexión con el servidor.')
+  }
   if (!puedeConfigurarOperativoActivo(actor)) {
     throw new Error('No tienes permiso para abrir o cerrar la recepción global del operativo.')
   }
@@ -377,6 +389,9 @@ export async function cambiarModoQrOperativo(
   operativo: Operativo,
   modoQr: ModoQrOperativo,
 ): Promise<void> {
+  if (!estaEnLinea()) {
+    throw new Error('Sin conexión a internet. Cambiar el modo QR requiere conexión con el servidor.')
+  }
   if (!puedeConfigurarOperativoActivo(actor)) {
     throw new Error('No tienes permiso para cambiar el modo QR del operativo.')
   }
@@ -475,6 +490,11 @@ export async function finalizarOperativoConCierreAsistencias(
   actor: Usuario,
   operativo: Operativo,
 ): Promise<{ salidasCerradas: number }> {
+  if (!estaEnLinea()) {
+    throw new Error(
+      'Sin conexión a internet. Finalizar un operativo requiere señal para verificar adeudos BUPC y cerrar todas las asistencias en el servidor.',
+    )
+  }
   if (!puedeFinalizarOperativo(actor)) {
     throw new Error('Solo un Administrador activo puede finalizar operativos.')
   }
@@ -584,6 +604,11 @@ export async function cancelarOperativo(
   operativo: Operativo,
   motivo?: string,
 ): Promise<void> {
+  if (!estaEnLinea()) {
+    throw new Error(
+      'Sin conexión a internet. Cancelar un operativo requiere conexión con el servidor.',
+    )
+  }
   if (!esAdmin(admin)) {
     throw new Error('Solo un Administrador activo puede cancelar operativos.')
   }
@@ -623,6 +648,11 @@ export async function cancelarOperativo(
  * bloquea el borrado si existen asistencias, equipos o prerregistros asociados.
  */
 export async function eliminarOperativo(admin: Usuario, operativo: Operativo): Promise<void> {
+  if (!estaEnLinea()) {
+    throw new Error(
+      'Sin conexión a internet. Eliminar un operativo requiere verificar en el servidor que no tenga registros asociados.',
+    )
+  }
   if (!puedeEliminarOperativo(admin)) {
     throw new Error('Solo un Administrador activo puede eliminar operativos.')
   }

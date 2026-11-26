@@ -10,6 +10,10 @@ import {
 import { db } from '../lib/firebase'
 import type { AuditoriaEvento, ClaveRebace, Usuario } from '../types'
 import { nombreCompleto } from './authService'
+import {
+  actualizarVersionCatalogoRebaceEnLote,
+  invalidarCacheCatalogoRebace,
+} from './radioService'
 
 const auditoriaRef = collection(db, 'auditoria_eventos')
 const clavesRef = collection(db, 'catalogo_claves')
@@ -55,7 +59,9 @@ export async function guardarClaveCatalogo(
       : `Clave actualizada: ${clave.codigo.trim()} — ${clave.significado.trim()}`,
     creado_en: serverTimestamp(),
   })
+  actualizarVersionCatalogoRebaceEnLote(lote, admin.uid)
   await lote.commit()
+  invalidarCacheCatalogoRebace()
 }
 
 export async function eliminarClaveCatalogo(admin: Usuario, clave: ClaveRebace): Promise<void> {
@@ -70,5 +76,7 @@ export async function eliminarClaveCatalogo(admin: Usuario, clave: ClaveRebace):
     detalle: `Clave eliminada: ${clave.codigo} — ${clave.significado}`,
     creado_en: serverTimestamp(),
   })
+  actualizarVersionCatalogoRebaceEnLote(lote, admin.uid)
   await lote.commit()
+  invalidarCacheCatalogoRebace()
 }

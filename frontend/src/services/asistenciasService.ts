@@ -1,24 +1,28 @@
 import {
-  addDoc,
   collection,
   doc,
   getDoc,
+  getDocFromCache,
   getDocs,
+  getDocsFromCache,
   limit,
   onSnapshot,
   orderBy,
   query,
   runTransaction,
   serverTimestamp,
+  setDoc,
   startAfter,
   updateDoc,
   where,
+  writeBatch,
   type FirestoreError,
   type Timestamp,
   type Unsubscribe,
 } from 'firebase/firestore'
 import type { PersonaAlertaInactivo } from '../components/AlertaInactivoModal'
 import { resolverRolInicialOperativo, rolOperativoPorAyudantia } from '../constants/catalogos'
+import { despacharEscrituraOffline, estaEnLinea } from '../lib/colaOffline'
 import { db } from '../lib/firebase'
 import { normalizarNombrePropio } from '../lib/nombres'
 import {
@@ -67,7 +71,10 @@ export function nombreDePersona(persona: PersonaOperativa): string {
   return 'Brigadista'
 }
 
-function normalizarPerfilOperativo(raw: Partial<PerfilOperativoMinimo>, uidFallback: string): PerfilOperativoMinimo {
+function normalizarPerfilOperativo(
+  raw: Partial<PerfilOperativoMinimo>,
+  uidFallback: string,
+): PerfilOperativoMinimo {
   const ay = ayudantiaEfectiva({
     ayudantia: raw.ayudantia,
     ayudantia_slot: raw.ayudantia_slot ?? 'Ninguna',
@@ -77,7 +84,9 @@ function normalizarPerfilOperativo(raw: Partial<PerfilOperativoMinimo>, uidFallb
     grupo_operativo: raw.grupo_operativo ?? 'Ninguno',
   })
   const grupo =
-    raw.grupo_operativo === 'Alfa' || raw.grupo_operativo === 'Omega' || raw.grupo_operativo === 'Ninguno'
+    raw.grupo_operativo === 'Alfa' ||
+    raw.grupo_operativo === 'Omega' ||
+    raw.grupo_operativo === 'Ninguno'
       ? raw.grupo_operativo
       : grupoDesdeEtapa(etapa)
   return {
@@ -178,13 +187,13 @@ async function obtenerEquiposBupcPendientes(
   asistenciaId: string,
   usuarioUid: string,
 ): Promise<EquipoTurno[]> {
-  const snap = await getDocs(
-    query(
-      equiposRef,
-      where('usuario_uid', '==', usuarioUid),
-      where('asistencia_id', '==', asistenciaId),
-    ),
+  const q = query(
+    equiposRef,
+    where('usuario_uid', '==', usuarioUid),
+    where('asistencia_id', '==', asistenciaId),
   )
+  const snap = estaEnLinea() ? await getDocs(q) : await getDocsFromCache(q).catch(() => null)
+  if (!snap) return []
   return snap.docs
     .map((d) => d.data() as EquipoTurno)
     .filter(
@@ -197,13 +206,13 @@ async function buscarAsistenciaAbierta(
   usuarioUid: string,
   operativoId: string,
 ): Promise<AsistenciaPersonal | null> {
-  const snap = await getDocs(
-    query(
-      asistenciasRef,
-      where('usuario_uid', '==', usuarioUid),
-      where('operativo_id', '==', operativoId),
-    ),
+  const q = query(
+    asistenciasRef,
+    where('usuario_uid', '==', usuarioUid),
+    where('operativo_id', '==', operativoId),
   )
+  const snap = estaEnLinea() ? await getDocs(q) : await getDocsFromCache(q).catch(() => null)
+  if (!snap) return null
   const abierta = snap.docs
     .map((d) => d.data() as AsistenciaPersonal)
     .find((a) => a.hora_salida === null)
@@ -212,18 +221,83 @@ async function buscarAsistenciaAbierta(
 
 /**
  * Cierra la salida de una asistencia respetando el Candado Duro (`equipos_bupc_pendientes == 0`)
- * y eliminando atómicamente el candado determinista `operativos/{opId}/presentes/{uid}`
- * dentro de la misma transacción.
+ * y eliminando atómicamente el candado determinista `operativos/{opId}/presentes/{uid}`:
+ * - Con conexión (`navigator.onLine === true`): ejecuta `runTransaction` estricta.
+ * - Sin conexión (`navigator.onLine === false`): usa `writeBatch` atómico encolado en caché
+ *   local (eliminando `presentes/{uid}` + actualizando `asistencias_personal/{id}`), validando
+ *   previamente que `equipos_bupc_pendientes === 0` en caché y capturando cualquier rechazo
+ *   diferido al reconectar.
  */
 export async function cerrarSalidaConCandado(
   asistenciaId: string,
   actor: Usuario,
   esManual = false,
+  asistenciaCache?: AsistenciaPersonal,
 ): Promise<
   | { bloqueado: true; asistencia: AsistenciaPersonal; pendientes: EquipoTurno[] }
   | { bloqueado: false; horasTotales: number }
 > {
   const ref = doc(asistenciasRef, asistenciaId)
+
+  if (!estaEnLinea()) {
+    let actual = asistenciaCache ?? null
+    if (!actual) {
+      const snapCache = await getDocFromCache(ref).catch(() => null)
+      if (snapCache?.exists()) {
+        actual = snapCache.data() as AsistenciaPersonal
+      }
+    }
+    if (!actual) {
+      throw new Error(
+        'Sin conexión: no se encontró el registro de asistencia en la caché local para cerrar la salida.',
+      )
+    }
+    if (actual.hora_salida !== null) {
+      throw new Error('Esta asistencia ya tiene una salida registrada.')
+    }
+    if (actual.equipos_bupc_pendientes > 0) {
+      const pendientes = await obtenerEquiposBupcPendientes(asistenciaId, actual.usuario_uid)
+      return { bloqueado: true, asistencia: actual, pendientes }
+    }
+
+    const entradaMs = actual.hora_entrada?.toMillis() ?? Date.now()
+    const horasCalculadas = Math.max(0, Number(((Date.now() - entradaMs) / 3_600_000).toFixed(2)))
+    const candadoRef = doc(db, 'operativos', actual.operativo_id, 'presentes', actual.usuario_uid)
+
+    const cambios: Record<string, unknown> = {
+      hora_salida: serverTimestamp(),
+      horas_totales: horasCalculadas,
+      estado_operativo: 'Retirado',
+      actualizado_en: serverTimestamp(),
+    }
+    if (esManual) {
+      cambios.salida_cerrada_manual = true
+    }
+
+    const lote = writeBatch(db)
+    lote.update(ref, cambios)
+    lote.delete(candadoRef)
+
+    if (esManual) {
+      lote.set(doc(auditoriaRef, `aud_sal_${asistenciaId}`.slice(0, 120)), {
+        tipo: 'SALIDA_MANUAL',
+        actor_uid: actor.uid,
+        actor_nombre: nombreCompleto(actor),
+        objetivo_uid: actual.usuario_uid,
+        objetivo_nombre: actual.usuario_nombre,
+        detalle: `Salida cerrada manualmente en ${actual.operativo_nombre} (${horasCalculadas} h)`,
+        creado_en: serverTimestamp(),
+      })
+    }
+
+    await despacharEscrituraOffline(
+      lote.commit(),
+      `Salida de ${actual.usuario_nombre} en ${actual.operativo_nombre}`,
+    )
+
+    return { bloqueado: false, horasTotales: horasCalculadas }
+  }
+
   let bloqueadaData: AsistenciaPersonal | null = null
   let horasCalculadas = 0
 
@@ -289,8 +363,11 @@ export async function cerrarSalidaConCandado(
 }
 
 /**
- * Crea la entrada junto al documento candado determinista `operativos/{opId}/presentes/{uid}`
- * dentro de la misma transacción: elimina cualquier condición de carrera ante escaneos simultáneos.
+ * Crea la entrada junto al documento candado determinista `operativos/{opId}/presentes/{uid}`:
+ * - Con conexión (`navigator.onLine === true`): ejecuta `runTransaction` estricta anti-carreras.
+ * - Sin conexión (`navigator.onLine === false`): solo para VÍA 2 / Manual; usa `writeBatch` con ID
+ *   determinista encolado en caché local preservando la creación atómica de `presentes/{uid}` +
+ *   `asistencias_personal/{id}` para que las reglas de seguridad validen todo al reconectar.
  */
 async function crearEntradaAtomica(
   actor: Usuario,
@@ -300,7 +377,6 @@ async function crearEntradaAtomica(
   rolInicial?: RolEnTurno,
   pruebaQr?: string,
 ): Promise<string> {
-  const nuevoDoc = doc(asistenciasRef)
   const candadoRef = doc(db, 'operativos', operativo.id, 'presentes', brigadista.uid)
   const grupoValido =
     brigadista.grupo_operativo === 'Alfa' ||
@@ -312,6 +388,53 @@ async function crearEntradaAtomica(
   const rolFinal = rolInicial ?? rolOperativoPorAyudantia(ayudantiaValida)
   const cuentaValida = (brigadista.numero_cuenta || '0').trim().slice(0, 12) || '0'
   const nombreBrig = nombreDePersona(brigadista)
+
+  if (!estaEnLinea()) {
+    const yaAbierta = await buscarAsistenciaAbierta(brigadista.uid, operativo.id)
+    if (yaAbierta) {
+      throw new Error(`${nombreBrig} ya tiene un turno abierto en este operativo.`)
+    }
+    const idDeterminista = `asis_${operativo.id}_${brigadista.uid}_${Date.now()}`.slice(0, 120)
+    const nuevoDoc = doc(asistenciasRef, idDeterminista)
+    const lote = writeBatch(db)
+    lote.set(candadoRef, {
+      asistencia_id: nuevoDoc.id,
+      usuario_uid: brigadista.uid,
+      operativo_id: operativo.id,
+      ayudantia_slot: ayudantiaValida,
+      creado_en: serverTimestamp(),
+    })
+    lote.set(nuevoDoc, {
+      id: nuevoDoc.id,
+      operativo_id: operativo.id,
+      operativo_nombre: operativo.nombre,
+      usuario_uid: brigadista.uid,
+      usuario_nombre: nombreBrig,
+      usuario_cuenta: cuentaValida,
+      grupo_operativo: grupoValido,
+      ayudantia_slot: ayudantiaValida,
+      rol_en_turno: rolFinal,
+      estado_operativo: 'En servicio',
+      signos_vitales: null,
+      metodo_entrada: metodo,
+      hora_entrada: serverTimestamp(),
+      hora_salida: null,
+      horas_totales: null,
+      salida_cerrada_manual: false,
+      equipos_bupc_pendientes: 0,
+      registrado_por_uid: actor.uid,
+      creado_en: serverTimestamp(),
+      actualizado_en: serverTimestamp(),
+    })
+
+    await despacharEscrituraOffline(
+      lote.commit(),
+      `Entrada de ${nombreBrig} en ${operativo.nombre}`,
+    )
+    return nuevoDoc.id
+  }
+
+  const nuevoDoc = doc(asistenciasRef)
 
   await runTransaction(db, async (tx) => {
     const candadoSnap = await tx.get(candadoRef)
@@ -365,6 +488,25 @@ async function leerPersonaPorCredencial(
 ): Promise<PersonaOperativa | null> {
   const ayJefe = ayudantiaJefatura(actor)
 
+  if (!estaEnLinea()) {
+    const perfilCache = await getDocFromCache(doc(perfilesOperativosRef, uidObjetivo)).catch(
+      () => null,
+    )
+    if (perfilCache?.exists()) {
+      return normalizarPerfilOperativo(
+        perfilCache.data() as Partial<PerfilOperativoMinimo>,
+        uidObjetivo,
+      )
+    }
+    const userCache = await getDocFromCache(doc(usuariosRef, uidObjetivo)).catch(() => null)
+    if (userCache?.exists()) {
+      return normalizarUsuario(userCache.data() as Usuario)
+    }
+    throw new Error(
+      'Sin conexión: esta credencial no está en la caché local del dispositivo. Registra al brigadista manualmente desde la lista o vuelve a escanear al recuperar señal.',
+    )
+  }
+
   try {
     const perfilSnap = await getDoc(doc(perfilesOperativosRef, uidObjetivo))
     if (perfilSnap.exists()) {
@@ -407,10 +549,10 @@ async function leerPersonaPorCredencial(
 
 /**
  * Registro de asistencia por QR de doble vía:
- * - VÍA 1: QR del Operativo (Dinámico o Fijo). Valida la prueba de presencia (`prueba_qr`)
- *   directamente en `firestore.rules` sin exponer secretos al brigadista.
- * - VÍA 2: Credencial QR de Brigadista (escaneada por Encargado/Admin). Lee `perfiles_operativos/{uid}`
- *   para no depender de `usuarios/{uid}` (preservando privacidad de Ficha de Emergencia).
+ * - VÍA 1: QR del Operativo (Dinámico o Fijo). Requiere conexión porque el servidor valida
+ *   `prueba_qr`; sin señal orienta de inmediato a mostrar la Credencial Digital QR en puerta (VÍA 2).
+ * - VÍA 2: Credencial QR de Brigadista (escaneada por Encargado/Admin). Funciona con conexión
+ *   (`runTransaction`) y sin conexión (`writeBatch` determinista encolado en caché local).
  * - Protege contra doble escaneo accidental en los primeros 5 minutos exigiendo confirmación explícita.
  */
 export async function registrarAsistenciaQR(
@@ -426,6 +568,12 @@ export async function registrarAsistenciaQR(
 
   // VÍA 1: Brigadista (o cualquier usuario activo) escanea el QR del Operativo
   if (qr.tipo === 'operativo_totp' || qr.tipo === 'operativo_estatico') {
+    if (!estaEnLinea()) {
+      throw new Error(
+        'Sin conexión a internet. Para registrar tu entrada o salida sin señal, muestra tu Credencial Digital QR al Encargado en puerta (VÍA 2).',
+      )
+    }
+
     if (actor.estatus === 'Inactivo') {
       return { accion: 'perfil_inactivo', usuario: actor }
     }
@@ -468,7 +616,7 @@ export async function registrarAsistenciaQR(
         }
       }
 
-      const resSalida = await cerrarSalidaConCandado(abierta.id, actor, false)
+      const resSalida = await cerrarSalidaConCandado(abierta.id, actor, false, abierta)
       if (resSalida.bloqueado) {
         return {
           accion: 'candado_duro',
@@ -557,15 +705,18 @@ export async function registrarAsistenciaQR(
   const nombreBrig = nombreDePersona(brigadista)
 
   if (brigadista.estatus === 'Inactivo') {
-    await addDoc(auditoriaRef, {
-      tipo: 'INTENTO_ACCESO_INACTIVO',
-      actor_uid: actor.uid,
-      actor_nombre: nombreCompleto(actor),
-      objetivo_uid: brigadista.uid,
-      objetivo_nombre: nombreBrig,
-      detalle: `Intento de escaneo bloqueado en ${opNormalizado.nombre}`,
-      creado_en: serverTimestamp(),
-    })
+    await despacharEscrituraOffline(
+      setDoc(doc(auditoriaRef), {
+        tipo: 'INTENTO_ACCESO_INACTIVO',
+        actor_uid: actor.uid,
+        actor_nombre: nombreCompleto(actor),
+        objetivo_uid: brigadista.uid,
+        objetivo_nombre: nombreBrig,
+        detalle: `Intento de escaneo bloqueado en ${opNormalizado.nombre}`,
+        creado_en: serverTimestamp(),
+      }),
+      `Registro de acceso bloqueado (${nombreBrig})`,
+    )
     return { accion: 'perfil_inactivo', usuario: brigadista }
   }
 
@@ -597,7 +748,7 @@ export async function registrarAsistenciaQR(
       }
     }
 
-    const resSalida = await cerrarSalidaConCandado(abierta.id, actor, false)
+    const resSalida = await cerrarSalidaConCandado(abierta.id, actor, false, abierta)
     if (resSalida.bloqueado) {
       return {
         accion: 'candado_duro',
@@ -690,21 +841,27 @@ export async function registrarAsistenciaManual(
   }
 }
 
-export function actualizarRolEnTurno(asistenciaId: string, rol: RolEnTurno): Promise<void> {
-  return updateDoc(doc(asistenciasRef, asistenciaId), {
-    rol_en_turno: rol,
-    actualizado_en: serverTimestamp(),
-  })
+export async function actualizarRolEnTurno(asistenciaId: string, rol: RolEnTurno): Promise<void> {
+  await despacharEscrituraOffline(
+    updateDoc(doc(asistenciasRef, asistenciaId), {
+      rol_en_turno: rol,
+      actualizado_en: serverTimestamp(),
+    }),
+    `Cambio de rol operativo a ${rol}`,
+  )
 }
 
-export function actualizarEstadoOperativo(
+export async function actualizarEstadoOperativo(
   asistenciaId: string,
   estado: EstadoOperativo,
 ): Promise<void> {
-  return updateDoc(doc(asistenciasRef, asistenciaId), {
-    estado_operativo: estado,
-    actualizado_en: serverTimestamp(),
-  })
+  await despacharEscrituraOffline(
+    updateDoc(doc(asistenciasRef, asistenciaId), {
+      estado_operativo: estado,
+      actualizado_en: serverTimestamp(),
+    }),
+    `Cambio de estado operativo a ${estado}`,
+  )
 }
 
 export interface DatosSignosVitales {
@@ -715,23 +872,26 @@ export interface DatosSignosVitales {
   temp: string
 }
 
-export function guardarSignosVitales(
+export async function guardarSignosVitales(
   asistenciaId: string,
   actor: Usuario,
   vitales: DatosSignosVitales,
 ): Promise<void> {
-  return updateDoc(doc(asistenciasRef, asistenciaId), {
-    signos_vitales: {
-      spo2: vitales.spo2.trim(),
-      fc: vitales.fc.trim(),
-      fr: vitales.fr.trim(),
-      ta: vitales.ta.trim(),
-      temp: vitales.temp.trim(),
-      tomado_en: serverTimestamp(),
-      tomado_por: nombreCompleto(actor),
-    },
-    actualizado_en: serverTimestamp(),
-  })
+  await despacharEscrituraOffline(
+    updateDoc(doc(asistenciasRef, asistenciaId), {
+      signos_vitales: {
+        spo2: vitales.spo2.trim(),
+        fc: vitales.fc.trim(),
+        fr: vitales.fr.trim(),
+        ta: vitales.ta.trim(),
+        temp: vitales.temp.trim(),
+        tomado_en: serverTimestamp(),
+        tomado_por: nombreCompleto(actor),
+      },
+      actualizado_en: serverTimestamp(),
+    }),
+    'Registro de signos vitales',
+  )
 }
 
 // ── Listeners en tiempo real ─────────────────────────────────────────────────
@@ -752,9 +912,17 @@ export function escucharAsistenciasDeOperativo(
 
   return onSnapshot(
     consulta,
+    { includeMetadataChanges: true },
     (snap) => {
-      const lista = snap.docs.map((d) => d.data() as AsistenciaPersonal)
-      lista.sort((a, b) => (b.hora_entrada?.toMillis() ?? 0) - (a.hora_entrada?.toMillis() ?? 0))
+      const lista = snap.docs.map((d) => ({
+        ...(d.data() as AsistenciaPersonal),
+        sync_status: d.metadata.hasPendingWrites ? ('pendiente' as const) : ('sincronizado' as const),
+      }))
+      lista.sort(
+        (a, b) =>
+          (b.hora_entrada?.toMillis() ?? Number.MAX_SAFE_INTEGER) -
+          (a.hora_entrada?.toMillis() ?? Number.MAX_SAFE_INTEGER),
+      )
       alCambiar(lista)
     },
     alFallar,
@@ -776,9 +944,17 @@ export function escucharMisAsistencias(
       orderBy('hora_entrada', 'desc'),
       limit(limite),
     ),
+    { includeMetadataChanges: true },
     (snap) => {
-      const lista = snap.docs.map((d) => d.data() as AsistenciaPersonal)
-      lista.sort((a, b) => (b.hora_entrada?.toMillis() ?? 0) - (a.hora_entrada?.toMillis() ?? 0))
+      const lista = snap.docs.map((d) => ({
+        ...(d.data() as AsistenciaPersonal),
+        sync_status: d.metadata.hasPendingWrites ? ('pendiente' as const) : ('sincronizado' as const),
+      }))
+      lista.sort(
+        (a, b) =>
+          (b.hora_entrada?.toMillis() ?? Number.MAX_SAFE_INTEGER) -
+          (a.hora_entrada?.toMillis() ?? Number.MAX_SAFE_INTEGER),
+      )
       alCambiar(lista)
     },
     alFallar,
@@ -802,7 +978,10 @@ export async function obtenerMasMisAsistencias(
       limit(limite),
     ),
   )
-  const asistencias = snap.docs.map((d) => d.data() as AsistenciaPersonal)
+  const asistencias = snap.docs.map((d) => ({
+    ...(d.data() as AsistenciaPersonal),
+    sync_status: 'sincronizado' as const,
+  }))
   return {
     asistencias,
     hayMas: snap.docs.length === limite,

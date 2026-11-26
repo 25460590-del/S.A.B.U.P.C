@@ -305,11 +305,18 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
                         {formatearHoraCorta(eq.creado_en?.toMillis())}
                       </p>
                     </div>
-                    {eq.estado_reporte === 'Con_Falla' && (
-                      <span className="shrink-0 rounded bg-alerta-suave px-1.5 py-0.5 text-[10px] font-bold text-alerta dark:bg-noche-rojo-suave dark:text-noche-rojo-texto">
-                        Falla
-                      </span>
-                    )}
+                    <div className="flex shrink-0 flex-wrap items-center gap-1">
+                      {eq.sync_status === 'pendiente' && (
+                        <span className="rounded bg-ambar-suave px-1.5 py-0.5 text-[10px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
+                          Pendiente de sincronizar
+                        </span>
+                      )}
+                      {eq.estado_reporte === 'Con_Falla' && (
+                        <span className="shrink-0 rounded bg-alerta-suave px-1.5 py-0.5 text-[10px] font-bold text-alerta dark:bg-noche-rojo-suave dark:text-noche-rojo-texto">
+                          Falla
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   {puedeLiberar && (
@@ -384,6 +391,11 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
                           {eq.codigo_inventario && (
                             <span className="rounded bg-superficie-suave px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave">
                               {eq.codigo_inventario}
+                            </span>
+                          )}
+                          {eq.sync_status === 'pendiente' && (
+                            <span className="rounded bg-ambar-suave px-1.5 py-0.5 text-[10px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
+                              Pendiente de sincronizar
                             </span>
                           )}
                           {eq.estado_reporte === 'Con_Falla' && (

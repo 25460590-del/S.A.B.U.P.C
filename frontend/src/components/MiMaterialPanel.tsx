@@ -249,15 +249,22 @@ export function MiMaterialPanel({ perfil }: MiMaterialPanelProps) {
                           </p>
                         </div>
 
-                        <span
-                          className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
-                            eq.estado_reporte === 'Con_Falla'
-                              ? 'bg-alerta-suave text-alerta dark:bg-noche-rojo-suave dark:text-noche-rojo-texto'
-                              : 'bg-naranja-suave text-naranja-oscuro dark:bg-noche-campo dark:text-naranja'
-                          }`}
-                        >
-                          {eq.estado_reporte === 'Con_Falla' ? 'Con falla' : 'Bajo resguardo'}
-                        </span>
+                        <div className="flex shrink-0 flex-wrap items-center gap-1">
+                          {eq.sync_status === 'pendiente' && (
+                            <span className="rounded-full bg-ambar-suave px-2 py-0.5 text-[10px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
+                              Pendiente de sincronizar
+                            </span>
+                          )}
+                          <span
+                            className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
+                              eq.estado_reporte === 'Con_Falla'
+                                ? 'bg-alerta-suave text-alerta dark:bg-noche-rojo-suave dark:text-noche-rojo-texto'
+                                : 'bg-naranja-suave text-naranja-oscuro dark:bg-noche-campo dark:text-naranja'
+                            }`}
+                          >
+                            {eq.estado_reporte === 'Con_Falla' ? 'Con falla' : 'Bajo resguardo'}
+                          </span>
+                        </div>
                       </div>
 
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-tinta-suave dark:text-noche-tinta-suave">

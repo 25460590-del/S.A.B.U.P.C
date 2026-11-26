@@ -32,7 +32,7 @@ import {
   formatearNombreGrupoFormativo,
   guardarCatalogoSubgrupos,
 } from '../services/catalogosService'
-import { escucharCatalogoRebace, poblarCatalogoRebace } from '../services/radioService'
+import { cargarCatalogoRebaceConCache, poblarCatalogoRebace } from '../services/radioService'
 import type {
   AuditoriaEvento,
   ClaveRebace,
@@ -79,14 +79,21 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
   const [aviso, setAviso] = useState<string | null>(null)
 
   useEffect(() => {
-    const c1 = escucharCatalogoRebace(setClaves, (err) => setError(mensajeDeError(err)))
+    let activo = true
+    void cargarCatalogoRebaceConCache()
+      .then((lista) => {
+        if (activo) setClaves(lista)
+      })
+      .catch((err) => {
+        if (activo) setError(mensajeDeError(err))
+      })
     const c2 = escucharAuditoriaEventos(setEventos, (err) => setError(mensajeDeError(err)))
     const c3 = escucharCatalogoSubgrupos(setSubgruposActivosRaw, (err) =>
       setError(mensajeDeError(err)),
     )
     const c4 = escucharSubgruposArchivados(setSubgruposArchivados, () => undefined)
     return () => {
-      c1()
+      activo = false
       c2()
       c3()
       c4()
@@ -164,6 +171,7 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
         },
         !editandoId,
       )
+      setClaves(await cargarCatalogoRebaceConCache(true))
       setAviso(editandoId ? 'Clave actualizada en el catálogo.' : 'Nueva clave agregada al catálogo.')
       limpiarFormulario()
     } catch (err) {
@@ -179,6 +187,7 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
     setAviso(null)
     try {
       await eliminarClaveCatalogo(admin, c)
+      setClaves(await cargarCatalogoRebaceConCache(true))
       setAviso(`Clave "${c.codigo}" eliminada del catálogo.`)
     } catch (err) {
       setError(mensajeDeError(err))
@@ -266,6 +275,7 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
     setAviso(null)
     try {
       const total = await poblarCatalogoRebace(admin)
+      setClaves(await cargarCatalogoRebaceConCache(true))
       setAviso(`Catálogo de claves actualizado con ${total} registros.`)
     } catch (err) {
       setError(mensajeDeError(err))

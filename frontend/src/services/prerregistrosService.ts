@@ -3,6 +3,7 @@ import {
   doc,
   getCountFromServer,
   getDoc,
+  getDocFromCache,
   onSnapshot,
   query,
   runTransaction,
@@ -13,6 +14,7 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore'
 import { rolOperativoPorAyudantia } from '../constants/catalogos'
+import { estaEnLinea } from '../lib/colaOffline'
 import { db } from '../lib/firebase'
 import { normalizarNombrePropio } from '../lib/nombres'
 import {
@@ -153,8 +155,9 @@ export async function obtenerMiPrerregistro(
   operativoId: string,
   usuarioUid: string,
 ): Promise<PrerregistroOperativo | null> {
-  const snap = await getDoc(prerregistroDocRef(operativoId, usuarioUid))
-  return snap.exists() ? (snap.data() as PrerregistroOperativo) : null
+  const ref = prerregistroDocRef(operativoId, usuarioUid)
+  const snap = estaEnLinea() ? await getDoc(ref) : await getDocFromCache(ref).catch(() => null)
+  return snap?.exists() ? (snap.data() as PrerregistroOperativo) : null
 }
 
 function construirPayloadPrerregistro(
@@ -208,6 +211,11 @@ export async function apuntarseAOperativo(
   operativoId: string,
   perfil: Usuario,
 ): Promise<number> {
+  if (!estaEnLinea()) {
+    throw new Error(
+      'Sin conexión a internet. Apuntarse a una convocatoria requiere señal para validar el cupo vigente en el servidor.',
+    )
+  }
   const opRef = doc(db, 'operativos', operativoId)
   const preRef = prerregistroDocRef(operativoId, perfil.uid)
   const contRef = contadorDocRef(operativoId)
@@ -263,6 +271,11 @@ export async function cancelarMiPrerregistro(
   operativoId: string,
   usuarioUid: string,
 ): Promise<number> {
+  if (!estaEnLinea()) {
+    throw new Error(
+      'Sin conexión a internet. Cancelar tu prerregistro requiere conexión para actualizar el cupo en el servidor.',
+    )
+  }
   const opRef = doc(db, 'operativos', operativoId)
   const preRef = prerregistroDocRef(operativoId, usuarioUid)
   const contRef = contadorDocRef(operativoId)
@@ -318,6 +331,11 @@ export async function registrarPrerregistroManual(
   encargado: Usuario,
   integrante: IntegrantePrerregistro,
 ): Promise<void> {
+  if (!estaEnLinea()) {
+    throw new Error(
+      'Sin conexión a internet. Agregar personal a la convocatoria previa requiere señal para sincronizar el contador en el servidor.',
+    )
+  }
   const ayJefe = ayudantiaJefatura(encargado)
   if (ayJefe && ayudantiaEfectiva(integrante) !== ayJefe) {
     throw new Error(`Solo puedes prerregistrar integrantes de tu ayudantía (${ayJefe}).`)
@@ -363,6 +381,11 @@ export async function quitarPrerregistroManual(
   operativoId: string,
   usuarioUid: string,
 ): Promise<void> {
+  if (!estaEnLinea()) {
+    throw new Error(
+      'Sin conexión a internet. Quitar personal del prerregistro requiere señal para actualizar el contador en el servidor.',
+    )
+  }
   const opRef = doc(db, 'operativos', operativoId)
   const preRef = prerregistroDocRef(operativoId, usuarioUid)
   const contRef = contadorDocRef(operativoId)

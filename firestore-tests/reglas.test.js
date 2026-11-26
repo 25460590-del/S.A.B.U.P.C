@@ -9,7 +9,7 @@ import {
 } from '@firebase/rules-unit-testing';
 import {
   doc, getDoc, setDoc, updateDoc, deleteDoc, collection, getDocs, addDoc,
-  query, where, writeBatch, serverTimestamp, Timestamp,
+  query, where, writeBatch, increment, serverTimestamp, Timestamp,
 } from 'firebase/firestore';
 
 let env;
@@ -2887,4 +2887,182 @@ test('B8-1) meta/contador elimina escrituras calientes en operativos/{id}: Briga
   // 6. Cualquier usuario Activo puede leer meta/contador puntualmente (get), pero nunca listarlo
   await assertSucceeds(getDoc(doc(db('activo1'), 'operativos/opAbierto/meta/contador')));
   await assertFails(getDocs(collection(db('activo1'), 'operativos/opAbierto/meta')));
+});
+
+// ============================================================================
+// BONCHE 9: SOPORTE OFFLINE CON writeBatch DETERMINISTA Y VERSIÓN REBACE
+// ============================================================================
+
+test('B9-1) Modo offline writeBatch determinista (VÍA 2, material genérico, devolución OK, salida con candado) y catalogos/claves_version', async () => {
+  const fEnc = db('encargado1');
+  const asisId = 'asis_opAbierto_brigAlfa1_offline1';
+
+  // 1. Entrada VÍA 2 offline por writeBatch creando candado presentes/{uid} + asistencia
+  const bEntrada = writeBatch(fEnc);
+  bEntrada.set(doc(fEnc, 'operativos/opAbierto/presentes/brigAlfa1'), {
+    asistencia_id: asisId,
+    usuario_uid: 'brigAlfa1',
+    operativo_id: 'opAbierto',
+    ayudantia_slot: 'Ninguna',
+    creado_en: serverTimestamp(),
+  });
+  bEntrada.set(doc(fEnc, `asistencias_personal/${asisId}`), {
+    id: asisId,
+    operativo_id: 'opAbierto',
+    operativo_nombre: 'Operativo opAbierto',
+    usuario_uid: 'brigAlfa1',
+    usuario_nombre: 'Ana Pérez',
+    usuario_cuenta: '20201234',
+    grupo_operativo: 'Alfa',
+    ayudantia_slot: 'Ninguna',
+    rol_en_turno: 'Sin definir',
+    estado_operativo: 'En servicio',
+    signos_vitales: null,
+    metodo_entrada: 'QR_Credencial',
+    hora_entrada: serverTimestamp(),
+    hora_salida: null,
+    horas_totales: null,
+    salida_cerrada_manual: false,
+    equipos_bupc_pendientes: 0,
+    registrado_por_uid: 'encargado1',
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  });
+  await assertSucceeds(bEntrada.commit());
+
+  // 2. Un segundo writeBatch duplicado al reconectar es rechazado por el candado presentes/brigAlfa1
+  const bDup = writeBatch(fEnc);
+  bDup.set(doc(fEnc, 'operativos/opAbierto/presentes/brigAlfa1'), {
+    asistencia_id: 'asis_opAbierto_brigAlfa1_offline2',
+    usuario_uid: 'brigAlfa1',
+    operativo_id: 'opAbierto',
+    ayudantia_slot: 'Ninguna',
+    creado_en: serverTimestamp(),
+  });
+  bDup.set(doc(fEnc, 'asistencias_personal/asis_opAbierto_brigAlfa1_offline2'), {
+    id: 'asis_opAbierto_brigAlfa1_offline2',
+    operativo_id: 'opAbierto',
+    operativo_nombre: 'Operativo opAbierto',
+    usuario_uid: 'brigAlfa1',
+    usuario_nombre: 'Ana Pérez',
+    usuario_cuenta: '20201234',
+    grupo_operativo: 'Alfa',
+    ayudantia_slot: 'Ninguna',
+    rol_en_turno: 'Sin definir',
+    estado_operativo: 'En servicio',
+    signos_vitales: null,
+    metodo_entrada: 'QR_Credencial',
+    hora_entrada: serverTimestamp(),
+    hora_salida: null,
+    horas_totales: null,
+    salida_cerrada_manual: false,
+    equipos_bupc_pendientes: 0,
+    registrado_por_uid: 'encargado1',
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  });
+  await assertFails(bDup.commit());
+
+  // 3. Asignación genérica offline con ID determinista + increment(1) + auditoría determinista
+  const eqId = `eq_${asisId}_n1`;
+  const bAsig = writeBatch(fEnc);
+  bAsig.set(doc(fEnc, `equipos_turno/${eqId}`), {
+    id: eqId,
+    asistencia_id: asisId,
+    operativo_id: 'opAbierto',
+    operativo_nombre: 'Operativo opAbierto',
+    usuario_uid: 'brigAlfa1',
+    usuario_nombre: 'Ana Pérez',
+    ayudantia_slot: 'Ninguna',
+    nombre_articulo: 'Chaleco reflejante',
+    codigo_inventario: '',
+    cantidad: 1,
+    origen_material: 'BUPC_Asignado',
+    estado_reporte: 'OK',
+    falla_reportada: '',
+    devuelto: false,
+    devuelto_en: null,
+    devuelto_por_uid: null,
+    acta_incidencia: null,
+    creado_por_uid: 'encargado1',
+    creado_por_nombre: 'Encargado Uno',
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  });
+  bAsig.update(doc(fEnc, `asistencias_personal/${asisId}`), {
+    equipos_bupc_pendientes: increment(1),
+    actualizado_en: serverTimestamp(),
+  });
+  bAsig.set(doc(fEnc, `auditoria_eventos/aud_${eqId}`), {
+    tipo: 'ASIGNACION_EQUIPO',
+    actor_uid: 'encargado1',
+    actor_nombre: 'Encargado Uno',
+    objetivo_uid: 'brigAlfa1',
+    objetivo_nombre: 'Ana Pérez',
+    detalle: 'Asignado: Chaleco reflejante',
+    creado_en: serverTimestamp(),
+  });
+  await assertSucceeds(bAsig.commit());
+
+  // 4. Devolución OK offline con writeBatch + increment(-1) + auditoría determinista
+  const bDev = writeBatch(fEnc);
+  bDev.update(doc(fEnc, `equipos_turno/${eqId}`), {
+    devuelto: true,
+    estado_reporte: 'Devuelto',
+    devuelto_en: serverTimestamp(),
+    devuelto_por_uid: 'encargado1',
+    actualizado_en: serverTimestamp(),
+  });
+  bDev.update(doc(fEnc, `asistencias_personal/${asisId}`), {
+    equipos_bupc_pendientes: increment(-1),
+    actualizado_en: serverTimestamp(),
+  });
+  bDev.set(doc(fEnc, `auditoria_eventos/aud_dev_${eqId}`), {
+    tipo: 'DEVOLUCION_EQUIPO',
+    actor_uid: 'encargado1',
+    actor_nombre: 'Encargado Uno',
+    objetivo_uid: 'brigAlfa1',
+    objetivo_nombre: 'Ana Pérez',
+    detalle: 'Devolución OK: Chaleco reflejante',
+    creado_en: serverTimestamp(),
+  });
+  await assertSucceeds(bDev.commit());
+
+  // 5. Cierre de salida offline con writeBatch eliminando candado presentes/brigAlfa1
+  const bSal = writeBatch(fEnc);
+  bSal.update(doc(fEnc, `asistencias_personal/${asisId}`), {
+    hora_salida: serverTimestamp(),
+    horas_totales: 1.5,
+    estado_operativo: 'Retirado',
+    salida_cerrada_manual: true,
+    actualizado_en: serverTimestamp(),
+  });
+  bSal.delete(doc(fEnc, 'operativos/opAbierto/presentes/brigAlfa1'));
+  bSal.set(doc(fEnc, `auditoria_eventos/aud_sal_${asisId}`), {
+    tipo: 'SALIDA_MANUAL',
+    actor_uid: 'encargado1',
+    actor_nombre: 'Encargado Uno',
+    objetivo_uid: 'brigAlfa1',
+    objetivo_nombre: 'Ana Pérez',
+    detalle: 'Salida cerrada manualmente en Operativo opAbierto (1.5 h)',
+    creado_en: serverTimestamp(),
+  });
+  await assertSucceeds(bSal.commit());
+
+  // 6. catalogos/claves_version: Admin escribe versión ReBaCE, Activo la lee y Brigadista no puede escribirla
+  await assertSucceeds(setDoc(doc(db('admin1'), 'catalogos/claves_version'), {
+    id: 'claves_version',
+    nombre: 'Versión catálogo ReBaCE',
+    items: ['1732650000000'],
+    actualizado_en: serverTimestamp(),
+    actualizado_por_uid: 'admin1',
+  }));
+  await assertSucceeds(getDoc(doc(db('activo1'), 'catalogos/claves_version')));
+  await assertFails(setDoc(doc(db('activo1'), 'catalogos/claves_version'), {
+    id: 'claves_version',
+    nombre: 'Alterado',
+    items: ['1'],
+    actualizado_en: serverTimestamp(),
+    actualizado_por_uid: 'activo1',
+  }));
 });

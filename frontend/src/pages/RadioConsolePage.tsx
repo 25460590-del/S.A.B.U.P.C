@@ -23,10 +23,10 @@ import { mensajeDeError } from '../services/authService'
 import { escucharOperativosActivos } from '../services/operativosService'
 import {
   actualizarUnidadesCanal,
+  cargarCatalogoRebaceConCache,
   crearCanalRadio,
   editarRegistroBitacoraRadio,
   escucharCanalesOperativo,
-  escucharCatalogoRebace,
   escucharRegistrosCanal,
   exportarBitacoraCsvLocal,
   LIMITE_REGISTROS_RADIO,
@@ -117,16 +117,20 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
       },
       (err) => setError(mensajeDeError(err)),
     )
-    const cancelarClaves = escucharCatalogoRebace(
-      (lista) => {
+    let activo = true
+    void cargarCatalogoRebaceConCache()
+      .then((lista) => {
+        if (!activo) return
         setClaves(lista)
         setCargandoClaves(false)
-      },
-      () => setCargandoClaves(false),
-    )
+      })
+      .catch(() => {
+        if (!activo) return
+        setCargandoClaves(false)
+      })
     return () => {
+      activo = false
       cancelarOps()
-      cancelarClaves()
     }
   }, [])
 
@@ -358,6 +362,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
     setAviso(null)
     try {
       const total = await poblarCatalogoRebace(usuario)
+      setClaves(await cargarCatalogoRebaceConCache(true))
       setAviso(`Catálogo de claves cargado con ${total} registros.`)
     } catch (err) {
       setError(mensajeDeError(err))
@@ -813,10 +818,11 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
                             </span>
                             {r.sync_status === 'pendiente' && (
                               <span
-                                title="Guardado localmente"
-                                className="inline-flex shrink-0 items-center gap-0.5 rounded bg-ambar-suave px-1 py-0.5 text-[10px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto"
+                                title="Pendiente de sincronizar"
+                                className="inline-flex shrink-0 items-center gap-0.5 rounded bg-ambar-suave px-1.5 py-0.5 text-[10px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto"
                               >
                                 <CloudOff size={10} strokeWidth={2} />
+                                <span>Pendiente de sincronizar</span>
                               </span>
                             )}
                             {r.fue_editado && (
@@ -886,10 +892,10 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
                                 {r.sync_status === 'pendiente' && (
                                   <span
                                     title="Guardado localmente; se sincronizará al recuperar señal"
-                                    className="inline-flex items-center gap-0.5 rounded bg-ambar-suave px-1 py-0.5 text-[10px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto"
+                                    className="inline-flex items-center gap-0.5 rounded bg-ambar-suave px-1.5 py-0.5 text-[10px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto"
                                   >
                                     <CloudOff size={10} strokeWidth={2} />
-                                    <span>Local</span>
+                                    <span>Pendiente de sincronizar</span>
                                   </span>
                                 )}
                                 {r.fue_editado && (

@@ -3,6 +3,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  getDocsFromCache,
   increment,
   limit,
   onSnapshot,
@@ -19,6 +20,7 @@ import {
   type Timestamp,
   type Unsubscribe,
 } from 'firebase/firestore'
+import { despacharEscrituraOffline, estaEnLinea } from '../lib/colaOffline'
 import { db } from '../lib/firebase'
 import { comprimirImagenAWebP } from '../lib/imageCompression'
 import { ayudantiaEfectiva, ayudantiaJefatura, type AyudantiaActiva } from '../lib/permisos'
@@ -43,10 +45,11 @@ export interface DatosNuevoEquipo {
 
 /**
  * Encargado/Admin asigna material BUPC a un brigadista en turno:
- * - Crea un documento independiente en `equipos_turno/{id}` (cero sobrescritura de arrays).
+ * - Crea un documento independiente en `equipos_turno/{id}` con ID determinista (cero sobrescritura de arrays).
  * - Actualiza `equipos_bupc_pendientes` con `increment(1)` (seguro ante concurrencia multi-encargado).
- * - Si incluye número de serie/folio (`codigo_inventario`), verifica que no esté prestado
- *   simultáneamente en el mismo operativo y ejecuta dentro de `runTransaction`.
+ * - Con conexión y serie/folio (`codigo_inventario`): valida anti-doble préstamo y usa `runTransaction`.
+ * - Sin conexión: permite asignar material genérico vía `writeBatch` determinista encolado en caché local,
+ *   pero bloquea equipo serializado porque requiere verificar préstamo único en el servidor.
  */
 export async function asignarEquipoBupc(
   encargado: Usuario,
@@ -60,8 +63,15 @@ export async function asignarEquipoBupc(
   if (!nombreArticulo) {
     throw new Error('Indica el nombre del artículo BUPC.')
   }
+  if (asistencia.hora_salida !== null) {
+    throw new Error('No se puede asignar material a un turno que ya fue cerrado.')
+  }
 
-  const nuevoEquipo = doc(equiposRef)
+  const nonceCrudo =
+    (datos.operacion_nonce ?? '').trim() || crypto.randomUUID().replace(/-/g, '').slice(0, 12)
+  const nonceLimpio = nonceCrudo.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 24) || 'eq'
+  const equipoId = `eq_${asistencia.id}_${nonceLimpio}`.slice(0, 120)
+  const nuevoEquipo = doc(equiposRef, equipoId)
   const asistenciaDoc = doc(asistenciasRef, asistencia.id)
   const encargadoNombre = nombreCompleto(encargado)
 
@@ -102,6 +112,12 @@ export async function asignarEquipoBupc(
   }
 
   if (codigoInventario) {
+    if (!estaEnLinea()) {
+      throw new Error(
+        'Sin conexión: asignar equipo con serie o folio requiere internet para verificar que no esté prestado a otro brigadista. Puedes registrar material genérico sin serie o intentar al recuperar señal.',
+      )
+    }
+
     // Validación anti-doble préstamo simultáneo para equipo serializado (acotada por ayudantia_slot si es Jefe)
     const ayJefe = ayudantiaJefatura(encargado)
     const consultaDup = ayJefe
@@ -142,21 +158,24 @@ export async function asignarEquipoBupc(
         equipos_bupc_pendientes: increment(1),
         actualizado_en: serverTimestamp(),
       })
-      tx.set(doc(auditoriaRef), payloadAuditoria)
+      tx.set(doc(auditoriaRef, `aud_${equipoId}`.slice(0, 120)), payloadAuditoria)
     })
 
     return nuevoEquipo.id
   }
 
-  // Material genérico sin serie: writeBatch atómico con increment(1) seguro ante concurrencia
+  // Material genérico sin serie: writeBatch atómico con ID determinista e increment(1) (compatible online y offline)
   const lote = writeBatch(db)
   lote.set(nuevoEquipo, payloadEquipo)
   lote.update(asistenciaDoc, {
     equipos_bupc_pendientes: increment(1),
     actualizado_en: serverTimestamp(),
   })
-  lote.set(doc(auditoriaRef), payloadAuditoria)
-  await lote.commit()
+  lote.set(doc(auditoriaRef, `aud_${equipoId}`.slice(0, 120)), payloadAuditoria)
+  await despacharEscrituraOffline(
+    lote.commit(),
+    `Asignación de ${nombreArticulo} a ${asistencia.usuario_nombre}`,
+  )
 
   return nuevoEquipo.id
 }
@@ -165,8 +184,7 @@ export async function asignarEquipoBupc(
  * Asignación rápida de material repetitivo (chalecos, lámparas, radios genéricos) a
  * múltiples brigadistas seleccionados en lotes seguros de ≤ 400 operaciones.
  * Usa IDs deterministas derivados de `asistencia_id` + `operacion_nonce` y verifica
- * existencia antes de escribir para garantizar idempotencia en reintentos tras cortes de red
- * (sin duplicar artículos ni incrementar dos veces `equipos_bupc_pendientes`).
+ * existencia antes de escribir para garantizar idempotencia en reintentos y soporte offline.
  */
 export async function asignarEquipoBupcMultiple(
   encargado: Usuario,
@@ -178,12 +196,18 @@ export async function asignarEquipoBupcMultiple(
   const cantidad = Math.min(99, Math.max(1, Math.floor(datos.cantidad ?? 1)))
 
   if (!nombreArticulo) throw new Error('Indica el nombre del artículo BUPC.')
+  if (codigoInventario && !estaEnLinea()) {
+    throw new Error(
+      'Sin conexión: la asignación rápida con folio/serie requiere internet para evitar duplicados. Déjalo vacío para material genérico.',
+    )
+  }
   const abiertas = asistenciasObjetivo.filter((a) => a.hora_salida === null)
   if (abiertas.length === 0) {
     throw new Error('Selecciona al menos un brigadista con turno abierto.')
   }
 
-  const nonceCrudo = (datos.operacion_nonce ?? '').trim() || crypto.randomUUID().replace(/-/g, '').slice(0, 12)
+  const nonceCrudo =
+    (datos.operacion_nonce ?? '').trim() || crypto.randomUUID().replace(/-/g, '').slice(0, 12)
   const nonceLimpio = nonceCrudo.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 24) || 'lote'
 
   const ayJefe = ayudantiaJefatura(encargado)
@@ -197,8 +221,16 @@ export async function asignarEquipoBupcMultiple(
         where('ayudantia_slot', '==', ayJefe),
       )
     : query(equiposRef, where('operativo_id', '==', operativoId))
-  const existentesSnap = await getDocs(consultaExistentes)
-  const idsExistentes = new Set(existentesSnap.docs.map((d) => d.id))
+
+  let idsExistentes = new Set<string>()
+  try {
+    const existentesSnap = estaEnLinea()
+      ? await getDocs(consultaExistentes)
+      : await getDocsFromCache(consultaExistentes)
+    idsExistentes = new Set(existentesSnap.docs.map((d) => d.id))
+  } catch {
+    idsExistentes = new Set<string>()
+  }
 
   const pendientes = abiertas
     .map((asis) => ({
@@ -264,7 +296,10 @@ export async function asignarEquipoBupcMultiple(
       })
     }
 
-    await lote.commit()
+    await despacharEscrituraOffline(
+      lote.commit(),
+      `Asignación múltiple de ${nombreArticulo} (${segmento.length} brigadista${segmento.length === 1 ? '' : 's'})`,
+    )
   }
 
   return abiertas.length
@@ -273,6 +308,8 @@ export async function asignarEquipoBupcMultiple(
 /**
  * Válvula de escape 1 del Candado Duro:
  * marca un artículo BUPC como Devuelto OK y decrementa `equipos_bupc_pendientes` con `increment(-1)`.
+ * - Con conexión: ejecuta `runTransaction` estricta.
+ * - Sin conexión: ejecuta `writeBatch` con ID de auditoría determinista encolado en caché local.
  */
 export async function marcarEquipoDevueltoOk(
   encargado: Usuario,
@@ -280,6 +317,43 @@ export async function marcarEquipoDevueltoOk(
 ): Promise<void> {
   const equipoDoc = doc(equiposRef, equipo.id)
   const asistenciaDoc = doc(asistenciasRef, equipo.asistencia_id)
+
+  if (!estaEnLinea()) {
+    if (equipo.origen_material !== 'BUPC_Asignado') {
+      throw new Error('Solo el material BUPC asignado requiere recepción de devolución.')
+    }
+    if (equipo.devuelto || equipo.acta_incidencia !== null) {
+      throw new Error('Este artículo ya fue liberado anteriormente.')
+    }
+    const lote = writeBatch(db)
+    lote.update(equipoDoc, {
+      devuelto: true,
+      estado_reporte: 'Devuelto',
+      devuelto_en: serverTimestamp(),
+      devuelto_por_uid: encargado.uid,
+      actualizado_en: serverTimestamp(),
+    })
+    lote.update(asistenciaDoc, {
+      equipos_bupc_pendientes: increment(-1),
+      actualizado_en: serverTimestamp(),
+    })
+    lote.set(doc(auditoriaRef, `aud_dev_${equipo.id}`.slice(0, 120)), {
+      tipo: 'DEVOLUCION_EQUIPO',
+      actor_uid: encargado.uid,
+      actor_nombre: nombreCompleto(encargado),
+      objetivo_uid: equipo.usuario_uid,
+      objetivo_nombre: equipo.usuario_nombre,
+      detalle: `Devolución OK: ${equipo.nombre_articulo}${
+        equipo.codigo_inventario ? ` (${equipo.codigo_inventario})` : ''
+      }`,
+      creado_en: serverTimestamp(),
+    })
+    await despacharEscrituraOffline(
+      lote.commit(),
+      `Devolución OK de ${equipo.nombre_articulo} (${equipo.usuario_nombre})`,
+    )
+    return
+  }
 
   await runTransaction(db, async (tx) => {
     const [eqSnap, asisSnap] = await Promise.all([tx.get(equipoDoc), tx.get(asistenciaDoc)])
@@ -336,6 +410,12 @@ export async function levantarActaIncidencia(
   motivo: string,
   archivoEvidencia?: File | null,
 ): Promise<void> {
+  if (!estaEnLinea()) {
+    throw new Error(
+      'Sin conexión a internet. Levantar un Acta de Incidencia requiere conexión para validar el artículo y resguardar la evidencia en el servidor.',
+    )
+  }
+
   const motivoLimpio = motivo.trim()
   if (!motivoLimpio) {
     throw new Error('Describe el motivo del Acta de Incidencia.')
@@ -423,40 +503,47 @@ export async function registrarEquipoPropio(
 ): Promise<string> {
   const nuevoDoc = doc(equiposRef)
   const nombreBrig = nombreCompleto(brigadista)
-  await setDoc(nuevoDoc, {
-    id: nuevoDoc.id,
-    asistencia_id: asistencia.id,
-    operativo_id: asistencia.operativo_id,
-    operativo_nombre: asistencia.operativo_nombre,
-    usuario_uid: brigadista.uid,
-    usuario_nombre: nombreBrig,
-    ayudantia_slot: asistencia.ayudantia_slot || ayudantiaEfectiva(brigadista),
-    nombre_articulo: datos.nombre_articulo.trim(),
-    codigo_inventario: datos.codigo_inventario.trim(),
-    cantidad: Math.min(99, Math.max(1, Math.floor(datos.cantidad ?? 1))),
-    origen_material: 'Propio',
-    estado_reporte: 'OK',
-    falla_reportada: '',
-    devuelto: false,
-    devuelto_en: null,
-    devuelto_por_uid: null,
-    acta_incidencia: null,
-    creado_por_uid: brigadista.uid,
-    creado_por_nombre: nombreBrig,
-    creado_en: serverTimestamp(),
-    actualizado_en: serverTimestamp(),
-  })
+  const nombreArt = datos.nombre_articulo.trim()
+  await despacharEscrituraOffline(
+    setDoc(nuevoDoc, {
+      id: nuevoDoc.id,
+      asistencia_id: asistencia.id,
+      operativo_id: asistencia.operativo_id,
+      operativo_nombre: asistencia.operativo_nombre,
+      usuario_uid: brigadista.uid,
+      usuario_nombre: nombreBrig,
+      ayudantia_slot: asistencia.ayudantia_slot || ayudantiaEfectiva(brigadista),
+      nombre_articulo: nombreArt,
+      codigo_inventario: datos.codigo_inventario.trim(),
+      cantidad: Math.min(99, Math.max(1, Math.floor(datos.cantidad ?? 1))),
+      origen_material: 'Propio',
+      estado_reporte: 'OK',
+      falla_reportada: '',
+      devuelto: false,
+      devuelto_en: null,
+      devuelto_por_uid: null,
+      acta_incidencia: null,
+      creado_por_uid: brigadista.uid,
+      creado_por_nombre: nombreBrig,
+      creado_en: serverTimestamp(),
+      actualizado_en: serverTimestamp(),
+    }),
+    `Registro de material propio (${nombreArt})`,
+  )
   return nuevoDoc.id
 }
 
-export function reportarFallaEquipo(equipoId: string, falla: string): Promise<void> {
+export async function reportarFallaEquipo(equipoId: string, falla: string): Promise<void> {
   const texto = falla.trim()
   if (!texto) throw new Error('Describe la falla o faltante encontrado.')
-  return updateDoc(doc(equiposRef, equipoId), {
-    estado_reporte: 'Con_Falla',
-    falla_reportada: texto,
-    actualizado_en: serverTimestamp(),
-  })
+  await despacharEscrituraOffline(
+    updateDoc(doc(equiposRef, equipoId), {
+      estado_reporte: 'Con_Falla',
+      falla_reportada: texto,
+      actualizado_en: serverTimestamp(),
+    }),
+    'Reporte de falla de material BUPC',
+  )
 }
 
 // ── Listeners en tiempo real ─────────────────────────────────────────────────
@@ -477,9 +564,17 @@ export function escucharEquiposDeAsistencia(
 
   return onSnapshot(
     consulta,
+    { includeMetadataChanges: true },
     (snap) => {
-      const lista = snap.docs.map((d) => d.data() as EquipoTurno)
-      lista.sort((a, b) => (b.creado_en?.toMillis() ?? 0) - (a.creado_en?.toMillis() ?? 0))
+      const lista = snap.docs.map((d) => ({
+        ...(d.data() as EquipoTurno),
+        sync_status: d.metadata.hasPendingWrites ? ('pendiente' as const) : ('sincronizado' as const),
+      }))
+      lista.sort(
+        (a, b) =>
+          (b.creado_en?.toMillis() ?? Number.MAX_SAFE_INTEGER) -
+          (a.creado_en?.toMillis() ?? Number.MAX_SAFE_INTEGER),
+      )
       alCambiar(lista)
     },
     (err) => {
@@ -505,9 +600,17 @@ export function escucharEquiposDeOperativo(
 
   return onSnapshot(
     consulta,
+    { includeMetadataChanges: true },
     (snap) => {
-      const lista = snap.docs.map((d) => d.data() as EquipoTurno)
-      lista.sort((a, b) => (b.creado_en?.toMillis() ?? 0) - (a.creado_en?.toMillis() ?? 0))
+      const lista = snap.docs.map((d) => ({
+        ...(d.data() as EquipoTurno),
+        sync_status: d.metadata.hasPendingWrites ? ('pendiente' as const) : ('sincronizado' as const),
+      }))
+      lista.sort(
+        (a, b) =>
+          (b.creado_en?.toMillis() ?? Number.MAX_SAFE_INTEGER) -
+          (a.creado_en?.toMillis() ?? Number.MAX_SAFE_INTEGER),
+      )
       alCambiar(lista)
     },
     (err) => {
@@ -537,9 +640,17 @@ export function escucharMisEquiposBupc(
       orderBy('creado_en', 'desc'),
       limit(limite),
     ),
+    { includeMetadataChanges: true },
     (snap) => {
-      const lista = snap.docs.map((d) => d.data() as EquipoTurno)
-      lista.sort((a, b) => (b.creado_en?.toMillis() ?? 0) - (a.creado_en?.toMillis() ?? 0))
+      const lista = snap.docs.map((d) => ({
+        ...(d.data() as EquipoTurno),
+        sync_status: d.metadata.hasPendingWrites ? ('pendiente' as const) : ('sincronizado' as const),
+      }))
+      lista.sort(
+        (a, b) =>
+          (b.creado_en?.toMillis() ?? Number.MAX_SAFE_INTEGER) -
+          (a.creado_en?.toMillis() ?? Number.MAX_SAFE_INTEGER),
+      )
       alCambiar(lista)
     },
     (err) => {
@@ -567,7 +678,10 @@ export async function obtenerMasMisEquiposBupc(
       limit(limite),
     ),
   )
-  const equipos = snap.docs.map((d) => d.data() as EquipoTurno)
+  const equipos = snap.docs.map((d) => ({
+    ...(d.data() as EquipoTurno),
+    sync_status: 'sincronizado' as const,
+  }))
   return {
     equipos,
     hayMas: snap.docs.length === limite,
@@ -599,11 +713,19 @@ export function escucharResguardoGlobalBupc(
 
   return onSnapshot(
     consulta,
+    { includeMetadataChanges: true },
     (snap) => {
       const lista = snap.docs
-        .map((d) => d.data() as EquipoTurno)
+        .map((d) => ({
+          ...(d.data() as EquipoTurno),
+          sync_status: d.metadata.hasPendingWrites ? ('pendiente' as const) : ('sincronizado' as const),
+        }))
         .filter((e) => e.acta_incidencia === null)
-      lista.sort((a, b) => (b.creado_en?.toMillis() ?? 0) - (a.creado_en?.toMillis() ?? 0))
+      lista.sort(
+        (a, b) =>
+          (b.creado_en?.toMillis() ?? Number.MAX_SAFE_INTEGER) -
+          (a.creado_en?.toMillis() ?? Number.MAX_SAFE_INTEGER),
+      )
       alCambiar(lista)
     },
     (err) => {

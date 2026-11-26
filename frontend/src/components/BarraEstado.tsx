@@ -1,5 +1,10 @@
-import { RefreshCw, ShieldAlert, WifiOff } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { AlertTriangle, RefreshCw, ShieldAlert, WifiOff, X } from 'lucide-react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
+import {
+  descartarRechazoOffline,
+  obtenerEstadoColaOffline,
+  suscribirColaOffline,
+} from '../lib/colaOffline'
 
 interface BarraEstadoProps {
   /** Reservado por retrocompatibilidad; no se muestra en estado estable. */
@@ -10,15 +15,21 @@ interface BarraEstadoProps {
 }
 
 /**
- * Indicador de conexión silencioso (UI limpia):
- * - En conexión estable: NO renderiza ninguna barra superior.
- * - Solo aparece ante un estado accionable: sin conexión, sincronizando cambios pendientes o alerta de acceso.
+ * Indicador de conexión silencioso (UI limpia) + alertas visibles de rechazos diferidos:
+ * - En conexión estable sin pendientes ni rechazos: NO renderiza ninguna barra superior.
+ * - Solo aparece ante un estado accionable: sin conexión, sincronizando cambios pendientes,
+ *   rechazo diferido al reconectar o alerta de acceso.
  */
 export function BarraEstado({
   variante = 'normal',
   sincronizando = false,
 }: BarraEstadoProps) {
   const [enLinea, setEnLinea] = useState(() => navigator.onLine)
+  const colaOffline = useSyncExternalStore(
+    suscribirColaOffline,
+    obtenerEstadoColaOffline,
+    obtenerEstadoColaOffline,
+  )
 
   useEffect(() => {
     const alConectar = () => setEnLinea(true)
@@ -31,8 +42,11 @@ export function BarraEstado({
     }
   }, [])
 
-  if (variante === 'alerta') {
-    return (
+  const haySincronizacion = sincronizando || (enLinea && colaOffline.pendientes.length > 0)
+  const hayRechazos = colaOffline.rechazos.length > 0
+
+  const barraPrincipal =
+    variante === 'alerta' ? (
       <div
         role="status"
         className="flex w-full items-center justify-center gap-2 border-b border-alerta bg-alerta-suave px-3 py-1.5 text-xs font-semibold text-alerta dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
@@ -40,32 +54,62 @@ export function BarraEstado({
         <ShieldAlert size={14} strokeWidth={2} aria-hidden="true" />
         <span>Acceso restringido · Cuenta inactiva</span>
       </div>
-    )
-  }
-
-  if (!enLinea) {
-    return (
+    ) : !enLinea ? (
       <div
         role="status"
         className="flex w-full items-center justify-center gap-2 border-b border-ambar bg-ambar-suave px-3 py-1.5 text-xs font-semibold text-ambar-texto dark:border-ambar/70 dark:bg-noche-ambar dark:text-noche-ambar-texto"
       >
         <WifiOff size={14} strokeWidth={2} aria-hidden="true" />
-        <span>Sin conexión — guardando localmente</span>
+        <span>
+          Sin conexión — guardando localmente
+          {colaOffline.pendientes.length > 0
+            ? ` (${colaOffline.pendientes.length} pendiente${colaOffline.pendientes.length === 1 ? '' : 's'})`
+            : ''}
+        </span>
       </div>
-    )
-  }
-
-  if (sincronizando) {
-    return (
+    ) : haySincronizacion ? (
       <div
         role="status"
         className="flex w-full items-center justify-center gap-2 border-b border-borde bg-salvia px-3 py-1.5 text-xs font-semibold text-udec-oscuro dark:border-noche-borde dark:bg-noche-campo dark:text-activo-claro"
       >
         <RefreshCw size={13} strokeWidth={2} className="animate-spin" aria-hidden="true" />
-        <span>Sincronizando cambios pendientes</span>
+        <span>
+          Sincronizando cambios pendientes
+          {colaOffline.pendientes.length > 0 ? ` (${colaOffline.pendientes.length})` : ''}
+        </span>
       </div>
-    )
+    ) : null
+
+  if (!barraPrincipal && !hayRechazos) {
+    return null
   }
 
-  return null
+  return (
+    <div className="flex w-full flex-col">
+      {barraPrincipal}
+      {hayRechazos && (
+        <div
+          role="alert"
+          className="flex w-full flex-col gap-1.5 border-b border-alerta bg-alerta-suave px-3 py-2 text-xs text-red-900 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+        >
+          {colaOffline.rechazos.map((r) => (
+            <div key={r.id} className="mx-auto flex w-full max-w-5xl items-start justify-between gap-2">
+              <div className="flex items-start gap-2">
+                <AlertTriangle size={15} strokeWidth={2} className="mt-0.5 shrink-0" />
+                <span className="font-semibold">{r.detalle}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => descartarRechazoOffline(r.id)}
+                aria-label="Cerrar alerta de sincronización"
+                className="inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded hover:bg-black/10"
+              >
+                <X size={14} strokeWidth={2} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }

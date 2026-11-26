@@ -253,6 +253,8 @@ export interface AsistenciaPersonal {
   registrado_por_uid: string
   creado_en: Timestamp
   actualizado_en: Timestamp
+  /** Solo estado en memoria del cliente (desde `snap.metadata.hasPendingWrites`). */
+  sync_status?: 'sincronizado' | 'pendiente'
 }
 
 // ── Colección `equipos_turno/{id}` y `evidencias_equipos/{id}` ───────────────
@@ -291,6 +293,8 @@ export interface EquipoTurno {
   creado_por_nombre?: string
   creado_en: Timestamp
   actualizado_en: Timestamp
+  /** Solo estado en memoria del cliente (desde `snap.metadata.hasPendingWrites`). */
+  sync_status?: 'sincronizado' | 'pendiente'
 }
 
 export interface EvidenciaEquipo {

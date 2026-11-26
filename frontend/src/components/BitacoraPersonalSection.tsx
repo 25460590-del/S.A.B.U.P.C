@@ -1,30 +1,21 @@
 import {
-  Activity,
   AlertCircle,
   CheckCircle2,
   ClipboardCheck,
   Clock,
-  FileWarning,
-  HeartPulse,
   Lock,
   Package,
   PackagePlus,
   QrCode,
   Search,
-  Trash2,
-  Upload,
   UserPlus,
   Users,
-  X,
   Zap,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   EQUIPO_BUPC_SUGERIDO,
-  ESTADOS_OPERATIVOS,
-  opcionesRolEnTurno,
   resolverRolInicialOperativo,
-  rolOperativoPorAyudantia,
 } from '../constants/catalogos'
 import { normalizarNombrePropio } from '../lib/nombres'
 import {
@@ -37,26 +28,21 @@ import {
   actualizarEstadoOperativo,
   actualizarRolEnTurno,
   cerrarSalidaConCandado,
-  escucharAsistenciasDeOperativo,
-  escucharPerfilesOperativosParaBitacora,
-  escucharUsuariosParaBitacora,
   guardarSignosVitales,
   nombreDePersona,
   parsearQrEscaneado,
   registrarAsistenciaManual,
   registrarAsistenciaQR,
 } from '../services/asistenciasService'
-import { mensajeDeError, nombreCompleto } from '../services/authService'
+import { mensajeDeError } from '../services/authService'
 import {
   asignarEquipoBupc,
   asignarEquipoBupcMultiple,
-  escucharEquiposDeOperativo,
   levantarActaIncidencia,
   marcarEquipoDevueltoOk,
 } from '../services/equiposService'
 import {
   actualizarRolPrerregistro,
-  escucharPrerregistrosDeOperativo,
   quitarPrerregistroManual,
   registrarPrerregistroManual,
 } from '../services/prerregistrosService'
@@ -71,6 +57,16 @@ import type {
   Usuario,
 } from '../types'
 import { AlertaInactivoModal, type PersonaAlertaInactivo } from './AlertaInactivoModal'
+import type { FiltroEstadoBitacora } from './bitacora/helpers'
+import { ListaPorLlegar } from './bitacora/ListaPorLlegar'
+import { ModalActaIncidenciaBitacora } from './bitacora/ModalActaIncidenciaBitacora'
+import { ModalFichaEmergencia } from './bitacora/ModalFichaEmergencia'
+import { ModalMaterialBitacora } from './bitacora/ModalMaterialBitacora'
+import { ModalPrerregistroBitacora } from './bitacora/ModalPrerregistroBitacora'
+import { ModalRegistroManual } from './bitacora/ModalRegistroManual'
+import { ModalSignosVitales } from './bitacora/ModalSignosVitales'
+import { TablaAsistencias } from './bitacora/TablaAsistencias'
+import { useBitacoraDatos } from './bitacora/useBitacoraDatos'
 import { CandadoDuroModal } from './CandadoDuroModal'
 import { IndicadorAlcanceAyudantia } from './IndicadorAlcanceAyudantia'
 import { QrScannerModal } from './QrScannerModal'
@@ -80,62 +76,19 @@ interface BitacoraPersonalSectionProps {
   operativo: Operativo
 }
 
-type FiltroEstadoBitacora = 'todos' | 'en_turno' | 'con_adeudo' | 'salidos' | 'por_llegar'
-
-function formatearHoraCorta(ms?: number): string {
-  if (!ms) return '--:--'
-  const d = new Date(ms)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-
-function etiquetaMetodoEntrada(metodo: AsistenciaPersonal['metodo_entrada']): string {
-  switch (metodo) {
-    case 'QR_Operativo_TOTP':
-      return 'QR Dinámico'
-    case 'QR_Operativo_Estatico':
-      return 'QR Fijo'
-    case 'QR_Credencial':
-      return 'Credencial QR'
-    case 'Manual':
-      return 'Manual'
-  }
-}
-
-function etiquetaGrupoAsistencia(
-  a: AsistenciaPersonal,
-  mapaPerfiles: Map<string, PerfilOperativoMinimo>,
-): string {
-  const p = mapaPerfiles.get(a.usuario_uid)
-  if (p?.subgrupo) return p.subgrupo
-  if (p?.etapa) return p.etapa
-  return a.grupo_operativo === 'Ninguno' ? 'Grupo Operativo' : a.grupo_operativo
-}
-
 export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPersonalSectionProps) {
   const esFinalizado = esOperativoCerrado(operativo)
   const recepcionAbierta = operativo.recepcion_abierta && !esFinalizado
   const ayJefe = ayudantiaJefatura(encargado)
 
-  const [asistencias, setAsistencias] = useState<AsistenciaPersonal[]>([])
-  const [prerregistros, setPrerregistros] = useState<PrerregistroOperativo[]>([])
-  const [equipos, setEquipos] = useState<EquipoTurno[]>([])
-  const [perfilesOperativos, setPerfilesOperativos] = useState<PerfilOperativoMinimo[]>([])
-  const [perfilesCargados, setPerfilesCargados] = useState(false)
-  const [usuarios, setUsuarios] = useState<Usuario[]>([])
-  const [cargando, setCargando] = useState(true)
-
-  // Filtros 100% en cliente (cero lecturas extra en Firestore)
   const [busqueda, setBusqueda] = useState('')
   const [filtroEstado, setFiltroEstado] = useState<FiltroEstadoBitacora>('todos')
   const [filtroGrupo, setFiltroGrupo] = useState('TODOS')
   const [filtroAyudantia, setFiltroAyudantia] = useState('TODAS')
 
-  // Modal Prerregistro Manual previo
   const [modalPrerregistro, setModalPrerregistro] = useState(false)
   const [busquedaPrerregistro, setBusquedaPrerregistro] = useState('')
 
-  // Selección múltiple para asignación rápida de equipo repetitivo (con nonce idempotente ante reintentos)
   const [seleccionadosIds, setSeleccionadosIds] = useState<string[]>([])
   const [modoRapidoAbierto, setModoRapidoAbierto] = useState(false)
   const [rapidoArticulo, setRapidoArticulo] = useState(EQUIPO_BUPC_SUGERIDO[2])
@@ -146,7 +99,6 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
   const [aviso, setAviso] = useState<string | null>(null)
   const [ocupadoId, setOcupadoId] = useState<string | null>(null)
 
-  // Escáner QR dual: asistencia o acceso directo a material del brigadista
   const [modoEscaner, setModoEscaner] = useState<null | 'asistencia' | 'material'>(null)
   const [procesandoQr, setProcesandoQr] = useState(false)
   const [alertaInactivo, setAlertaInactivo] = useState<PersonaAlertaInactivo | null>(null)
@@ -160,12 +112,10 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
   } | null>(null)
   const [confirmandoSalidaAnticipada, setConfirmandoSalidaAnticipada] = useState(false)
 
-  // Modal Registro Manual
   const [modalManual, setModalManual] = useState(false)
   const [uidManual, setUidManual] = useState('')
   const [rolManual, setRolManual] = useState<RolEnTurno>('Sin definir')
 
-  // Modal Signos Vitales
   const [vitalesObjetivo, setVitalesObjetivo] = useState<AsistenciaPersonal | null>(null)
   const [spo2, setSpo2] = useState('')
   const [fc, setFc] = useState('')
@@ -173,239 +123,44 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
   const [ta, setTa] = useState('')
   const [temp, setTemp] = useState('')
 
-  // Cajón/Modal de Material del Brigadista (entregar en cadena + devolver + incidencia)
   const [materialAsistenciaId, setMaterialAsistenciaId] = useState<string | null>(null)
   const [articuloNombre, setArticuloNombre] = useState(EQUIPO_BUPC_SUGERIDO[0])
   const [articuloFolio, setArticuloFolio] = useState('')
   const [articuloCantidad, setArticuloCantidad] = useState(1)
   const [mantenerEnCadena, setMantenerEnCadena] = useState(true)
 
-  // Modal Acta de Incidencia
   const [incidenciaObjetivo, setIncidenciaObjetivo] = useState<EquipoTurno | null>(null)
   const [motivoIncidencia, setMotivoIncidencia] = useState('')
   const [archivoEvidencia, setArchivoEvidencia] = useState<File | null>(null)
 
-  // Modal de consulta rápida de Ficha de Emergencia en operativo
   const [fichaEmergenciaUid, setFichaEmergenciaUid] = useState<string | null>(null)
 
-  useEffect(() => {
-    const cancelarAsis = escucharAsistenciasDeOperativo(
-      operativo.id,
-      (lista) => {
-        setAsistencias(lista)
-        setCargando(false)
-      },
-      (err) => {
-        setError(mensajeDeError(err))
-        setCargando(false)
-      },
-      ayJefe,
-    )
-    const cancelarPre = escucharPrerregistrosDeOperativo(
-      operativo.id,
-      setPrerregistros,
-      undefined,
-      ayJefe,
-    )
-    const cancelarEq = escucharEquiposDeOperativo(
-      operativo.id,
-      setEquipos,
-      (err) => setError(mensajeDeError(err)),
-      ayJefe,
-    )
-    const cancelarPerfiles = escucharPerfilesOperativosParaBitacora(
-      encargado,
-      (lista) => {
-        setPerfilesOperativos(lista)
-        setPerfilesCargados(true)
-      },
-      () => setPerfilesCargados(true),
-    )
-    const cancelarUsr = escucharUsuariosParaBitacora(encargado, setUsuarios, () => undefined)
+  const datos = useBitacoraDatos({
+    encargado,
+    operativoId: operativo.id,
+    ayJefe,
+    busqueda,
+    filtroEstado,
+    filtroGrupo,
+    filtroAyudantia,
+    busquedaPrerregistro,
+    alError: setError,
+  })
 
-    return () => {
-      cancelarAsis()
-      cancelarPre()
-      cancelarEq()
-      cancelarPerfiles()
-      cancelarUsr()
-    }
-  }, [operativo.id, encargado, ayJefe])
-
-  // Reiniciar nonce de idempotencia cada vez que cambian los parámetros del lote
   useEffect(() => {
     nonceLoteRef.current = null
   }, [seleccionadosIds, rapidoArticulo, rapidoCantidad])
 
-  const mapaUsuarios = useMemo(
-    () => new Map(usuarios.map((u) => [u.uid, u])),
-    [usuarios],
-  )
-
-  const mapaPerfiles = useMemo(
-    () => new Map(perfilesOperativos.map((p) => [p.uid, p])),
-    [perfilesOperativos],
-  )
-
-  const mapaPrerregistros = useMemo(
-    () => new Map(prerregistros.map((p) => [p.usuario_uid, p])),
-    [prerregistros],
-  )
-
-  const idsAsistenciasVisibles = useMemo(
-    () => new Set(asistencias.map((a) => a.id)),
-    [asistencias],
-  )
-
-  const equiposVisibles = useMemo(
-    () => (ayJefe ? equipos.filter((eq) => idsAsistenciasVisibles.has(eq.asistencia_id)) : equipos),
-    [equipos, ayJefe, idsAsistenciasVisibles],
-  )
-
-  // Cruce en memoria prerregistros <-> asistencias_personal estrictamente por `usuario_uid`
-  // (nunca por ayudantía). Si el actor es Jefe de Ayudantía y el integrante fue reasignado fuera
-  // de su ayudantía después del prerregistro, se excluye de "Por llegar" para evitar pendientes fantasma.
-  const { uidsPrerregistrados, pendientesDeLlegar, confirmadosCount } = useMemo(() => {
-    const uidsAsis = new Set(asistencias.map((a) => a.usuario_uid))
-    const uidsPre = new Set(prerregistros.map((p) => p.usuario_uid))
-    const pendientes: PrerregistroOperativo[] = []
-    let confirmados = 0
-    for (const p of prerregistros) {
-      if (uidsAsis.has(p.usuario_uid)) {
-        confirmados++
-      } else if (!ayJefe || !perfilesCargados || mapaPerfiles.has(p.usuario_uid)) {
-        pendientes.push(p)
-      }
-    }
-    return {
-      uidsPrerregistrados: uidsPre,
-      pendientesDeLlegar: pendientes,
-      confirmadosCount: confirmados,
-    }
-  }, [asistencias, prerregistros, ayJefe, perfilesCargados, mapaPerfiles])
-
-  const { equiposBupcPorAsistencia, equiposPropiosPorAsistencia } = useMemo(() => {
-    const mapaBupc = new Map<string, EquipoTurno[]>()
-    const mapaPropios = new Map<string, EquipoTurno[]>()
-    for (const eq of equiposVisibles) {
-      const destino = eq.origen_material === 'Propio' ? mapaPropios : mapaBupc
-      const lista = destino.get(eq.asistencia_id) ?? []
-      lista.push(eq)
-      destino.set(eq.asistencia_id, lista)
-    }
-    return { equiposBupcPorAsistencia: mapaBupc, equiposPropiosPorAsistencia: mapaPropios }
-  }, [equiposVisibles])
-
-  const gruposDisponibles = useMemo(() => {
-    const set = new Set<string>()
-    for (const a of asistencias) {
-      set.add(etiquetaGrupoAsistencia(a, mapaPerfiles))
-    }
-    for (const p of prerregistros) {
-      set.add(p.subgrupo || p.etapa)
-    }
-    return Array.from(set).sort((x, y) => x.localeCompare(y, 'es-MX'))
-  }, [asistencias, prerregistros, mapaPerfiles])
-
-  const ayudantiasDisponibles = useMemo(() => {
-    const set = new Set<string>()
-    for (const a of asistencias) {
-      set.add(a.ayudantia_slot)
-    }
-    for (const p of prerregistros) {
-      set.add(p.ayudantia)
-    }
-    return Array.from(set).sort((x, y) => x.localeCompare(y, 'es-MX'))
-  }, [asistencias, prerregistros])
-
-  // Contadores discretos para chips de estatus
-  const conteos = useMemo(() => {
-    let enTurno = 0
-    let conAdeudo = 0
-    let salidos = 0
-    for (const a of asistencias) {
-      if (a.hora_salida !== null) salidos++
-      else enTurno++
-      if (a.equipos_bupc_pendientes > 0) conAdeudo++
-    }
-    return {
-      todos: asistencias.length,
-      enTurno,
-      conAdeudo,
-      salidos,
-      porLlegar: pendientesDeLlegar.length,
-    }
-  }, [asistencias, pendientesDeLlegar.length])
-
-  const filtradas = useMemo(() => {
-    const q = busqueda.trim().toLowerCase()
-    return asistencias.filter((a) => {
-      if (filtroEstado === 'en_turno' && a.hora_salida !== null) return false
-      if (filtroEstado === 'con_adeudo' && a.equipos_bupc_pendientes <= 0) return false
-      if (filtroEstado === 'salidos' && a.hora_salida === null) return false
-
-      const grupo = etiquetaGrupoAsistencia(a, mapaPerfiles)
-      if (filtroGrupo !== 'TODOS' && grupo !== filtroGrupo) return false
-      if (filtroAyudantia !== 'TODAS' && a.ayudantia_slot !== filtroAyudantia) return false
-
-      if (!q) return true
-      const p = mapaPerfiles.get(a.usuario_uid)
-      const u = mapaUsuarios.get(a.usuario_uid)
-      const claveRadio = (p?.clave_radio || u?.clave_radio || u?.clave_personal_radio || '').toLowerCase()
-      return (
-        a.usuario_nombre.toLowerCase().includes(q) ||
-        a.usuario_cuenta.toLowerCase().includes(q) ||
-        a.rol_en_turno.toLowerCase().includes(q) ||
-        grupo.toLowerCase().includes(q) ||
-        claveRadio.includes(q)
-      )
-    })
-  }, [asistencias, filtroEstado, filtroGrupo, filtroAyudantia, busqueda, mapaPerfiles, mapaUsuarios])
-
-  const pendientesFiltrados = useMemo(() => {
-    const q = busqueda.trim().toLowerCase()
-    return pendientesDeLlegar.filter((p) => {
-      const grupo = p.subgrupo || p.etapa
-      if (filtroGrupo !== 'TODOS' && grupo !== filtroGrupo) return false
-      if (filtroAyudantia !== 'TODAS' && p.ayudantia !== filtroAyudantia) return false
-      if (!q) return true
-      return (
-        p.usuario_nombre.toLowerCase().includes(q) ||
-        p.usuario_cuenta.toLowerCase().includes(q) ||
-        grupo.toLowerCase().includes(q)
-      )
-    })
-  }, [pendientesDeLlegar, filtroGrupo, filtroAyudantia, busqueda])
-
-  const perfilesActivos = useMemo(
-    () => perfilesOperativos.filter((p) => p.estatus === 'Activo'),
-    [perfilesOperativos],
-  )
-
-  const candidatosPrerregistro = useMemo(() => {
-    const q = busquedaPrerregistro.trim().toLowerCase()
-    const uidsConAsis = new Set(asistencias.map((a) => a.usuario_uid))
-    return perfilesActivos.filter((p) => {
-      if (uidsPrerregistrados.has(p.uid) || uidsConAsis.has(p.uid)) return false
-      if (!q) return true
-      const grupo = (p.subgrupo || p.etapa || '').toLowerCase()
-      return (
-        p.nombre_completo.toLowerCase().includes(q) ||
-        p.numero_cuenta.toLowerCase().includes(q) ||
-        grupo.includes(q)
-      )
-    })
-  }, [perfilesActivos, uidsPrerregistrados, asistencias, busquedaPrerregistro])
   const asistenciaMaterialActiva =
-    asistencias.find((a) => a.id === materialAsistenciaId) ?? null
+    datos.asistencias.find((a) => a.id === materialAsistenciaId) ?? null
   const equiposBupcMaterialActivo = asistenciaMaterialActiva
-    ? (equiposBupcPorAsistencia.get(asistenciaMaterialActiva.id) ?? [])
+    ? (datos.equiposBupcPorAsistencia.get(asistenciaMaterialActiva.id) ?? [])
     : []
   const equiposPropiosMaterialActivo = asistenciaMaterialActiva
-    ? (equiposPropiosPorAsistencia.get(asistenciaMaterialActiva.id) ?? [])
+    ? (datos.equiposPropiosPorAsistencia.get(asistenciaMaterialActiva.id) ?? [])
     : []
 
-  const asistenciasSeleccionadasAbiertas = asistencias.filter(
+  const asistenciasSeleccionadasAbiertas = datos.asistencias.filter(
     (a) => seleccionadosIds.includes(a.id) && a.hora_salida === null,
   )
 
@@ -416,7 +171,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
   }
 
   function seleccionarTodosEnTurnoFiltrados() {
-    const idsAbiertos = filtradas.filter((a) => a.hora_salida === null).map((a) => a.id)
+    const idsAbiertos = datos.filtradas.filter((a) => a.hora_salida === null).map((a) => a.id)
     const todosMarcados =
       idsAbiertos.length > 0 && idsAbiertos.every((id) => seleccionadosIds.includes(id))
     if (todosMarcados) {
@@ -424,6 +179,13 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
     } else {
       setSeleccionadosIds((prev) => Array.from(new Set([...prev, ...idsAbiertos])))
     }
+  }
+
+  function abrirCajonMaterial(asistenciaId: string) {
+    setMaterialAsistenciaId(asistenciaId)
+    setArticuloNombre(EQUIPO_BUPC_SUGERIDO[0])
+    setArticuloFolio('')
+    setArticuloCantidad(1)
   }
 
   async function manejarEscanerQr(codigo: string) {
@@ -438,19 +200,16 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
           setError('Escanea la Credencial Digital QR de un brigadista para gestionar su material.')
           return
         }
-        const abierta = asistencias.find(
+        const abierta = datos.asistencias.find(
           (a) => a.usuario_uid === parsed.uid && a.hora_salida === null,
         )
         const cualquierAsis =
-          abierta ?? asistencias.find((a) => a.usuario_uid === parsed.uid) ?? null
+          abierta ?? datos.asistencias.find((a) => a.usuario_uid === parsed.uid) ?? null
         if (!cualquierAsis) {
           setError('Ese brigadista no tiene asistencia registrada en este operativo.')
           return
         }
-        setMaterialAsistenciaId(cualquierAsis.id)
-        setArticuloNombre(EQUIPO_BUPC_SUGERIDO[0])
-        setArticuloFolio('')
-        setArticuloCantidad(1)
+        abrirCajonMaterial(cualquierAsis.id)
         return
       }
 
@@ -512,7 +271,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
     e.preventDefault()
     setError(null)
     setAviso(null)
-    const brigadista = mapaPerfiles.get(uidManual) ?? mapaUsuarios.get(uidManual)
+    const brigadista = datos.mapaPerfiles.get(uidManual) ?? datos.mapaUsuarios.get(uidManual)
     if (!brigadista) {
       setError('Selecciona un brigadista del padrón.')
       return
@@ -707,7 +466,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
 
   async function manejarEntradaDesdePrerregistro(p: PrerregistroOperativo) {
     if (!recepcionAbierta) return
-    const integrante = mapaPerfiles.get(p.usuario_uid) ?? mapaUsuarios.get(p.usuario_uid)
+    const integrante = datos.mapaPerfiles.get(p.usuario_uid) ?? datos.mapaUsuarios.get(p.usuario_uid)
     if (!integrante) {
       setError('No se encontró el perfil activo de este integrante para registrar entrada manual.')
       return
@@ -735,7 +494,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
     setError(null)
     setAviso(null)
     try {
-      const res = await cerrarSalidaConCandado(a.id, encargado, true)
+      const res = await cerrarSalidaConCandado(a.id, encargado, true, a)
       if (res.bloqueado) {
         setCandadoPendientes(res.pendientes)
       } else {
@@ -748,12 +507,15 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
     }
   }
 
+  const integranteFichaEmergencia = fichaEmergenciaUid
+    ? (datos.mapaUsuarios.get(fichaEmergenciaUid) ?? null)
+    : null
+
   return (
     <section
       aria-label="Bitácora de Personal y Material"
       className="tarjeta flex flex-col overflow-hidden"
     >
-      {/* Banner solo lectura si Finalizado */}
       {esFinalizado && (
         <div className="flex items-center gap-2 border-b border-borde bg-superficie-suave px-4 py-2 text-xs font-semibold text-tinta-suave dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta-suave">
           <Lock size={14} strokeWidth={2} />
@@ -770,9 +532,8 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
         </div>
       )}
 
-      {/* Barra fija superior de acciones, búsqueda instantánea y filtros 100% en cliente */}
+      {/* Barra fija superior de acciones, búsqueda y filtros */}
       <div className="sticky top-0 z-10 flex flex-col gap-2.5 border-b border-borde bg-tarjeta p-3 dark:border-noche-borde dark:bg-noche-tarjeta">
-        {/* Fila 1: búsqueda + acciones principales */}
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-44 flex-1">
             <Search
@@ -857,23 +618,26 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
           )}
         </div>
 
-        {/* Resumen rápido de convocatoria/prerregistro cuando aplica */}
-        {(prerregistros.length > 0 || operativo.convocatoria_abierta) && (
+        {(datos.prerregistros.length > 0 || operativo.convocatoria_abierta) && (
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-borde bg-superficie-suave px-3 py-1.5 text-[11px] font-semibold text-tinta-suave dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta-suave">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 tabular-nums">
               <span className="inline-flex items-center gap-1 text-tinta dark:text-noche-tinta">
                 <Users size={12} strokeWidth={2} className="text-udec dark:text-activo-claro" />
                 <span>
-                  Apuntados: <strong>{prerregistros.length}</strong>
+                  Apuntados: <strong>{datos.prerregistros.length}</strong>
                   {operativo.cupo_sugerido ? `/${operativo.cupo_sugerido}` : ''}
                 </span>
               </span>
               <span className="text-activo dark:text-activo-claro">
-                Confirmados: <strong>{confirmadosCount}</strong>
+                Confirmados: <strong>{datos.confirmadosCount}</strong>
               </span>
-              <span className={esFinalizado ? 'text-tinta-suave' : 'text-ambar-texto dark:text-noche-ambar-texto'}>
+              <span
+                className={
+                  esFinalizado ? 'text-tinta-suave' : 'text-ambar-texto dark:text-noche-ambar-texto'
+                }
+              >
                 {esFinalizado ? 'No asistió' : 'Por llegar'}:{' '}
-                <strong>{pendientesDeLlegar.length}</strong>
+                <strong>{datos.pendientesDeLlegar.length}</strong>
               </span>
             </div>
             {!esFinalizado && (
@@ -884,18 +648,17 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
           </div>
         )}
 
-        {/* Fila 2: chips de estatus + filtros por Etapa/Grupo y Ayudantía */}
         <div className="flex flex-wrap items-center gap-1.5">
           {(
             [
-              { id: 'todos', label: 'Todos', count: conteos.todos },
-              { id: 'en_turno', label: 'En turno', count: conteos.enTurno },
-              { id: 'con_adeudo', label: 'Con adeudo', count: conteos.conAdeudo },
-              { id: 'salidos', label: 'Salidos', count: conteos.salidos },
+              { id: 'todos', label: 'Todos', count: datos.conteos.todos },
+              { id: 'en_turno', label: 'En turno', count: datos.conteos.enTurno },
+              { id: 'con_adeudo', label: 'Con adeudo', count: datos.conteos.conAdeudo },
+              { id: 'salidos', label: 'Salidos', count: datos.conteos.salidos },
               {
                 id: 'por_llegar',
                 label: esFinalizado ? 'No asistió' : 'Por llegar',
-                count: conteos.porLlegar,
+                count: datos.conteos.porLlegar,
               },
             ] as const
           ).map((chip) => {
@@ -917,7 +680,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
             )
           })}
 
-          {gruposDisponibles.length > 1 && (
+          {datos.gruposDisponibles.length > 1 && (
             <select
               aria-label="Filtrar por etapa o grupo"
               value={filtroGrupo}
@@ -925,7 +688,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
               className="campo min-h-8 w-auto py-0.5 text-[11px] font-semibold"
             >
               <option value="TODOS">Etapa / Grupo</option>
-              {gruposDisponibles.map((g) => (
+              {datos.gruposDisponibles.map((g) => (
                 <option key={g} value={g}>
                   {g}
                 </option>
@@ -933,7 +696,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
             </select>
           )}
 
-          {!ayJefe && ayudantiasDisponibles.length > 1 && (
+          {!ayJefe && datos.ayudantiasDisponibles.length > 1 && (
             <select
               aria-label="Filtrar por ayudantía"
               value={filtroAyudantia}
@@ -941,7 +704,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
               className="campo min-h-8 w-auto py-0.5 text-[11px] font-semibold"
             >
               <option value="TODAS">Ayudantía</option>
-              {ayudantiasDisponibles.map((ay) => (
+              {datos.ayudantiasDisponibles.map((ay) => (
                 <option key={ay} value={ay}>
                   {etiquetaAyudantia(ay)}
                 </option>
@@ -950,10 +713,9 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
           )}
         </div>
 
-        {/* Barra de asignación rápida de material repetitivo en lote */}
         {!esFinalizado && modoRapidoAbierto && (
           <form
-            onSubmit={manejarAsignacionRapidaMultiple}
+            onSubmit={(e) => void manejarAsignacionRapidaMultiple(e)}
             className="flex flex-col gap-2 rounded-lg border border-udec/40 bg-salvia/70 p-2.5 dark:border-activo-claro/40 dark:bg-noche-campo"
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1043,529 +805,50 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
         </div>
       )}
 
-      {/* Listado denso (40-80 personas): Por llegar / No asistió O Asistencias reales */}
-      {cargando ? (
+      {datos.cargando ? (
         <div className="flex flex-col gap-2 p-3">
           <div className="h-9 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
           <div className="h-9 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
           <div className="h-9 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
         </div>
       ) : filtroEstado === 'por_llegar' ? (
-        pendientesFiltrados.length === 0 ? (
-          <div className="flex flex-col items-center gap-1.5 p-8 text-center">
-            <p className="text-sm font-semibold text-tinta dark:text-noche-tinta">
-              {pendientesDeLlegar.length === 0
-                ? esFinalizado
-                  ? 'Todos los prerregistrados asistieron al operativo'
-                  : 'No hay integrantes pendientes por llegar'
-                : 'Sin coincidencias con los filtros activos'}
-            </p>
-            <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-              {pendientesDeLlegar.length === 0 && !esFinalizado
-                ? 'Usa "Prerregistrar" para apuntar integrantes previamente o abre la convocatoria en Resumen.'
-                : 'Ajusta el buscador o los filtros de etapa y ayudantía.'}
-            </p>
-          </div>
-        ) : (
-          <div className="divide-y divide-borde dark:divide-noche-borde">
-            {pendientesFiltrados.map((p) => {
-              const grupo = p.subgrupo || p.etapa
-              return (
-                <div
-                  key={p.usuario_uid}
-                  className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5 hover:bg-superficie-suave/60 dark:hover:bg-noche-campo/50"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="truncate text-xs font-bold text-tinta dark:text-noche-tinta">
-                        {normalizarNombrePropio(p.usuario_nombre)}
-                      </span>
-                      <span
-                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                          esFinalizado
-                            ? 'bg-superficie-suave text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave'
-                            : 'bg-ambar-suave text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto'
-                        }`}
-                      >
-                        <Clock size={10} strokeWidth={2} />
-                        <span>{esFinalizado ? 'No asistió' : 'Por llegar'}</span>
-                      </span>
-                      <span className="rounded bg-superficie-suave px-1.5 py-0.5 text-[10px] font-semibold text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave">
-                        {p.origen === 'Autoregistro' ? 'Autoregistro' : 'Manual'}
-                      </span>
-                    </div>
-                    <p className="mt-0.5 truncate text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
-                      {grupo} · {etiquetaAyudantia(p.ayudantia)} ·{' '}
-                      <span className="tabular-nums">{p.usuario_cuenta}</span>
-                    </p>
-                  </div>
-
-                  <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-                    <select
-                      aria-label={`Rol preasignado de ${p.usuario_nombre}`}
-                      value={p.rol_en_turno ?? rolOperativoPorAyudantia(p.ayudantia)}
-                      disabled={esFinalizado}
-                      onChange={(e) =>
-                        void manejarActualizarRolPrerregistro(p, e.target.value as RolEnTurno)
-                      }
-                      className="campo min-h-8 w-auto py-0.5 text-[11px]"
-                    >
-                      {opcionesRolEnTurno(p.rol_en_turno ?? rolOperativoPorAyudantia(p.ayudantia)).map(
-                        (rol) => (
-                          <option key={rol} value={rol}>
-                            {rol}
-                          </option>
-                        ),
-                      )}
-                    </select>
-                    {!esFinalizado && (
-                      <>
-                        {recepcionAbierta && (
-                          <button
-                            type="button"
-                            disabled={ocupadoId === `inpre-${p.usuario_uid}`}
-                            onClick={() => void manejarEntradaDesdePrerregistro(p)}
-                            className="btn-verde min-h-8 px-2.5 text-[11px]"
-                          >
-                            <UserPlus size={12} strokeWidth={2} />
-                            <span>
-                              {ocupadoId === `inpre-${p.usuario_uid}`
-                                ? 'Registrando...'
-                                : 'Confirmar entrada'}
-                            </span>
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          disabled={ocupadoId === `delpre-${p.usuario_uid}`}
-                          onClick={() => void manejarQuitarPrerregistro(p)}
-                          title="Quitar de la lista previa"
-                          aria-label={`Quitar a ${p.usuario_nombre} del prerregistro`}
-                          className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-lg border border-borde-fuerte bg-tarjeta px-2.5 text-[11px] font-semibold text-tinta-suave hover:border-alerta hover:text-alerta disabled:opacity-50 dark:border-noche-borde dark:bg-noche-tarjeta dark:text-noche-tinta-suave dark:hover:text-noche-rojo-texto"
-                        >
-                          <Trash2 size={12} strokeWidth={2} />
-                          <span>Quitar</span>
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )
-      ) : filtradas.length === 0 ? (
-        <div className="flex flex-col items-center gap-1.5 p-8 text-center">
-          <p className="text-sm font-semibold text-tinta dark:text-noche-tinta">
-            {asistencias.length === 0
-              ? 'Sin personal registrado en este operativo'
-              : 'Sin coincidencias con los filtros activos'}
-          </p>
-          <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-            {asistencias.length === 0
-              ? 'Escanea una credencial QR o usa el registro manual para iniciar el pase de lista.'
-              : 'Ajusta el buscador o los chips de estatus.'}
-          </p>
-        </div>
+        <ListaPorLlegar
+          esFinalizado={esFinalizado}
+          recepcionAbierta={recepcionAbierta}
+          pendientesDeLlegar={datos.pendientesDeLlegar}
+          pendientesFiltrados={datos.pendientesFiltrados}
+          ocupadoId={ocupadoId}
+          alActualizarRol={(p, rol) => void manejarActualizarRolPrerregistro(p, rol)}
+          alConfirmarEntrada={(p) => void manejarEntradaDesdePrerregistro(p)}
+          alQuitar={(p) => void manejarQuitarPrerregistro(p)}
+        />
       ) : (
-        <>
-          {/* MÓVIL (< md): filas densas de 2 líneas sin scroll horizontal */}
-          <div className="divide-y divide-borde md:hidden dark:divide-noche-borde">
-            {filtradas.map((a) => {
-              const cerrada = a.hora_salida !== null
-              const grupo = etiquetaGrupoAsistencia(a, mapaPerfiles)
-              const marcado = seleccionadosIds.includes(a.id)
-              const propios = equiposPropiosPorAsistencia.get(a.id) ?? []
-              const estabaPrerregistrado = uidsPrerregistrados.has(a.usuario_uid)
-
-              return (
-                <div key={a.id} className="flex flex-col gap-1.5 px-3 py-2">
-                  {/* Línea 1: Selección + Nombre + Badge de estado + Material propio */}
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                      {!esFinalizado && modoRapidoAbierto && !cerrada && (
-                        <input
-                          type="checkbox"
-                          checked={marcado}
-                          onChange={() => alternarSeleccion(a.id)}
-                          aria-label={`Seleccionar a ${a.usuario_nombre}`}
-                          className="h-4 w-4 shrink-0 rounded accent-udec"
-                        />
-                      )}
-                      <span className="truncate text-xs font-bold text-tinta dark:text-noche-tinta">
-                        {normalizarNombrePropio(a.usuario_nombre)}
-                      </span>
-                      {estabaPrerregistrado ? (
-                        <span className="shrink-0 rounded bg-salvia px-1.5 py-0.5 text-[9px] font-bold text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
-                          Confirmado
-                        </span>
-                      ) : (
-                        <span className="shrink-0 rounded border border-borde px-1.5 py-0.5 text-[9px] font-semibold text-tinta-suave dark:border-noche-borde dark:text-noche-tinta-suave">
-                          Sin prerregistro
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="flex shrink-0 items-center gap-1.5">
-                      {propios.length > 0 && (
-                        <span
-                          title={`Material propio: ${propios.map((p) => p.nombre_articulo).join(', ')}`}
-                          className="rounded-full bg-salvia px-2 py-0.5 text-[10px] font-bold tabular-nums text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro"
-                        >
-                          Propio ({propios.length})
-                        </span>
-                      )}
-                      {cerrada ? (
-                        <span className="rounded-full bg-superficie-suave px-2 py-0.5 text-[10px] font-bold text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave">
-                          Salida {formatearHoraCorta(a.hora_salida?.toMillis())}
-                        </span>
-                      ) : a.equipos_bupc_pendientes > 0 ? (
-                        <span className="rounded-full bg-naranja-suave px-2 py-0.5 text-[10px] font-bold tabular-nums text-naranja-oscuro dark:bg-noche-campo dark:text-naranja">
-                          BUPC ({a.equipos_bupc_pendientes})
-                        </span>
-                      ) : (
-                        <span className="rounded-full bg-activo-suave px-2 py-0.5 text-[10px] font-bold text-activo dark:bg-noche-campo dark:text-activo-claro">
-                          En turno
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Línea 2: Metadatos compactos + Rol en turno + Acciones 1 toque */}
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-1.5">
-                      <p className="truncate text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
-                        {grupo} · {etiquetaAyudantia(a.ayudantia_slot)} ·{' '}
-                        {formatearHoraCorta(a.hora_entrada?.toMillis())}
-                      </p>
-                      <select
-                        aria-label={`Rol en turno de ${a.usuario_nombre}`}
-                        value={a.rol_en_turno}
-                        disabled={cerrada || esFinalizado}
-                        onChange={(e) =>
-                          void actualizarRolEnTurno(a.id, e.target.value as RolEnTurno).catch(
-                            (err) => setError(mensajeDeError(err)),
-                          )
-                        }
-                        className="campo min-h-7 w-auto py-0.5 text-[11px]"
-                      >
-                        {opcionesRolEnTurno(a.rol_en_turno).map((rol) => (
-                          <option key={rol} value={rol}>
-                            {rol}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="flex shrink-0 items-center gap-1">
-                      {mapaUsuarios.has(a.usuario_uid) && (
-                        <button
-                          type="button"
-                          onClick={() => setFichaEmergenciaUid(a.usuario_uid)}
-                          aria-label={`Consultar Ficha de Emergencia de ${a.usuario_nombre}`}
-                          title="Consultar Ficha de Emergencia"
-                          className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-alerta/45 bg-alerta-suave text-alerta dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
-                        >
-                          <HeartPulse size={13} strokeWidth={2} />
-                        </button>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setMaterialAsistenciaId(a.id)
-                          setArticuloNombre(EQUIPO_BUPC_SUGERIDO[0])
-                          setArticuloFolio('')
-                          setArticuloCantidad(1)
-                        }}
-                        className="cursor-pointer rounded border border-borde bg-salvia px-2 py-1 text-[11px] font-bold text-udec-oscuro dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta"
-                      >
-                        Material
-                        {a.equipos_bupc_pendientes + propios.length > 0
-                          ? ` (${a.equipos_bupc_pendientes + propios.length})`
-                          : ''}
-                      </button>
-
-                      {!esFinalizado && (
-                        <button
-                          type="button"
-                          onClick={() => abrirModalVitales(a)}
-                          aria-label={`Signos vitales de ${a.usuario_nombre}`}
-                          className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-borde bg-fondo text-tinta-suave dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta-suave"
-                        >
-                          <Activity size={13} strokeWidth={2} />
-                        </button>
-                      )}
-
-                      {!esFinalizado && !cerrada && (
-                        <button
-                          type="button"
-                          disabled={ocupadoId === a.id}
-                          onClick={() => void manejarCerrarSalidaManual(a)}
-                          className="cursor-pointer rounded border border-borde-fuerte bg-tarjeta px-2 py-1 text-[11px] font-bold text-tinta disabled:opacity-50 dark:border-noche-borde dark:bg-noche-tarjeta dark:text-noche-tinta"
-                        >
-                          Salida
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-
-          {/* ESCRITORIO (md+): tabla densa sin tarjetas infladas */}
-          <div className="hidden overflow-x-auto md:block">
-            <table className="w-full border-collapse text-left">
-              <thead className="bg-udec-oscuro text-white">
-                <tr>
-                  {!esFinalizado && modoRapidoAbierto && (
-                    <th scope="col" className="w-9 px-2.5 py-2 text-center">
-                      <input
-                        type="checkbox"
-                        aria-label="Seleccionar todos en turno"
-                        onChange={seleccionarTodosEnTurnoFiltrados}
-                        checked={
-                          filtradas.some((a) => a.hora_salida === null) &&
-                          filtradas
-                            .filter((a) => a.hora_salida === null)
-                            .every((a) => seleccionadosIds.includes(a.id))
-                        }
-                        className="h-4 w-4 rounded accent-naranja"
-                      />
-                    </th>
-                  )}
-                  <th scope="col" className="px-3 py-2 text-[11px] font-semibold">
-                    Brigadista
-                  </th>
-                  <th scope="col" className="px-2.5 py-2 text-[11px] font-semibold">
-                    Entrada
-                  </th>
-                  <th scope="col" className="px-2.5 py-2 text-[11px] font-semibold">
-                    Rol / Estado
-                  </th>
-                  <th scope="col" className="px-2.5 py-2 text-[11px] font-semibold">
-                    Estatus turno
-                  </th>
-                  <th scope="col" className="px-2.5 py-2 text-[11px] font-semibold">
-                    Material
-                  </th>
-                  <th scope="col" className="px-3 py-2 text-right text-[11px] font-semibold">
-                    Acciones
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-borde dark:divide-noche-borde">
-                {filtradas.map((a) => {
-                  const cerrada = a.hora_salida !== null
-                  const grupo = etiquetaGrupoAsistencia(a, mapaPerfiles)
-                  const p = mapaPerfiles.get(a.usuario_uid)
-                  const u = mapaUsuarios.get(a.usuario_uid)
-                  const claveRadio = p?.clave_radio || u?.clave_radio || u?.clave_personal_radio || ''
-                  const marcado = seleccionadosIds.includes(a.id)
-                  const propios = equiposPropiosPorAsistencia.get(a.id) ?? []
-                  const estabaPrerregistrado = uidsPrerregistrados.has(a.usuario_uid)
-
-                  return (
-                    <tr
-                      key={a.id}
-                      className="hover:bg-superficie-suave/60 dark:hover:bg-noche-campo/50"
-                    >
-                      {!esFinalizado && modoRapidoAbierto && (
-                        <td className="px-2.5 py-1.5 text-center">
-                          {!cerrada && (
-                            <input
-                              type="checkbox"
-                              checked={marcado}
-                              onChange={() => alternarSeleccion(a.id)}
-                              aria-label={`Seleccionar a ${a.usuario_nombre}`}
-                              className="h-4 w-4 rounded accent-udec"
-                            />
-                          )}
-                        </td>
-                      )}
-
-                      <td className="px-3 py-1.5">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="text-xs font-bold text-tinta dark:text-noche-tinta">
-                            {normalizarNombrePropio(a.usuario_nombre)}
-                          </span>
-                          {estabaPrerregistrado ? (
-                            <span className="rounded bg-salvia px-1.5 py-0.5 text-[9px] font-bold text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
-                              Confirmado
-                            </span>
-                          ) : (
-                            <span className="rounded border border-borde px-1.5 py-0.5 text-[9px] font-semibold text-tinta-suave dark:border-noche-borde dark:text-noche-tinta-suave">
-                              Sin prerregistro
-                            </span>
-                          )}
-                        </div>
-                        <span className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
-                          {grupo} · {etiquetaAyudantia(a.ayudantia_slot)} ·{' '}
-                          <span className="tabular-nums">{a.usuario_cuenta}</span>
-                          {claveRadio ? ` · ${claveRadio}` : ''}
-                        </span>
-                      </td>
-
-                      <td className="px-2.5 py-1.5 whitespace-nowrap">
-                        <span className="block text-xs font-bold tabular-nums text-tinta dark:text-noche-tinta">
-                          {formatearHoraCorta(a.hora_entrada?.toMillis())}
-                        </span>
-                        <span className="text-[10px] text-tinta-suave dark:text-noche-tinta-suave">
-                          {etiquetaMetodoEntrada(a.metodo_entrada)}
-                        </span>
-                      </td>
-
-                      <td className="px-2.5 py-1.5">
-                        <div className="flex items-center gap-1.5">
-                          <select
-                            aria-label={`Rol en turno de ${a.usuario_nombre}`}
-                            value={a.rol_en_turno}
-                            disabled={cerrada || esFinalizado}
-                            onChange={(e) =>
-                              void actualizarRolEnTurno(a.id, e.target.value as RolEnTurno).catch(
-                                (err) => setError(mensajeDeError(err)),
-                              )
-                            }
-                            className="campo min-h-8 w-auto py-0.5 text-[11px]"
-                          >
-                            {opcionesRolEnTurno(a.rol_en_turno).map((rol) => (
-                              <option key={rol} value={rol}>
-                                {rol}
-                              </option>
-                            ))}
-                          </select>
-                          <select
-                            aria-label={`Estado operativo de ${a.usuario_nombre}`}
-                            value={a.estado_operativo}
-                            disabled={cerrada || esFinalizado}
-                            onChange={(e) =>
-                              void actualizarEstadoOperativo(
-                                a.id,
-                                e.target.value as EstadoOperativo,
-                              ).catch((err) => setError(mensajeDeError(err)))
-                            }
-                            className="campo min-h-8 w-auto py-0.5 text-[11px] font-semibold"
-                          >
-                            {ESTADOS_OPERATIVOS.map((est) => (
-                              <option key={est} value={est}>
-                                {est}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </td>
-
-                      <td className="px-2.5 py-1.5 whitespace-nowrap">
-                        {cerrada ? (
-                          <div>
-                            <span className="inline-flex rounded-full bg-superficie-suave px-2 py-0.5 text-[10px] font-bold text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave">
-                              Salida registrada
-                            </span>
-                            <span className="mt-0.5 block text-[10px] font-semibold tabular-nums text-tinta-suave dark:text-noche-tinta-suave">
-                              {formatearHoraCorta(a.hora_salida?.toMillis())} ({a.horas_totales ?? 0} h)
-                            </span>
-                          </div>
-                        ) : a.equipos_bupc_pendientes > 0 ? (
-                          <span className="inline-flex rounded-full bg-naranja-suave px-2 py-0.5 text-[10px] font-bold tabular-nums text-naranja-oscuro dark:bg-noche-campo dark:text-naranja">
-                            Con material ({a.equipos_bupc_pendientes})
-                          </span>
-                        ) : (
-                          <span className="inline-flex rounded-full bg-activo-suave px-2 py-0.5 text-[10px] font-bold text-activo dark:bg-noche-campo dark:text-activo-claro">
-                            En turno
-                          </span>
-                        )}
-                      </td>
-
-                      <td className="px-2.5 py-1.5 whitespace-nowrap">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setMaterialAsistenciaId(a.id)
-                              setArticuloNombre(EQUIPO_BUPC_SUGERIDO[0])
-                              setArticuloFolio('')
-                              setArticuloCantidad(1)
-                            }}
-                            className="btn-salvia min-h-8 px-2.5 text-[11px]"
-                          >
-                            <Package size={13} strokeWidth={2} />
-                            <span>
-                              {a.equipos_bupc_pendientes > 0
-                                ? `BUPC (${a.equipos_bupc_pendientes})`
-                                : esFinalizado
-                                  ? 'Ver'
-                                  : propios.length > 0
-                                    ? 'Ver / Entregar'
-                                    : 'Entregar'}
-                            </span>
-                          </button>
-
-                          {propios.length > 0 && (
-                            <button
-                              type="button"
-                              title={`Material propio: ${propios.map((p) => p.nombre_articulo).join(', ')}`}
-                              onClick={() => {
-                                setMaterialAsistenciaId(a.id)
-                                setArticuloNombre(EQUIPO_BUPC_SUGERIDO[0])
-                                setArticuloFolio('')
-                                setArticuloCantidad(1)
-                              }}
-                              className="cursor-pointer rounded-full border border-udec/35 bg-salvia/70 px-2 py-0.5 text-[10px] font-bold tabular-nums text-udec-oscuro hover:bg-salvia dark:border-activo-claro/35 dark:bg-noche-campo dark:text-activo-claro"
-                            >
-                              Propio ({propios.length})
-                            </button>
-                          )}
-                        </div>
-                      </td>
-
-                      <td className="px-3 py-1.5 text-right whitespace-nowrap">
-                        <div className="inline-flex items-center gap-1">
-                          {mapaUsuarios.has(a.usuario_uid) && (
-                            <button
-                              type="button"
-                              onClick={() => setFichaEmergenciaUid(a.usuario_uid)}
-                              title="Consultar Ficha de Emergencia"
-                              aria-label={`Consultar Ficha de Emergencia de ${a.usuario_nombre}`}
-                              className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-lg border border-alerta/45 bg-alerta-suave px-2 text-[11px] font-semibold text-alerta hover:border-alerta dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
-                            >
-                              <HeartPulse size={13} strokeWidth={2} />
-                              <span>Ficha</span>
-                            </button>
-                          )}
-                          {!esFinalizado && (
-                            <button
-                              type="button"
-                              onClick={() => abrirModalVitales(a)}
-                              title="Signos vitales"
-                              className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-lg border border-borde bg-fondo px-2 text-[11px] font-semibold text-tinta hover:border-udec dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta"
-                            >
-                              <Activity size={13} strokeWidth={2} />
-                              <span>{a.signos_vitales?.spo2 ? `${a.signos_vitales.spo2}%` : 'SV'}</span>
-                            </button>
-                          )}
-                          {!esFinalizado && !cerrada && (
-                            <button
-                              type="button"
-                              disabled={ocupadoId === a.id}
-                              onClick={() => void manejarCerrarSalidaManual(a)}
-                              className="btn-salvia min-h-8 px-2.5 text-[11px]"
-                            >
-                              {ocupadoId === a.id ? '...' : 'Cerrar Salida'}
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        </>
+        <TablaAsistencias
+          asistenciasTotales={datos.asistencias.length}
+          filtradas={datos.filtradas}
+          esFinalizado={esFinalizado}
+          modoRapidoAbierto={modoRapidoAbierto}
+          seleccionadosIds={seleccionadosIds}
+          ocupadoId={ocupadoId}
+          mapaPerfiles={datos.mapaPerfiles}
+          mapaUsuarios={datos.mapaUsuarios}
+          uidsPrerregistrados={datos.uidsPrerregistrados}
+          equiposPropiosPorAsistencia={datos.equiposPropiosPorAsistencia}
+          alAlternarSeleccion={alternarSeleccion}
+          alSeleccionarTodosEnTurno={seleccionarTodosEnTurnoFiltrados}
+          alCambiarRol={(id, rol) =>
+            void actualizarRolEnTurno(id, rol).catch((err) => setError(mensajeDeError(err)))
+          }
+          alCambiarEstado={(id, est: EstadoOperativo) =>
+            void actualizarEstadoOperativo(id, est).catch((err) => setError(mensajeDeError(err)))
+          }
+          alAbrirFichaEmergencia={setFichaEmergenciaUid}
+          alAbrirMaterial={abrirCajonMaterial}
+          alAbrirVitales={abrirModalVitales}
+          alCerrarSalidaManual={(a) => void manejarCerrarSalidaManual(a)}
+        />
       )}
 
-      {/* Modal Escáner QR (Asistencia o Directo a Material) */}
       {modoEscaner && (
         <QrScannerModal
           titulo={
@@ -1587,12 +870,10 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
         />
       )}
 
-      {/* Modal Alerta Roja INACTIVO */}
       {alertaInactivo && (
         <AlertaInactivoModal usuario={alertaInactivo} alCerrar={() => setAlertaInactivo(null)} />
       )}
 
-      {/* Modal Candado Duro */}
       {candadoPendientes && (
         <CandadoDuroModal
           pendientes={candadoPendientes}
@@ -1600,7 +881,6 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
         />
       )}
 
-      {/* Modal Anti-Rebote: Confirmación de salida anticipada (< 5 min) */}
       {salidaAnticipadaPendiente && (
         <div
           role="dialog"
@@ -1610,7 +890,11 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
         >
           <article className="tarjeta flex w-full max-w-sm flex-col gap-4 border-2 border-naranja p-5">
             <div className="flex items-start gap-2.5">
-              <Clock size={20} strokeWidth={2} className="mt-0.5 shrink-0 text-naranja-oscuro dark:text-naranja" />
+              <Clock
+                size={20}
+                strokeWidth={2}
+                className="mt-0.5 shrink-0 text-naranja-oscuro dark:text-naranja"
+              />
               <div className="flex flex-col gap-1">
                 <h3 className="text-base font-bold text-tinta dark:text-noche-tinta">
                   Confirmar salida anticipada
@@ -1649,816 +933,101 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
         </div>
       )}
 
-      {/* Modal de consulta rápida de Ficha de Emergencia */}
-      {fichaEmergenciaUid && mapaUsuarios.get(fichaEmergenciaUid) && (() => {
-        const integrante = mapaUsuarios.get(fichaEmergenciaUid)!
-        return (
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label={`Ficha de Emergencia de ${nombreCompleto(integrante)}`}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
-          >
-            <article className="tarjeta flex w-full max-w-md flex-col gap-3.5 p-5">
-              <div className="flex items-start justify-between gap-2 border-b border-borde pb-3 dark:border-noche-borde">
-                <div className="flex items-center gap-2">
-                  <HeartPulse
-                    size={19}
-                    strokeWidth={2}
-                    className="shrink-0 text-alerta dark:text-noche-rojo-texto"
-                  />
-                  <div>
-                    <h3 className="text-sm font-bold text-tinta dark:text-noche-tinta">
-                      Ficha de Emergencia
-                    </h3>
-                    <p className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
-                      {nombreCompleto(integrante)} · {etiquetaAyudantia(integrante.ayudantia)}
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setFichaEmergenciaUid(null)}
-                  aria-label="Cerrar Ficha de Emergencia"
-                  className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-tinta-suave"
-                >
-                  <X size={18} strokeWidth={2} />
-                </button>
-              </div>
+      {integranteFichaEmergencia && (
+        <ModalFichaEmergencia
+          integrante={integranteFichaEmergencia}
+          alCerrar={() => setFichaEmergenciaUid(null)}
+        />
+      )}
 
-              <dl className="flex flex-col gap-2 text-xs">
-                <div className="flex items-center justify-between gap-2">
-                  <dt className="font-semibold text-tinta-suave dark:text-noche-tinta-suave">
-                    Tipo de sangre
-                  </dt>
-                  <dd className="rounded-full bg-alerta-suave px-2.5 py-0.5 font-bold tabular-nums text-alerta dark:bg-noche-rojo-suave dark:text-noche-rojo-texto">
-                    {integrante.tipo_sangre}
-                  </dd>
-                </div>
-                <div className="flex items-start justify-between gap-2 border-t border-borde pt-2 dark:border-noche-borde">
-                  <dt className="font-semibold text-tinta-suave dark:text-noche-tinta-suave">
-                    Alergias
-                  </dt>
-                  <dd className="text-right font-semibold text-tinta dark:text-noche-tinta">
-                    {integrante.alergias || 'Ninguna'}
-                  </dd>
-                </div>
-                <div className="flex items-start justify-between gap-2 border-t border-borde pt-2 dark:border-noche-borde">
-                  <dt className="font-semibold text-tinta-suave dark:text-noche-tinta-suave">
-                    Condiciones / medicamentos
-                  </dt>
-                  <dd className="text-right font-medium text-tinta dark:text-noche-tinta">
-                    {integrante.padecimientos_medicamentos || 'Ninguno'}
-                  </dd>
-                </div>
-                <div className="flex items-center justify-between gap-2 border-t border-borde pt-2 dark:border-noche-borde">
-                  <dt className="font-semibold text-tinta-suave dark:text-noche-tinta-suave">
-                    Contacto de emergencia
-                  </dt>
-                  <dd className="text-right font-bold text-tinta dark:text-noche-tinta">
-                    {normalizarNombrePropio(integrante.contacto_emergencia_nombre)}
-                    {integrante.contacto_emergencia_parentesco
-                      ? ` (${integrante.contacto_emergencia_parentesco})`
-                      : ''}
-                  </dd>
-                </div>
-                <div className="flex items-center justify-between gap-2 border-t border-borde pt-2 dark:border-noche-borde">
-                  <dt className="font-semibold text-tinta-suave dark:text-noche-tinta-suave">
-                    Teléfono de emergencia
-                  </dt>
-                  <dd className="text-right font-bold tabular-nums text-tinta dark:text-noche-tinta">
-                    {integrante.contacto_emergencia_telefono}
-                  </dd>
-                </div>
-              </dl>
-
-              <div className="flex justify-end pt-1">
-                <button
-                  type="button"
-                  onClick={() => setFichaEmergenciaUid(null)}
-                  className="btn-salvia min-h-9 px-4 text-xs"
-                >
-                  Cerrar
-                </button>
-              </div>
-            </article>
-          </div>
-        )
-      })()}
-
-      {/* Cajón / Modal de Material del Brigadista (Material BUPC + Material Propio) */}
       {asistenciaMaterialActiva && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Material del turno del Brigadista"
-          className="fixed inset-0 z-50 flex items-end justify-center bg-black/75 sm:items-center sm:p-4"
-        >
-          <article className="tarjeta flex max-h-[88dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl sm:rounded-xl">
-            <header className="flex items-center justify-between gap-2 border-b border-borde bg-udec px-4 py-3 text-white dark:border-noche-borde">
-              <div className="min-w-0">
-                <h3 className="truncate text-sm font-bold">
-                  Material del turno · {normalizarNombrePropio(asistenciaMaterialActiva.usuario_nombre)}
-                </h3>
-                <p className="text-[11px] text-white/85 tabular-nums">
-                  BUPC pendientes: {asistenciaMaterialActiva.equipos_bupc_pendientes} · Propio
-                  registrado: {equiposPropiosMaterialActivo.length}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setMaterialAsistenciaId(null)}
-                aria-label="Cerrar cajón de material"
-                className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/25"
-              >
-                <X size={17} strokeWidth={2} />
-              </button>
-            </header>
-
-            <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
-              {/* Formulario de entrega rápida (solo si el turno sigue abierto y operativo no finalizado) */}
-              {!esFinalizado && asistenciaMaterialActiva.hora_salida === null && (
-                <form
-                  onSubmit={manejarAsignarEquipoIndividual}
-                  className="flex flex-col gap-2.5 rounded-lg border border-borde bg-superficie-suave p-3 dark:border-noche-borde dark:bg-noche-campo"
-                >
-                  <span className="text-xs font-bold text-tinta dark:text-noche-tinta">
-                    Entregar nuevo artículo BUPC
-                  </span>
-
-                  <div className="flex flex-wrap gap-1">
-                    {EQUIPO_BUPC_SUGERIDO.map((item) => (
-                      <button
-                        key={item}
-                        type="button"
-                        onClick={() => setArticuloNombre(item)}
-                        className={`cursor-pointer rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
-                          articuloNombre === item
-                            ? 'bg-udec text-white'
-                            : 'border border-borde bg-tarjeta text-tinta dark:border-noche-borde dark:bg-noche-tarjeta dark:text-noche-tinta-suave'
-                        }`}
-                      >
-                        {item}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-12">
-                    <input
-                      type="text"
-                      maxLength={120}
-                      placeholder="Nombre del artículo"
-                      value={articuloNombre}
-                      onChange={(e) => setArticuloNombre(e.target.value)}
-                      className="campo min-h-9 text-xs sm:col-span-6"
-                      required
-                    />
-                    <input
-                      type="text"
-                      maxLength={60}
-                      placeholder="Serie o folio (opcional)"
-                      value={articuloFolio}
-                      onChange={(e) => setArticuloFolio(e.target.value)}
-                      className="campo min-h-9 text-xs tabular-nums sm:col-span-4"
-                    />
-                    <input
-                      type="number"
-                      min={1}
-                      max={99}
-                      aria-label="Cantidad"
-                      value={articuloCantidad}
-                      onChange={(e) =>
-                        setArticuloCantidad(Math.max(1, Number(e.target.value) || 1))
-                      }
-                      className="campo min-h-9 text-center text-xs font-bold tabular-nums sm:col-span-2"
-                    />
-                  </div>
-
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <label className="inline-flex cursor-pointer items-center gap-1.5 text-[11px] font-semibold text-tinta-suave dark:text-noche-tinta-suave">
-                      <input
-                        type="checkbox"
-                        checked={mantenerEnCadena}
-                        onChange={(e) => setMantenerEnCadena(e.target.checked)}
-                        className="h-3.5 w-3.5 rounded accent-udec"
-                      />
-                      <span>Mantener abierto para seguir entregando</span>
-                    </label>
-                    <button
-                      type="submit"
-                      disabled={ocupadoId === asistenciaMaterialActiva.id}
-                      className="btn-naranja min-h-9 px-3.5 text-xs"
-                    >
-                      <PackagePlus size={14} strokeWidth={2} />
-                      <span>
-                        {ocupadoId === asistenciaMaterialActiva.id ? 'Asignando...' : 'Entregar'}
-                      </span>
-                    </button>
-                  </div>
-                </form>
-              )}
-
-              {/* Sección 1: Material BUPC (sujeto a devolución) */}
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center justify-between gap-2">
-                  <h4 className="text-xs font-bold uppercase text-naranja-oscuro dark:text-naranja">
-                    Material BUPC ({equiposBupcMaterialActivo.length})
-                  </h4>
-                  <span className="text-[11px] font-medium text-tinta-suave dark:text-noche-tinta-suave">
-                    Sujeto a devolución
-                  </span>
-                </div>
-
-                {equiposBupcMaterialActivo.length === 0 ? (
-                  <p className="rounded-lg border border-borde bg-superficie-suave py-3.5 text-center text-xs text-tinta-suave dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta-suave">
-                    Sin artículos BUPC asignados aún.
-                  </p>
-                ) : (
-                  equiposBupcMaterialActivo.map((eq) => {
-                    const pendiente = !eq.devuelto && eq.acta_incidencia === null
-                    const cant = eq.cantidad ?? 1
-                    return (
-                      <div
-                        key={eq.id}
-                        className="flex flex-col gap-2 rounded-lg border border-borde bg-fondo p-2.5 dark:border-noche-borde dark:bg-noche-campo"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <p className="text-xs font-bold text-tinta dark:text-noche-tinta">
-                              {cant > 1 ? `${cant}× ` : ''}
-                              {eq.nombre_articulo}
-                              {eq.codigo_inventario ? ` (${eq.codigo_inventario})` : ''}
-                            </p>
-                            <p className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
-                              Entregado: {formatearHoraCorta(eq.creado_en?.toMillis())}
-                              {eq.creado_por_nombre ? ` · Por ${eq.creado_por_nombre}` : ''}
-                            </p>
-                            {eq.falla_reportada && (
-                              <p className="text-[11px] font-semibold text-alerta dark:text-noche-rojo-texto">
-                                Falla: {eq.falla_reportada}
-                              </p>
-                            )}
-                            {eq.acta_incidencia && (
-                              <p className="text-[11px] font-semibold text-ambar-texto dark:text-noche-ambar-texto">
-                                Acta: {eq.acta_incidencia.motivo}
-                              </p>
-                            )}
-                          </div>
-
-                          <span
-                            className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                              eq.devuelto
-                                ? 'bg-activo-suave text-activo dark:bg-noche-tarjeta dark:text-activo-claro'
-                                : eq.acta_incidencia
-                                  ? 'bg-ambar-suave text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto'
-                                  : 'bg-naranja-suave text-naranja-oscuro dark:bg-noche-tarjeta dark:text-naranja'
-                            }`}
-                          >
-                            {eq.devuelto ? 'Devuelto OK' : eq.acta_incidencia ? 'Con Acta' : 'Pendiente'}
-                          </span>
-                        </div>
-
-                        {pendiente && !esFinalizado && (
-                          <div className="flex flex-wrap gap-1.5">
-                            <button
-                              type="button"
-                              disabled={ocupadoId === eq.id}
-                              onClick={() => void manejarDevolverOk(eq)}
-                              className="cursor-pointer rounded border border-activo bg-activo-suave px-2.5 py-1 text-[11px] font-bold text-activo hover:bg-emerald-100 disabled:opacity-50 dark:border-activo-claro dark:bg-noche-tarjeta dark:text-activo-claro"
-                            >
-                              Devolver OK
-                            </button>
-                            <button
-                              type="button"
-                              disabled={ocupadoId === eq.id}
-                              onClick={() => {
-                                setIncidenciaObjetivo(eq)
-                                setMotivoIncidencia('')
-                                setArchivoEvidencia(null)
-                              }}
-                              className="cursor-pointer rounded border border-alerta bg-tarjeta px-2.5 py-1 text-[11px] font-bold text-alerta hover:bg-alerta-suave disabled:opacity-50 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
-                            >
-                              Acta de Incidencia
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })
-                )}
-              </div>
-
-              {/* Sección 2: Material Propio (informativo, no bloquea salida) */}
-              <div className="flex flex-col gap-2 border-t border-borde pt-3 dark:border-noche-borde">
-                <div className="flex items-center justify-between gap-2">
-                  <h4 className="text-xs font-bold uppercase text-udec dark:text-activo-claro">
-                    Material Propio ({equiposPropiosMaterialActivo.length})
-                  </h4>
-                  <span className="text-[11px] font-medium text-tinta-suave dark:text-noche-tinta-suave">
-                    Informativo · no bloquea salida
-                  </span>
-                </div>
-
-                {equiposPropiosMaterialActivo.length === 0 ? (
-                  <p className="rounded-lg border border-borde bg-superficie-suave py-3.5 text-center text-xs text-tinta-suave dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta-suave">
-                    Sin material propio registrado en este turno.
-                  </p>
-                ) : (
-                  <div className="flex flex-col gap-1.5">
-                    {equiposPropiosMaterialActivo.map((eq) => {
-                      const cant = eq.cantidad ?? 1
-                      return (
-                        <div
-                          key={eq.id}
-                          className="flex items-start justify-between gap-2 rounded-lg border border-udec/25 bg-salvia/40 p-2.5 dark:border-activo-claro/25 dark:bg-noche-campo"
-                        >
-                          <div className="min-w-0">
-                            <p className="text-xs font-bold text-tinta dark:text-noche-tinta">
-                              {cant > 1 ? `${cant}× ` : ''}
-                              {eq.nombre_articulo}
-                              {eq.codigo_inventario ? ` (${eq.codigo_inventario})` : ''}
-                            </p>
-                            <p className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
-                              Registrado: {formatearHoraCorta(eq.creado_en?.toMillis())}
-                            </p>
-                            {eq.falla_reportada && (
-                              <p className="text-[11px] font-semibold text-alerta dark:text-noche-rojo-texto">
-                                Observación: {eq.falla_reportada}
-                              </p>
-                            )}
-                          </div>
-                          <span className="shrink-0 rounded-full bg-salvia px-2 py-0.5 text-[10px] font-bold text-udec-oscuro dark:bg-noche-tarjeta dark:text-activo-claro">
-                            Propio
-                          </span>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-          </article>
-        </div>
+        <ModalMaterialBitacora
+          asistencia={asistenciaMaterialActiva}
+          equiposBupc={equiposBupcMaterialActivo}
+          equiposPropios={equiposPropiosMaterialActivo}
+          esFinalizado={esFinalizado}
+          ocupadoId={ocupadoId}
+          articuloNombre={articuloNombre}
+          articuloFolio={articuloFolio}
+          articuloCantidad={articuloCantidad}
+          mantenerEnCadena={mantenerEnCadena}
+          alCambiarNombre={setArticuloNombre}
+          alCambiarFolio={setArticuloFolio}
+          alCambiarCantidad={setArticuloCantidad}
+          alCambiarMantener={setMantenerEnCadena}
+          alAsignar={(e) => void manejarAsignarEquipoIndividual(e)}
+          alDevolverOk={(eq) => void manejarDevolverOk(eq)}
+          alAbrirIncidencia={(eq) => {
+            setIncidenciaObjetivo(eq)
+            setMotivoIncidencia('')
+            setArchivoEvidencia(null)
+          }}
+          alCerrar={() => setMaterialAsistenciaId(null)}
+        />
       )}
 
-      {/* Modal Prerregistro Manual previo (buscar integrantes activos y agregar/quitar en 1 clic) */}
       {modalPrerregistro && !esFinalizado && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Prerregistro previo de asistentes"
-          className="fixed inset-0 z-50 flex items-end justify-center bg-black/75 sm:items-center sm:p-4"
-        >
-          <article className="tarjeta flex max-h-[88dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl sm:rounded-xl">
-            <header className="flex shrink-0 items-center justify-between gap-2 border-b-3 border-naranja bg-udec px-4 py-3 text-white">
-              <div className="min-w-0">
-                <h3 className="truncate text-sm font-bold">
-                  Prerregistro previo · {operativo.nombre}
-                </h3>
-                <p className="text-[11px] text-white/85 tabular-nums">
-                  Apuntados: {prerregistros.length}
-                  {operativo.cupo_sugerido ? ` / ${operativo.cupo_sugerido}` : ''} · Confirmados:{' '}
-                  {confirmadosCount} · Por llegar: {pendientesDeLlegar.length}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setModalPrerregistro(false)}
-                aria-label="Cerrar prerregistro"
-                className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/25"
-              >
-                <X size={17} strokeWidth={2} />
-              </button>
-            </header>
-
-            <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
-              <div className="relative">
-                <Search
-                  size={15}
-                  strokeWidth={2}
-                  className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-tinta-suave dark:text-noche-tinta-suave"
-                />
-                <input
-                  type="search"
-                  placeholder="Buscar integrante activo por nombre, cuenta o grupo..."
-                  value={busquedaPrerregistro}
-                  onChange={(e) => setBusquedaPrerregistro(e.target.value)}
-                  className="campo min-h-10 pl-9 text-xs"
-                />
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <span className="text-[11px] font-bold uppercase tracking-wide text-tinta-suave dark:text-noche-tinta-suave">
-                  Integrantes disponibles ({candidatosPrerregistro.length})
-                </span>
-                {candidatosPrerregistro.length === 0 ? (
-                  <p className="rounded-lg border border-borde bg-superficie-suave py-4 text-center text-xs text-tinta-suave dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta-suave">
-                    {busquedaPrerregistro.trim()
-                      ? 'Sin integrantes disponibles con esa búsqueda.'
-                      : 'Todos los integrantes activos disponibles ya están apuntados o en turno.'}
-                  </p>
-                ) : (
-                  <div className="flex max-h-56 flex-col divide-y divide-borde overflow-y-auto rounded-lg border border-borde dark:divide-noche-borde dark:border-noche-borde">
-                    {candidatosPrerregistro.slice(0, 40).map((p) => (
-                      <div
-                        key={p.uid}
-                        className="flex items-center justify-between gap-2 px-3 py-2"
-                      >
-                        <div className="min-w-0">
-                          <span className="block truncate text-xs font-bold text-tinta dark:text-noche-tinta">
-                            {p.nombre_completo}
-                          </span>
-                          <span className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
-                            {p.subgrupo || p.etapa} · {etiquetaAyudantia(p.ayudantia)} ·{' '}
-                            <span className="tabular-nums">{p.numero_cuenta}</span>
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          disabled={ocupadoId === `pre-${p.uid}`}
-                          onClick={() => void manejarAgregarPrerregistro(p)}
-                          className="btn-verde min-h-8 shrink-0 px-2.5 text-[11px]"
-                        >
-                          <UserPlus size={12} strokeWidth={2} />
-                          <span>{ocupadoId === `pre-${p.uid}` ? '...' : 'Agregar'}</span>
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {pendientesDeLlegar.length > 0 && (
-                <div className="flex flex-col gap-1.5 border-t border-borde pt-3 dark:border-noche-borde">
-                  <span className="text-[11px] font-bold uppercase tracking-wide text-tinta-suave dark:text-noche-tinta-suave">
-                    Apuntados por llegar ({pendientesDeLlegar.length})
-                  </span>
-                  <div className="flex max-h-44 flex-col divide-y divide-borde overflow-y-auto rounded-lg border border-borde dark:divide-noche-borde dark:border-noche-borde">
-                    {pendientesDeLlegar.map((p) => {
-                      const rolPre = p.rol_en_turno ?? rolOperativoPorAyudantia(p.ayudantia)
-                      return (
-                        <div
-                          key={p.usuario_uid}
-                          className="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
-                        >
-                          <div className="min-w-0 flex-1">
-                            <span className="block truncate text-xs font-semibold text-tinta dark:text-noche-tinta">
-                              {normalizarNombrePropio(p.usuario_nombre)}
-                            </span>
-                            <span className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
-                              {p.subgrupo || p.etapa} ·{' '}
-                              {p.origen === 'Autoregistro' ? 'Autoregistro' : 'Manual'}
-                            </span>
-                          </div>
-                          <div className="flex shrink-0 items-center gap-1.5">
-                            <select
-                              aria-label={`Rol preasignado de ${p.usuario_nombre}`}
-                              value={rolPre}
-                              onChange={(e) =>
-                                void manejarActualizarRolPrerregistro(
-                                  p,
-                                  e.target.value as RolEnTurno,
-                                )
-                              }
-                              className="campo min-h-8 w-auto py-0.5 text-[11px]"
-                            >
-                              {opcionesRolEnTurno(rolPre).map((rol) => (
-                                <option key={rol} value={rol}>
-                                  {rol}
-                                </option>
-                              ))}
-                            </select>
-                            <button
-                              type="button"
-                              disabled={ocupadoId === `delpre-${p.usuario_uid}`}
-                              onClick={() => void manejarQuitarPrerregistro(p)}
-                              className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-1 rounded-lg border border-borde-fuerte bg-tarjeta px-2 text-[11px] font-semibold text-tinta-suave hover:border-alerta hover:text-alerta disabled:opacity-50 dark:border-noche-borde dark:bg-noche-tarjeta dark:text-noche-tinta-suave dark:hover:text-noche-rojo-texto"
-                            >
-                              <Trash2 size={12} strokeWidth={2} />
-                              <span>Quitar</span>
-                            </button>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
-              <div className="flex justify-end pt-1">
-                <button
-                  type="button"
-                  onClick={() => setModalPrerregistro(false)}
-                  className="btn-salvia min-h-9 px-4 text-xs"
-                >
-                  Listo
-                </button>
-              </div>
-            </div>
-          </article>
-        </div>
+        <ModalPrerregistroBitacora
+          operativo={operativo}
+          totalApuntados={datos.prerregistros.length}
+          confirmadosCount={datos.confirmadosCount}
+          pendientesDeLlegar={datos.pendientesDeLlegar}
+          candidatos={datos.candidatosPrerregistro}
+          busqueda={busquedaPrerregistro}
+          ocupadoId={ocupadoId}
+          alCambiarBusqueda={setBusquedaPrerregistro}
+          alAgregar={(p) => void manejarAgregarPrerregistro(p)}
+          alQuitar={(p) => void manejarQuitarPrerregistro(p)}
+          alActualizarRol={(p, rol) => void manejarActualizarRolPrerregistro(p, rol)}
+          alCerrar={() => setModalPrerregistro(false)}
+        />
       )}
 
-      {/* Modal Registro Manual */}
       {modalManual && !esFinalizado && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Registro Manual de Asistencia"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
-        >
-          <article className="tarjeta flex w-full max-w-md flex-col gap-4 p-5">
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold text-tinta dark:text-noche-tinta">
-                Registro Manual · {operativo.nombre}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setModalManual(false)}
-                aria-label="Cerrar"
-                className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-tinta-suave"
-              >
-                <X size={18} strokeWidth={2} />
-              </button>
-            </div>
-
-            <form onSubmit={manejarRegistroManual} className="flex flex-col gap-3">
-              <div className="flex flex-col gap-1">
-                <label htmlFor="manual-usr" className="etiqueta">
-                  Brigadista activo
-                </label>
-                <select
-                  id="manual-usr"
-                  value={uidManual}
-                  onChange={(e) => {
-                    const uid = e.target.value
-                    setUidManual(uid)
-                    const seleccionado = perfilesActivos.find((p) => p.uid === uid)
-                    if (seleccionado) {
-                      setRolManual(
-                        resolverRolInicialOperativo(
-                          ayudantiaEfectiva(seleccionado),
-                          mapaPrerregistros.get(seleccionado.uid),
-                        ),
-                      )
-                    } else {
-                      setRolManual('Sin definir')
-                    }
-                  }}
-                  className="campo"
-                  required
-                >
-                  <option value="">Selecciona un brigadista...</option>
-                  {perfilesActivos.map((p) => (
-                    <option key={p.uid} value={p.uid}>
-                      {p.nombre_completo} ({p.numero_cuenta})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <label htmlFor="manual-rol" className="etiqueta">
-                  Rol en turno
-                </label>
-                <select
-                  id="manual-rol"
-                  value={rolManual}
-                  onChange={(e) => setRolManual(e.target.value as RolEnTurno)}
-                  className="campo"
-                >
-                  {opcionesRolEnTurno(rolManual).map((rol) => (
-                    <option key={rol} value={rol}>
-                      {rol}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setModalManual(false)}
-                  className="btn-salvia"
-                >
-                  Cancelar
-                </button>
-                <button type="submit" disabled={ocupadoId === 'manual'} className="btn-verde">
-                  {ocupadoId === 'manual' ? 'Registrando...' : 'Registrar Entrada'}
-                </button>
-              </div>
-            </form>
-          </article>
-        </div>
+        <ModalRegistroManual
+          operativoNombre={operativo.nombre}
+          perfilesActivos={datos.perfilesActivos}
+          mapaPrerregistros={datos.mapaPrerregistros}
+          uidManual={uidManual}
+          rolManual={rolManual}
+          ocupado={ocupadoId === 'manual'}
+          alCambiarUid={setUidManual}
+          alCambiarRol={setRolManual}
+          alEnviar={(e) => void manejarRegistroManual(e)}
+          alCerrar={() => setModalManual(false)}
+        />
       )}
 
-      {/* Modal Signos Vitales */}
       {vitalesObjetivo && !esFinalizado && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Captura de Signos Vitales"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
-        >
-          <article className="tarjeta flex w-full max-w-md flex-col gap-4 p-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-base font-bold text-tinta dark:text-noche-tinta">
-                  Captura de Signos Vitales
-                </h3>
-                <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-                  {vitalesObjetivo.usuario_nombre}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setVitalesObjetivo(null)}
-                aria-label="Cerrar"
-                className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-tinta-suave"
-              >
-                <X size={18} strokeWidth={2} />
-              </button>
-            </div>
-
-            <form onSubmit={manejarGuardarVitales} className="flex flex-col gap-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="vit-spo2" className="etiqueta">
-                    SpO2 (%)
-                  </label>
-                  <input
-                    id="vit-spo2"
-                    type="text"
-                    placeholder="98"
-                    value={spo2}
-                    onChange={(e) => setSpo2(e.target.value)}
-                    className="campo tabular-nums"
-                  />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="vit-fc" className="etiqueta">
-                    FC (lpm)
-                  </label>
-                  <input
-                    id="vit-fc"
-                    type="text"
-                    placeholder="76"
-                    value={fc}
-                    onChange={(e) => setFc(e.target.value)}
-                    className="campo tabular-nums"
-                  />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="vit-fr" className="etiqueta">
-                    FR (rpm)
-                  </label>
-                  <input
-                    id="vit-fr"
-                    type="text"
-                    placeholder="16"
-                    value={fr}
-                    onChange={(e) => setFr(e.target.value)}
-                    className="campo tabular-nums"
-                  />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="vit-ta" className="etiqueta">
-                    TA (mmHg)
-                  </label>
-                  <input
-                    id="vit-ta"
-                    type="text"
-                    placeholder="120/80"
-                    value={ta}
-                    onChange={(e) => setTa(e.target.value)}
-                    className="campo tabular-nums"
-                  />
-                </div>
-                <div className="col-span-2 flex flex-col gap-1">
-                  <label htmlFor="vit-temp" className="etiqueta">
-                    Temperatura (°C)
-                  </label>
-                  <input
-                    id="vit-temp"
-                    type="text"
-                    placeholder="36.6"
-                    value={temp}
-                    onChange={(e) => setTemp(e.target.value)}
-                    className="campo tabular-nums"
-                  />
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setVitalesObjetivo(null)}
-                  className="btn-salvia"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={ocupadoId === vitalesObjetivo.id}
-                  className="btn-verde"
-                >
-                  {ocupadoId === vitalesObjetivo.id ? 'Guardando...' : 'Guardar Signos'}
-                </button>
-              </div>
-            </form>
-          </article>
-        </div>
+        <ModalSignosVitales
+          objetivo={vitalesObjetivo}
+          spo2={spo2}
+          fc={fc}
+          fr={fr}
+          ta={ta}
+          temp={temp}
+          ocupado={ocupadoId === vitalesObjetivo.id}
+          alCambiarSpo2={setSpo2}
+          alCambiarFc={setFc}
+          alCambiarFr={setFr}
+          alCambiarTa={setTa}
+          alCambiarTemp={setTemp}
+          alGuardar={(e) => void manejarGuardarVitales(e)}
+          alCerrar={() => setVitalesObjetivo(null)}
+        />
       )}
 
-      {/* Modal Acta de Incidencia (evidencia WebP bajo demanda en evidencias_equipos) */}
       {incidenciaObjetivo && !esFinalizado && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Acta de Incidencia de Material"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
-        >
-          <article className="tarjeta flex w-full max-w-md flex-col gap-4 border-2 border-alerta p-5">
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex items-start gap-2">
-                <FileWarning
-                  size={20}
-                  strokeWidth={2}
-                  className="mt-0.5 shrink-0 text-alerta dark:text-noche-rojo-texto"
-                />
-                <div>
-                  <h3 className="text-base font-bold text-alerta dark:text-noche-rojo-texto">
-                    Acta de Incidencia · Material BUPC
-                  </h3>
-                  <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-                    {incidenciaObjetivo.nombre_articulo} · {incidenciaObjetivo.usuario_nombre}
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIncidenciaObjetivo(null)}
-                aria-label="Cerrar"
-                className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-tinta-suave"
-              >
-                <X size={18} strokeWidth={2} />
-              </button>
-            </div>
-
-            <form onSubmit={manejarLevantarIncidencia} className="flex flex-col gap-3">
-              <div className="flex flex-col gap-1">
-                <label htmlFor="inc-motivo" className="etiqueta">
-                  Motivo de la incidencia (obligatorio)
-                </label>
-                <textarea
-                  id="inc-motivo"
-                  rows={3}
-                  maxLength={400}
-                  placeholder="Describe extravío, daño o faltante..."
-                  value={motivoIncidencia}
-                  onChange={(e) => setMotivoIncidencia(e.target.value)}
-                  className="campo min-h-20 py-2 text-sm"
-                  required
-                />
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <span className="etiqueta">Evidencia fotográfica (opcional)</span>
-                <label className="btn-salvia min-h-10 cursor-pointer text-xs">
-                  <Upload size={15} strokeWidth={2} />
-                  <span>
-                    {archivoEvidencia ? archivoEvidencia.name : 'Adjuntar fotografía'}
-                  </span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="sr-only"
-                    onChange={(e) => setArchivoEvidencia(e.target.files?.[0] ?? null)}
-                  />
-                </label>
-              </div>
-
-              <div className="flex justify-end gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={() => setIncidenciaObjetivo(null)}
-                  className="btn-salvia"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={ocupadoId === incidenciaObjetivo.id}
-                  className="btn-rojo"
-                >
-                  {ocupadoId === incidenciaObjetivo.id
-                    ? 'Guardando...'
-                    : 'Levantar Acta y Liberar'}
-                </button>
-              </div>
-            </form>
-          </article>
-        </div>
+        <ModalActaIncidenciaBitacora
+          objetivo={incidenciaObjetivo}
+          motivo={motivoIncidencia}
+          archivoEvidencia={archivoEvidencia}
+          ocupado={ocupadoId === incidenciaObjetivo.id}
+          alCambiarMotivo={setMotivoIncidencia}
+          alCambiarArchivo={setArchivoEvidencia}
+          alEnviar={(e) => void manejarLevantarIncidencia(e)}
+          alCerrar={() => setIncidenciaObjetivo(null)}
+        />
       )}
     </section>
   )

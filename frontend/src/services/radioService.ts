@@ -1,7 +1,9 @@
 import {
   collection,
   doc,
+  getDoc,
   getDocs,
+  getDocsFromCache,
   limit,
   onSnapshot,
   orderBy,
@@ -16,9 +18,11 @@ import {
   type FirestoreError,
   type Timestamp,
   type Unsubscribe,
+  type WriteBatch,
 } from 'firebase/firestore'
 import * as XLSX from 'xlsx'
 import { SEMILLA_REBACE_V2 } from '../constants/rebaceSeed'
+import { despacharEscrituraOffline, estaEnLinea } from '../lib/colaOffline'
 import { db } from '../lib/firebase'
 import { esEncargado } from '../lib/permisos'
 import type {
@@ -32,7 +36,12 @@ import { nombreCompleto } from './authService'
 const canalesRef = collection(db, 'canales_radio')
 const registrosRef = collection(db, 'bitacora_radio_registros')
 const clavesRef = collection(db, 'catalogo_claves')
+const catalogosRef = collection(db, 'catalogos')
 const auditoriaRef = collection(db, 'auditoria_eventos')
+
+const DOC_VERSION_CLAVES = 'claves_version'
+const STORAGE_KEY_REBACE_VERSION = 'sabupc_rebace_version_v1'
+let cacheClavesSesion: ClaveRebace[] | null = null
 
 function horaActualHHMMSS(): string {
   const d = new Date()
@@ -127,23 +136,26 @@ export async function registrarMensajeRadio(
   if (!actividades) throw new Error('Escribe el mensaje o clave en Actividades.')
 
   const nuevo = doc(registrosRef)
-  await setDoc(nuevo, {
-    id: nuevo.id,
-    canal_id: datos.canal_id,
-    operativo_id: datos.operativo_id,
-    hora_original: horaActualHHMMSS(),
-    origen,
-    destinos,
-    actividades,
-    registrado_por: nombreCompleto(actor),
-    registrado_por_uid: actor.uid,
-    fue_editado: false,
-    actividad_original_respaldo: null,
-    editado_en: null,
-    editado_por: null,
-    creado_en: serverTimestamp(),
-    actualizado_en: serverTimestamp(),
-  })
+  await despacharEscrituraOffline(
+    setDoc(nuevo, {
+      id: nuevo.id,
+      canal_id: datos.canal_id,
+      operativo_id: datos.operativo_id,
+      hora_original: horaActualHHMMSS(),
+      origen,
+      destinos,
+      actividades,
+      registrado_por: nombreCompleto(actor),
+      registrado_por_uid: actor.uid,
+      fue_editado: false,
+      actividad_original_respaldo: null,
+      editado_en: null,
+      editado_por: null,
+      creado_en: serverTimestamp(),
+      actualizado_en: serverTimestamp(),
+    }),
+    `Transmisión de radio (${origen} → ${destinos.join(', ')})`,
+  )
   return nuevo.id
 }
 
@@ -215,6 +227,11 @@ export async function editarRegistroBitacoraRadio(
   registroId: string,
   nuevaActividad: string,
 ): Promise<void> {
+  if (!estaEnLinea()) {
+    throw new Error(
+      'Sin conexión: editar un registro previo de la bitácora de radio requiere conexión a internet para resguardar el historial en el servidor.',
+    )
+  }
   const textoNuevo = nuevaActividad.trim()
   if (!textoNuevo) throw new Error('El texto de actividades no puede estar vacío.')
 
@@ -284,34 +301,131 @@ export function exportarBitacoraCsvLocal(
   URL.revokeObjectURL(url)
 }
 
-// ── Catálogo de Claves ReBaCE v2 ─────────────────────────────────────────────
+// ── Catálogo de Claves ReBaCE v2 (carga puntual con caché + versión ligera) ──
 
-export function escucharCatalogoRebace(
-  alCambiar: (claves: ClaveRebace[]) => void,
-  alFallar?: (error: FirestoreError) => void,
-): Unsubscribe {
-  return onSnapshot(
-    clavesRef,
-    (snap) => {
-      const lista = snap.docs.map((d) => d.data() as ClaveRebace)
-      lista.sort((a, b) => a.orden - b.orden)
-      alCambiar(lista)
-    },
-    (err) => {
-      if (alFallar) alFallar(err)
-      else console.warn('[SABUPC] Error al leer catálogo ReBaCE:', err.code)
-    },
-  )
+export function invalidarCacheCatalogoRebace(): void {
+  cacheClavesSesion = null
+  try {
+    window.localStorage.removeItem(STORAGE_KEY_REBACE_VERSION)
+  } catch {
+    // Sin acceso a localStorage en contextos restringidos
+  }
+}
+
+export function actualizarVersionCatalogoRebaceEnLote(lote: WriteBatch, adminUid: string): void {
+  lote.set(doc(catalogosRef, DOC_VERSION_CLAVES), {
+    id: DOC_VERSION_CLAVES,
+    nombre: 'Versión catálogo ReBaCE',
+    items: [String(Date.now())],
+    actualizado_en: serverTimestamp(),
+    actualizado_por_uid: adminUid,
+  })
+}
+
+/**
+ * Carga el catálogo `catalogo_claves` una sola vez por sesión (sin `onSnapshot` permanente):
+ * 1. Si ya se cargó en esta sesión y no se fuerza recarga, devuelve memoria sin lecturas.
+ * 2. Verifica `catalogos/claves_version` (1 lectura ligera) si existe conexión.
+ * 3. Si la versión coincide o no hay red, lee desde `getDocsFromCache` (0 lecturas remotas)
+ *    con fallback a `getDocs` en servidor si la caché local está vacía.
+ */
+export async function cargarCatalogoRebaceConCache(
+  forzarServidor = false,
+): Promise<ClaveRebace[]> {
+  if (!forzarServidor && cacheClavesSesion !== null) {
+    return cacheClavesSesion
+  }
+
+  const ordenar = (docs: Array<{ data: () => unknown }>): ClaveRebace[] => {
+    const lista = docs.map((d) => d.data() as ClaveRebace)
+    lista.sort((a, b) => a.orden - b.orden)
+    return lista
+  }
+
+  let versionLocal: string | null = null
+  try {
+    versionLocal = window.localStorage.getItem(STORAGE_KEY_REBACE_VERSION)
+  } catch {
+    versionLocal = null
+  }
+
+  let versionRemota: string | null = null
+  if (!forzarServidor && estaEnLinea()) {
+    try {
+      const verSnap = await getDoc(doc(catalogosRef, DOC_VERSION_CLAVES))
+      if (verSnap.exists()) {
+        const data = verSnap.data() as { items?: string[]; actualizado_en?: Timestamp }
+        versionRemota = data.items?.[0] ?? String(data.actualizado_en?.toMillis() ?? '')
+      }
+    } catch {
+      // Si el documento de versión aún no existe o hay intermitencia, continuamos con caché -> servidor
+    }
+  }
+
+  const versionDesactualizada =
+    forzarServidor ||
+    (versionRemota !== null && versionLocal !== null && versionRemota !== versionLocal)
+
+  if (!versionDesactualizada) {
+    try {
+      const snapCache = await getDocsFromCache(clavesRef)
+      if (!snapCache.empty) {
+        const lista = ordenar(snapCache.docs)
+        cacheClavesSesion = lista
+        if (versionRemota && versionLocal !== versionRemota) {
+          try {
+            window.localStorage.setItem(STORAGE_KEY_REBACE_VERSION, versionRemota)
+          } catch {
+            // Ignorar error de cuota de almacenamiento
+          }
+        }
+        return lista
+      }
+    } catch {
+      // Caché vacía o aún no inicializada: fallback al servidor
+    }
+  }
+
+  try {
+    const snapSrv = await getDocs(clavesRef)
+    const lista = ordenar(snapSrv.docs)
+    cacheClavesSesion = lista
+    try {
+      window.localStorage.setItem(
+        STORAGE_KEY_REBACE_VERSION,
+        versionRemota ?? String(Date.now()),
+      )
+    } catch {
+      // Ignorar error de cuota de almacenamiento
+    }
+    return lista
+  } catch (err) {
+    try {
+      const snapCache = await getDocsFromCache(clavesRef)
+      if (!snapCache.empty) {
+        const lista = ordenar(snapCache.docs)
+        cacheClavesSesion = lista
+        return lista
+      }
+    } catch {
+      // Sin caché previa disponible
+    }
+    throw err
+  }
 }
 
 /**
  * Pobla `catalogo_claves` en Firestore con las 5 tablas oficiales ReBaCE v2 (solo Administrador).
  */
 export async function poblarCatalogoRebace(admin: Usuario): Promise<number> {
+  if (!estaEnLinea()) {
+    throw new Error('Se requiere conexión a internet para poblar el catálogo ReBaCE en el servidor.')
+  }
   const lote = writeBatch(db)
   for (const clave of SEMILLA_REBACE_V2) {
     lote.set(doc(clavesRef, clave.id), clave)
   }
+  actualizarVersionCatalogoRebaceEnLote(lote, admin.uid)
   lote.set(doc(auditoriaRef), {
     tipo: 'SEED_CLAVES_REBACE',
     actor_uid: admin.uid,
@@ -322,5 +436,6 @@ export async function poblarCatalogoRebace(admin: Usuario): Promise<number> {
     creado_en: serverTimestamp(),
   })
   await lote.commit()
+  invalidarCacheCatalogoRebace()
   return SEMILLA_REBACE_V2.length
 }
