@@ -627,7 +627,7 @@ service cloud.firestore {
           && d.imagen_webp_base64 is string
           && d.imagen_webp_base64.size() >= 50
           && d.imagen_webp_base64.size() <= 160000
-          && d.imagen_webp_base64.matches('^data:image/webp;base64,[A-Za-z0-9+/=]+$')
+          && d.imagen_webp_base64.matches('^data:image/(webp|jpeg);base64,[A-Za-z0-9+/=]+$')
           && d.actualizado_en == request.time;
     }
 

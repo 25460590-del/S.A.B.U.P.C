@@ -12,12 +12,14 @@ interface ReportarEquipoModalProps {
   alCerrar: () => void
 }
 
-const UNIFORME_SUGERIDO = [
-  'Polo institucional BUPC',
-  'Pantalón táctico y cinturón',
-  'Botas dieléctricas / de campo',
-  'Lámpara táctica personal',
-]
+const MATERIAL_PROPIO_CATALOGO = [
+  'Uniforme de Alfa',
+  'Uniforme de Omega',
+  'Uniforme de Grupo Operativo',
+  'Polo',
+  'Radio',
+  'Botiquín',
+] as const
 
 export function ReportarEquipoModal({
   brigadista,
@@ -28,6 +30,7 @@ export function ReportarEquipoModal({
   const [pestana, setPestana] = useState<'bupc' | 'propio'>('bupc')
   const [equipoEnFallaId, setEquipoEnFallaId] = useState<string | null>(null)
   const [textoFalla, setTextoFalla] = useState('')
+  const [mostrandoOtro, setMostrandoOtro] = useState(false)
   const [nuevoArticulo, setNuevoArticulo] = useState('')
   const [nuevoCodigo, setNuevoCodigo] = useState('')
   const [ocupado, setOcupado] = useState(false)
@@ -276,15 +279,15 @@ export function ReportarEquipoModal({
             </section>
           )}
 
-          {/* PESTAÑA 2: Material Propio / Uniforme (sin card-ception) */}
+          {/* PESTAÑA 2: Material Propio */}
           {pestana === 'propio' && (
             <section className="flex flex-col gap-5">
               <div className="flex flex-col gap-2.5">
                 <h3 className="text-sm font-bold text-tinta dark:text-noche-tinta">
-                  Uniforme y equipo propio habitual
+                  Material propio habitual
                 </h3>
                 <div className="divide-y divide-borde rounded-xl border border-borde bg-tarjeta dark:divide-noche-borde dark:border-noche-borde dark:bg-noche-tarjeta">
-                  {UNIFORME_SUGERIDO.map((item) => {
+                  {MATERIAL_PROPIO_CATALOGO.map((item) => {
                     const yaRegistrado = equiposPropios.some(
                       (e) => e.nombre_articulo.toLowerCase() === item.toLowerCase(),
                     )
@@ -314,42 +317,61 @@ export function ReportarEquipoModal({
                       </div>
                     )
                   })}
+
+                  <div className="flex items-center justify-between gap-2 px-3.5 py-2.5">
+                    <span className="text-sm font-medium text-tinta dark:text-noche-tinta">
+                      Otro
+                    </span>
+                    <button
+                      type="button"
+                      disabled={ocupado}
+                      onClick={() => setMostrandoOtro((v) => !v)}
+                      className="btn-salvia min-h-9 px-3 text-xs"
+                    >
+                      <Plus size={14} strokeWidth={2} />
+                      <span>{mostrandoOtro ? 'Ocultar' : 'Escribir artículo'}</span>
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              <form
-                onSubmit={manejarAgregarPropio}
-                className="flex flex-col gap-3 border-t border-borde pt-4 dark:border-noche-borde"
-              >
-                <h3 className="text-sm font-bold text-tinta dark:text-noche-tinta">
-                  Otro equipo propio
-                </h3>
-                <input
-                  type="text"
-                  maxLength={120}
-                  placeholder="Ej. Estetoscopio, Baumanómetro, Radio personal"
-                  value={nuevoArticulo}
-                  onChange={(e) => setNuevoArticulo(e.target.value)}
-                  className="campo"
-                />
-                <input
-                  type="text"
-                  maxLength={60}
-                  placeholder="Serie / marca (opcional)"
-                  value={nuevoCodigo}
-                  onChange={(e) => setNuevoCodigo(e.target.value)}
-                  className="campo"
-                />
-                <button type="submit" disabled={ocupado} className="btn-verde w-full">
-                  <Plus size={18} strokeWidth={2} />
-                  <span>{ocupado ? 'Guardando...' : 'Registrar equipo propio'}</span>
-                </button>
-              </form>
+              {mostrandoOtro && (
+                <form
+                  onSubmit={manejarAgregarPropio}
+                  className="flex flex-col gap-3 rounded-xl border border-udec/40 bg-superficie-suave p-3.5 dark:border-activo-claro/40 dark:bg-noche-campo"
+                >
+                  <h3 className="text-sm font-bold text-tinta dark:text-noche-tinta">
+                    Registrar otro artículo propio
+                  </h3>
+                  <input
+                    type="text"
+                    maxLength={120}
+                    autoFocus
+                    placeholder="Nombre del artículo (ej. Estetoscopio, Lámpara)"
+                    value={nuevoArticulo}
+                    onChange={(e) => setNuevoArticulo(e.target.value)}
+                    className="campo"
+                    required
+                  />
+                  <input
+                    type="text"
+                    maxLength={60}
+                    placeholder="Serie o marca (opcional)"
+                    value={nuevoCodigo}
+                    onChange={(e) => setNuevoCodigo(e.target.value)}
+                    className="campo"
+                  />
+                  <button type="submit" disabled={ocupado} className="btn-verde w-full">
+                    <Plus size={18} strokeWidth={2} />
+                    <span>{ocupado ? 'Guardando...' : 'Registrar artículo propio'}</span>
+                  </button>
+                </form>
+              )}
 
               {equiposPropios.length > 0 && (
                 <div className="flex flex-col gap-2 border-t border-borde pt-4 dark:border-noche-borde">
                   <h3 className="text-xs font-bold uppercase text-tinta-suave dark:text-noche-tinta-suave">
-                    Registrado en este turno
+                    Registrado en este turno ({equiposPropios.length})
                   </h3>
                   <ul className="divide-y divide-borde dark:divide-noche-borde">
                     {equiposPropios.map((eq) => (

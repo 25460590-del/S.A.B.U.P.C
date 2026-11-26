@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Download,
   HeartPulse,
+  Image as ImageIcon,
   Phone,
   QrCode,
   ShieldCheck,
@@ -28,18 +29,28 @@ function formatearHora24(fecha: Date): string {
 export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
   const [cara, setCara] = useState<'anverso' | 'reverso'>('anverso')
   const [foto, setFoto] = useState<FotoPerfil | null>(null)
+  const [fotoLocalPreview, setFotoLocalPreview] = useState<string | null>(null)
+  const [mostrandoOpcionesFoto, setMostrandoOpcionesFoto] = useState(false)
   const [subiendoFoto, setSubiendoFoto] = useState(false)
   const [avisoFoto, setAvisoFoto] = useState<string | null>(null)
   const [errorFoto, setErrorFoto] = useState<string | null>(null)
   const [horaActual, setHoraActual] = useState(() => formatearHora24(new Date()))
-  const inputArchivoRef = useRef<HTMLInputElement>(null)
   const contenedorQrRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    const cancelar = escucharFotoPerfil(perfil.uid, setFoto, () => {
-      // Foto de perfil opcional: si aún no existe o no puede leerse, mostrar avatar sin banner de error
-      setFoto(null)
-    })
+    const cancelar = escucharFotoPerfil(
+      perfil.uid,
+      (datos) => {
+        setFoto(datos)
+        if (datos?.imagen_webp_base64) {
+          setFotoLocalPreview(null)
+        }
+      },
+      () => {
+        // Foto de perfil opcional: si aún no existe o no puede leerse, mostrar avatar sin banner de error
+        setFoto(null)
+      },
+    )
     return cancelar
   }, [perfil.uid])
 
@@ -59,22 +70,29 @@ export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
   })
 
   async function manejarSeleccionFoto(e: ChangeEvent<HTMLInputElement>) {
-    const archivo = e.target.files?.[0]
-    e.target.value = ''
+    const input = e.currentTarget
+    const archivo = input.files?.[0]
     if (!archivo) return
 
+    setMostrandoOpcionesFoto(false)
     setSubiendoFoto(true)
     setAvisoFoto(null)
     setErrorFoto(null)
     try {
-      await guardarFotoPerfil(perfil.uid, archivo)
+      const { dataUrl } = await guardarFotoPerfil(perfil.uid, archivo)
+      setFotoLocalPreview(dataUrl)
       setAvisoFoto('Fotografía actualizada correctamente.')
     } catch (err) {
-      setErrorFoto(err instanceof Error ? err.message : mensajeDeError(err))
+      const tieneCodigo = Boolean((err as { code?: string })?.code)
+      setErrorFoto(!tieneCodigo && err instanceof Error ? err.message : mensajeDeError(err))
     } finally {
+      // Limpiar siempre después de procesar para permitir reintentos sin invalidar la captura móvil
+      input.value = ''
       setSubiendoFoto(false)
     }
   }
+
+  const fotoMostrada = fotoLocalPreview ?? foto?.imagen_webp_base64 ?? null
 
   function descargarQrPng() {
     const canvas = contenedorQrRef.current?.querySelector('canvas')
@@ -105,9 +123,9 @@ export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
           {/* Identidad del Brigadista */}
           <div className="flex flex-col items-center gap-4 p-5 text-center">
             <div className="relative">
-              {foto?.imagen_webp_base64 ? (
+              {fotoMostrada ? (
                 <img
-                  src={foto.imagen_webp_base64}
+                  src={fotoMostrada}
                   alt={`Fotografía de ${nombreCompleto(perfil)}`}
                   className="h-24 w-24 rounded-full border-2 border-udec object-cover dark:border-activo-claro"
                 />
@@ -122,22 +140,51 @@ export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
 
               <button
                 type="button"
-                onClick={() => inputArchivoRef.current?.click()}
+                onClick={() => {
+                  setErrorFoto(null)
+                  setAvisoFoto(null)
+                  setMostrandoOpcionesFoto((v) => !v)
+                }}
                 disabled={subiendoFoto}
+                aria-expanded={mostrandoOpcionesFoto}
                 aria-label="Subir o cambiar fotografía de perfil"
                 title="Subir o cambiar fotografía"
                 className="absolute right-0 bottom-0 inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border-2 border-white bg-udec text-white hover:bg-udec-oscuro disabled:opacity-60 dark:border-noche-tarjeta"
               >
                 <Camera size={16} strokeWidth={2} />
               </button>
-              <input
-                ref={inputArchivoRef}
-                type="file"
-                accept="image/*"
-                onChange={manejarSeleccionFoto}
-                className="hidden"
-              />
             </div>
+
+            {mostrandoOpcionesFoto && !subiendoFoto && (
+              <div
+                role="group"
+                aria-label="Opciones para actualizar fotografía"
+                className="grid w-full grid-cols-2 gap-2 rounded-xl border border-borde bg-superficie-suave p-2.5 dark:border-noche-borde dark:bg-noche-campo"
+              >
+                <label className="btn-verde min-h-10 cursor-pointer px-2.5 text-xs">
+                  <Camera size={15} strokeWidth={2} />
+                  <span>Tomar foto</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="user"
+                    onChange={(e) => void manejarSeleccionFoto(e)}
+                    className="sr-only"
+                  />
+                </label>
+
+                <label className="btn-salvia min-h-10 cursor-pointer px-2.5 text-xs">
+                  <ImageIcon size={15} strokeWidth={2} />
+                  <span>Elegir de galería</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => void manejarSeleccionFoto(e)}
+                    className="sr-only"
+                  />
+                </label>
+              </div>
+            )}
 
             {subiendoFoto && (
               <p className="text-xs font-semibold text-udec dark:text-activo-claro">

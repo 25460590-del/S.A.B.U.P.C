@@ -34,11 +34,14 @@ export function escucharFotoPerfil(
  * Comprime la foto en cliente a WebP (~40–70 KB) y la guarda atómicamente en
  * `fotos_perfiles/{uid}` actualizando `tiene_foto: true` en `usuarios/{uid}`.
  */
-export async function guardarFotoPerfil(uid: string, archivo: File): Promise<{ bytes: number }> {
+export async function guardarFotoPerfil(
+  uid: string,
+  archivo: File,
+): Promise<{ dataUrl: string; bytes: number }> {
   const { dataUrl, bytes } = await comprimirImagenAWebP(archivo, {
-    ladoMaximo: 480,
+    ladoMaximo: 640,
     recorteCuadrado: true,
-    maxBytes: 70 * 1024,
+    maxBytes: 75 * 1024,
   })
 
   const lote = writeBatch(db)
@@ -53,5 +56,5 @@ export async function guardarFotoPerfil(uid: string, archivo: File): Promise<{ b
   })
   await lote.commit()
 
-  return { bytes }
+  return { dataUrl, bytes }
 }

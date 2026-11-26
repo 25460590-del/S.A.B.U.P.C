@@ -773,3 +773,56 @@ test('Radio en operativo Finalizado: bloquea create/update en canales y bitácor
     where('canal_id', '==', 'canalFin'),
   )));
 });
+
+test('Material Propio: Brigadista registra artículo propio y Encargado/Admin lo consulta en el operativo', async () => {
+  await assertSucceeds(setDoc(doc(db('activo1'), 'equipos_turno/eqPropio1'), {
+    id: 'eqPropio1',
+    asistencia_id: 'asisAbierto',
+    operativo_id: 'opAbierto',
+    operativo_nombre: 'Operativo opAbierto',
+    usuario_uid: 'activo1',
+    usuario_nombre: 'Ana Pérez',
+    nombre_articulo: 'Uniforme de Alfa',
+    codigo_inventario: '',
+    cantidad: 1,
+    origen_material: 'Propio',
+    estado_reporte: 'OK',
+    falla_reportada: '',
+    devuelto: false,
+    devuelto_en: null,
+    devuelto_por_uid: null,
+    acta_incidencia: null,
+    creado_por_uid: 'activo1',
+    creado_por_nombre: 'Ana Pérez',
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  }));
+
+  await assertSucceeds(getDocs(query(
+    collection(db('encargado1'), 'equipos_turno'),
+    where('operativo_id', '==', 'opAbierto'),
+  )));
+  await assertSucceeds(getDocs(query(
+    collection(db('admin1'), 'equipos_turno'),
+    where('operativo_id', '==', 'opAbierto'),
+  )));
+});
+
+test('fotos_perfiles: dueño Activo guarda WebP o JPEG comprimido y se rechazan formatos no permitidos', async () => {
+  const payloadBase64 = 'A'.repeat(80);
+  await assertSucceeds(setDoc(doc(db('activo1'), 'fotos_perfiles/activo1'), {
+    uid: 'activo1',
+    imagen_webp_base64: `data:image/webp;base64,${payloadBase64}`,
+    actualizado_en: serverTimestamp(),
+  }));
+  await assertSucceeds(setDoc(doc(db('activo1'), 'fotos_perfiles/activo1'), {
+    uid: 'activo1',
+    imagen_webp_base64: `data:image/jpeg;base64,${payloadBase64}`,
+    actualizado_en: serverTimestamp(),
+  }));
+  await assertFails(setDoc(doc(db('activo1'), 'fotos_perfiles/activo1'), {
+    uid: 'activo1',
+    imagen_webp_base64: `data:image/svg+xml;base64,${payloadBase64}`,
+    actualizado_en: serverTimestamp(),
+  }));
+});

@@ -37,7 +37,8 @@ import {
   puedeUsarRadio,
 } from '../lib/permisos'
 import { cerrarSesion, nombreCompleto } from '../services/authService'
-import type { Usuario } from '../types'
+import { escucharFotoPerfil } from '../services/fotosService'
+import type { FotoPerfil, Usuario } from '../types'
 import { AdminConsolePage } from './AdminConsolePage'
 import { BrigadistaDashboardPage } from './BrigadistaDashboardPage'
 import { CredencialDigitalPage } from './CredencialDigitalPage'
@@ -118,11 +119,21 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
   const [destino, setDestino] = useState<DestinoNavegacion>(destinoInicial)
   const [drawerAbierto, setDrawerAbierto] = useState(false)
   const [enLinea, setEnLinea] = useState(() => navigator.onLine)
+  const [fotoPropia, setFotoPropia] = useState<FotoPerfil | null>(null)
   const [gruposAbiertos, setGruposAbiertos] = useState<Record<GrupoId, boolean>>({
     mi_espacio: true,
     operacion: soyEncargado || puedoRadio,
     gestion: soyAdmin || soyAP || soyTesla,
   })
+
+  useEffect(() => {
+    const cancelarFoto = escucharFotoPerfil(
+      perfil.uid,
+      setFotoPropia,
+      () => setFotoPropia(null),
+    )
+    return cancelarFoto
+  }, [perfil.uid])
 
   useEffect(() => {
     const alConectar = () => setEnLinea(true)
@@ -271,22 +282,31 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
               : 'hover:bg-white/10 dark:hover:bg-noche-tarjeta'
           }`}
         >
-          <div className="min-w-0 flex-1">
-            <span className="block truncate text-xs font-bold text-white">
-              {nombreCompleto(perfil)}
-            </span>
-            <span className="flex items-center gap-1.5 text-[11px] font-medium text-white/75 dark:text-noche-tinta-suave">
-              <span
-                className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                  enLinea ? 'bg-activo-claro' : 'bg-ambar'
-                }`}
-                aria-hidden="true"
+          <div className="flex min-w-0 flex-1 items-center gap-2.5">
+            {fotoPropia?.imagen_webp_base64 && (
+              <img
+                src={fotoPropia.imagen_webp_base64}
+                alt={nombreCompleto(perfil)}
+                className="h-8 w-8 shrink-0 rounded-full border border-white/40 object-cover"
               />
-              <span className="truncate">
-                {perfil.rol_sistema}
-                {perfil.ayudantia !== 'Ninguna' ? ` · ${perfil.ayudantia}` : ''}
+            )}
+            <div className="min-w-0 flex-1">
+              <span className="block truncate text-xs font-bold text-white">
+                {nombreCompleto(perfil)}
               </span>
-            </span>
+              <span className="flex items-center gap-1.5 text-[11px] font-medium text-white/75 dark:text-noche-tinta-suave">
+                <span
+                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                    enLinea ? 'bg-activo-claro' : 'bg-ambar'
+                  }`}
+                  aria-hidden="true"
+                />
+                <span className="truncate">
+                  {perfil.rol_sistema}
+                  {perfil.ayudantia !== 'Ninguna' ? ` · ${perfil.ayudantia}` : ''}
+                </span>
+              </span>
+            </div>
           </div>
           <Shield size={15} strokeWidth={2} className="shrink-0 text-white/70" />
         </button>
@@ -393,6 +413,20 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
           </div>
 
           <div className="flex shrink-0 items-center gap-1.5">
+            {fotoPropia?.imagen_webp_base64 && (
+              <button
+                type="button"
+                onClick={() => seleccionarDestino('credencial')}
+                aria-label="Ver mi credencial"
+                className="inline-flex h-9 w-9 cursor-pointer items-center justify-center overflow-hidden rounded-full border border-white/40"
+              >
+                <img
+                  src={fotoPropia.imagen_webp_base64}
+                  alt={nombreCompleto(perfil)}
+                  className="h-full w-full object-cover"
+                />
+              </button>
+            )}
             <button
               type="button"
               onClick={alternarTema}

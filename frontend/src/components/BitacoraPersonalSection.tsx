@@ -165,15 +165,16 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
     [usuarios],
   )
 
-  const equiposPorAsistencia = useMemo(() => {
-    const mapa = new Map<string, EquipoTurno[]>()
+  const { equiposBupcPorAsistencia, equiposPropiosPorAsistencia } = useMemo(() => {
+    const mapaBupc = new Map<string, EquipoTurno[]>()
+    const mapaPropios = new Map<string, EquipoTurno[]>()
     for (const eq of equipos) {
-      if (eq.origen_material !== 'BUPC_Asignado') continue
-      const lista = mapa.get(eq.asistencia_id) ?? []
+      const destino = eq.origen_material === 'Propio' ? mapaPropios : mapaBupc
+      const lista = destino.get(eq.asistencia_id) ?? []
       lista.push(eq)
-      mapa.set(eq.asistencia_id, lista)
+      destino.set(eq.asistencia_id, lista)
     }
-    return mapa
+    return { equiposBupcPorAsistencia: mapaBupc, equiposPropiosPorAsistencia: mapaPropios }
   }, [equipos])
 
   const gruposDisponibles = useMemo(() => {
@@ -232,8 +233,11 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
   const usuariosActivos = usuarios.filter((u) => u.estatus === 'Activo')
   const asistenciaMaterialActiva =
     asistencias.find((a) => a.id === materialAsistenciaId) ?? null
-  const equiposMaterialActivo = asistenciaMaterialActiva
-    ? (equiposPorAsistencia.get(asistenciaMaterialActiva.id) ?? [])
+  const equiposBupcMaterialActivo = asistenciaMaterialActiva
+    ? (equiposBupcPorAsistencia.get(asistenciaMaterialActiva.id) ?? [])
+    : []
+  const equiposPropiosMaterialActivo = asistenciaMaterialActiva
+    ? (equiposPropiosPorAsistencia.get(asistenciaMaterialActiva.id) ?? [])
     : []
 
   const asistenciasSeleccionadasAbiertas = asistencias.filter(
@@ -739,10 +743,11 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
               const cerrada = a.hora_salida !== null
               const grupo = etiquetaGrupoAsistencia(a, mapaUsuarios)
               const marcado = seleccionadosIds.includes(a.id)
+              const propios = equiposPropiosPorAsistencia.get(a.id) ?? []
 
               return (
                 <div key={a.id} className="flex flex-col gap-1.5 px-3 py-2">
-                  {/* Línea 1: Selección + Nombre + Badge de estado + Botón Material */}
+                  {/* Línea 1: Selección + Nombre + Badge de estado + Material propio */}
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex min-w-0 flex-1 items-center gap-2">
                       {!esFinalizado && modoRapidoAbierto && !cerrada && (
@@ -760,13 +765,21 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                     </div>
 
                     <div className="flex shrink-0 items-center gap-1.5">
+                      {propios.length > 0 && (
+                        <span
+                          title={`Material propio: ${propios.map((p) => p.nombre_articulo).join(', ')}`}
+                          className="rounded-full bg-salvia px-2 py-0.5 text-[10px] font-bold tabular-nums text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro"
+                        >
+                          Propio ({propios.length})
+                        </span>
+                      )}
                       {cerrada ? (
                         <span className="rounded-full bg-superficie-suave px-2 py-0.5 text-[10px] font-bold text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave">
                           Salida {formatearHoraCorta(a.hora_salida?.toMillis())}
                         </span>
                       ) : a.equipos_bupc_pendientes > 0 ? (
                         <span className="rounded-full bg-naranja-suave px-2 py-0.5 text-[10px] font-bold tabular-nums text-naranja-oscuro dark:bg-noche-campo dark:text-naranja">
-                          Con material ({a.equipos_bupc_pendientes})
+                          BUPC ({a.equipos_bupc_pendientes})
                         </span>
                       ) : (
                         <span className="rounded-full bg-activo-suave px-2 py-0.5 text-[10px] font-bold text-activo dark:bg-noche-campo dark:text-activo-claro">
@@ -793,7 +806,10 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                         }}
                         className="cursor-pointer rounded border border-borde bg-salvia px-2 py-1 text-[11px] font-bold text-udec-oscuro dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta"
                       >
-                        Material{a.equipos_bupc_pendientes > 0 ? ` (${a.equipos_bupc_pendientes})` : ''}
+                        Material
+                        {a.equipos_bupc_pendientes + propios.length > 0
+                          ? ` (${a.equipos_bupc_pendientes + propios.length})`
+                          : ''}
                       </button>
 
                       {!esFinalizado && (
@@ -858,7 +874,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                     Estatus turno
                   </th>
                   <th scope="col" className="px-2.5 py-2 text-[11px] font-semibold">
-                    Material BUPC
+                    Material
                   </th>
                   <th scope="col" className="px-3 py-2 text-right text-[11px] font-semibold">
                     Acciones
@@ -872,6 +888,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                   const u = mapaUsuarios.get(a.usuario_uid)
                   const claveRadio = u?.clave_radio || u?.clave_personal_radio || ''
                   const marcado = seleccionadosIds.includes(a.id)
+                  const propios = equiposPropiosPorAsistencia.get(a.id) ?? []
 
                   return (
                     <tr
@@ -974,25 +991,45 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                       </td>
 
                       <td className="px-2.5 py-1.5 whitespace-nowrap">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setMaterialAsistenciaId(a.id)
-                            setArticuloNombre(EQUIPO_BUPC_SUGERIDO[0])
-                            setArticuloFolio('')
-                            setArticuloCantidad(1)
-                          }}
-                          className="btn-salvia min-h-8 px-2.5 text-[11px]"
-                        >
-                          <Package size={13} strokeWidth={2} />
-                          <span>
-                            {a.equipos_bupc_pendientes > 0
-                              ? `Gestionar (${a.equipos_bupc_pendientes})`
-                              : esFinalizado
-                                ? 'Ver'
-                                : 'Entregar'}
-                          </span>
-                        </button>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setMaterialAsistenciaId(a.id)
+                              setArticuloNombre(EQUIPO_BUPC_SUGERIDO[0])
+                              setArticuloFolio('')
+                              setArticuloCantidad(1)
+                            }}
+                            className="btn-salvia min-h-8 px-2.5 text-[11px]"
+                          >
+                            <Package size={13} strokeWidth={2} />
+                            <span>
+                              {a.equipos_bupc_pendientes > 0
+                                ? `BUPC (${a.equipos_bupc_pendientes})`
+                                : esFinalizado
+                                  ? 'Ver'
+                                  : propios.length > 0
+                                    ? 'Ver / Entregar'
+                                    : 'Entregar'}
+                            </span>
+                          </button>
+
+                          {propios.length > 0 && (
+                            <button
+                              type="button"
+                              title={`Material propio: ${propios.map((p) => p.nombre_articulo).join(', ')}`}
+                              onClick={() => {
+                                setMaterialAsistenciaId(a.id)
+                                setArticuloNombre(EQUIPO_BUPC_SUGERIDO[0])
+                                setArticuloFolio('')
+                                setArticuloCantidad(1)
+                              }}
+                              className="cursor-pointer rounded-full border border-udec/35 bg-salvia/70 px-2 py-0.5 text-[10px] font-bold tabular-nums text-udec-oscuro hover:bg-salvia dark:border-activo-claro/35 dark:bg-noche-campo dark:text-activo-claro"
+                            >
+                              Propio ({propios.length})
+                            </button>
+                          )}
+                        </div>
                       </td>
 
                       <td className="px-3 py-1.5 text-right whitespace-nowrap">
@@ -1064,22 +1101,23 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
         />
       )}
 
-      {/* Cajón / Modal de Material del Brigadista (Entregar en cadena + Devolver + Incidencia) */}
+      {/* Cajón / Modal de Material del Brigadista (Material BUPC + Material Propio) */}
       {asistenciaMaterialActiva && (
         <div
           role="dialog"
           aria-modal="true"
-          aria-label="Material BUPC del Brigadista"
+          aria-label="Material del turno del Brigadista"
           className="fixed inset-0 z-50 flex items-end justify-center bg-black/75 sm:items-center sm:p-4"
         >
           <article className="tarjeta flex max-h-[88dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl sm:rounded-xl">
             <header className="flex items-center justify-between gap-2 border-b border-borde bg-udec px-4 py-3 text-white dark:border-noche-borde">
               <div className="min-w-0">
                 <h3 className="truncate text-sm font-bold">
-                  Material BUPC · {asistenciaMaterialActiva.usuario_nombre}
+                  Material del turno · {asistenciaMaterialActiva.usuario_nombre}
                 </h3>
                 <p className="text-[11px] text-white/85 tabular-nums">
-                  Pendientes actuales: {asistenciaMaterialActiva.equipos_bupc_pendientes}
+                  BUPC pendientes: {asistenciaMaterialActiva.equipos_bupc_pendientes} · Propio
+                  registrado: {equiposPropiosMaterialActivo.length}
                 </p>
               </div>
               <button
@@ -1175,18 +1213,23 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                 </form>
               )}
 
-              {/* Lista de artículos BUPC de esta asistencia */}
+              {/* Sección 1: Material BUPC (sujeto a devolución) */}
               <div className="flex flex-col gap-2">
-                <h4 className="text-xs font-bold uppercase text-tinta-suave dark:text-noche-tinta-suave">
-                  Artículos en este turno ({equiposMaterialActivo.length})
-                </h4>
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="text-xs font-bold uppercase text-naranja-oscuro dark:text-naranja">
+                    Material BUPC ({equiposBupcMaterialActivo.length})
+                  </h4>
+                  <span className="text-[11px] font-medium text-tinta-suave dark:text-noche-tinta-suave">
+                    Sujeto a devolución
+                  </span>
+                </div>
 
-                {equiposMaterialActivo.length === 0 ? (
-                  <p className="py-4 text-center text-xs text-tinta-suave dark:text-noche-tinta-suave">
+                {equiposBupcMaterialActivo.length === 0 ? (
+                  <p className="rounded-lg border border-borde bg-superficie-suave py-3.5 text-center text-xs text-tinta-suave dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta-suave">
                     Sin artículos BUPC asignados aún.
                   </p>
                 ) : (
-                  equiposMaterialActivo.map((eq) => {
+                  equiposBupcMaterialActivo.map((eq) => {
                     const pendiente = !eq.devuelto && eq.acta_incidencia === null
                     const cant = eq.cantidad ?? 1
                     return (
@@ -1257,6 +1300,55 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                       </div>
                     )
                   })
+                )}
+              </div>
+
+              {/* Sección 2: Material Propio (informativo, no bloquea salida) */}
+              <div className="flex flex-col gap-2 border-t border-borde pt-3 dark:border-noche-borde">
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="text-xs font-bold uppercase text-udec dark:text-activo-claro">
+                    Material Propio ({equiposPropiosMaterialActivo.length})
+                  </h4>
+                  <span className="text-[11px] font-medium text-tinta-suave dark:text-noche-tinta-suave">
+                    Informativo · no bloquea salida
+                  </span>
+                </div>
+
+                {equiposPropiosMaterialActivo.length === 0 ? (
+                  <p className="rounded-lg border border-borde bg-superficie-suave py-3.5 text-center text-xs text-tinta-suave dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta-suave">
+                    Sin material propio registrado en este turno.
+                  </p>
+                ) : (
+                  <div className="flex flex-col gap-1.5">
+                    {equiposPropiosMaterialActivo.map((eq) => {
+                      const cant = eq.cantidad ?? 1
+                      return (
+                        <div
+                          key={eq.id}
+                          className="flex items-start justify-between gap-2 rounded-lg border border-udec/25 bg-salvia/40 p-2.5 dark:border-activo-claro/25 dark:bg-noche-campo"
+                        >
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-tinta dark:text-noche-tinta">
+                              {cant > 1 ? `${cant}× ` : ''}
+                              {eq.nombre_articulo}
+                              {eq.codigo_inventario ? ` (${eq.codigo_inventario})` : ''}
+                            </p>
+                            <p className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
+                              Registrado: {formatearHoraCorta(eq.creado_en?.toMillis())}
+                            </p>
+                            {eq.falla_reportada && (
+                              <p className="text-[11px] font-semibold text-alerta dark:text-noche-rojo-texto">
+                                Observación: {eq.falla_reportada}
+                              </p>
+                            )}
+                          </div>
+                          <span className="shrink-0 rounded-full bg-salvia px-2 py-0.5 text-[10px] font-bold text-udec-oscuro dark:bg-noche-tarjeta dark:text-activo-claro">
+                            Propio
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
                 )}
               </div>
             </div>

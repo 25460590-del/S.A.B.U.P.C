@@ -1,0 +1,37 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "equipos_turno",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "usuario_uid", "order": "ASCENDING" },
+        { "fieldPath": "asistencia_id", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "equipos_turno",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "operativo_id", "order": "ASCENDING" },
+        { "fieldPath": "codigo_inventario", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "equipos_turno",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "origen_material", "order": "ASCENDING" },
+        { "fieldPath": "devuelto", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "asistencias_personal",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "usuario_uid", "order": "ASCENDING" },
+        { "fieldPath": "operativo_id", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
