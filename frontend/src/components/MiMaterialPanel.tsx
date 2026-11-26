@@ -6,11 +6,16 @@ import {
   UserCheck,
   Wrench,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { mensajeDeError } from '../services/authService'
-import { escucharMisEquiposBupc, reportarFallaEquipo } from '../services/equiposService'
-import { escucharOperativos } from '../services/operativosService'
-import type { EquipoTurno, Operativo, Usuario } from '../types'
+import {
+  escucharMisEquiposBupc,
+  LIMITE_EQUIPOS_PAGINA,
+  obtenerMasMisEquiposBupc,
+  reportarFallaEquipo,
+} from '../services/equiposService'
+import { obtenerOperativoPorId } from '../services/operativosService'
+import type { EquipoTurno, Usuario } from '../types'
 
 interface MiMaterialPanelProps {
   perfil: Usuario
@@ -24,8 +29,13 @@ function formatearFechaHora(ms?: number): string {
 }
 
 export function MiMaterialPanel({ perfil }: MiMaterialPanelProps) {
-  const [equipos, setEquipos] = useState<EquipoTurno[]>([])
-  const [operativos, setOperativos] = useState<Operativo[]>([])
+  const [equiposVivo, setEquiposVivo] = useState<EquipoTurno[]>([])
+  const [equiposExtra, setEquiposExtra] = useState<EquipoTurno[]>([])
+  const [hayMas, setHayMas] = useState(false)
+  const [cargandoMas, setCargandoMas] = useState(false)
+  const [nombresFallback, setNombresFallback] = useState<Record<string, string>>({})
+  const consultadosRef = useRef<Set<string>>(new Set())
+
   const [cargando, setCargando] = useState(true)
   const [fallaAbiertaId, setFallaAbiertaId] = useState<string | null>(null)
   const [textoFalla, setTextoFalla] = useState('')
@@ -37,24 +47,86 @@ export function MiMaterialPanel({ perfil }: MiMaterialPanelProps) {
     const cEq = escucharMisEquiposBupc(
       perfil.uid,
       (lista) => {
-        setEquipos(lista)
+        setEquiposVivo(lista)
+        setHayMas(lista.length >= LIMITE_EQUIPOS_PAGINA)
         setCargando(false)
       },
       (err) => {
         setError(mensajeDeError(err))
         setCargando(false)
       },
+      LIMITE_EQUIPOS_PAGINA,
     )
-    const cOps = escucharOperativos(setOperativos, () => undefined)
-    return () => {
-      cEq()
-      cOps()
-    }
+    return cEq
   }, [perfil.uid])
 
-  const mapaOperativos = new Map(operativos.map((o) => [o.id, o]))
+  const equipos = useMemo(() => {
+    const mapa = new Map<string, EquipoTurno>()
+    for (const e of equiposVivo) mapa.set(e.id, e)
+    for (const e of equiposExtra) {
+      if (!mapa.has(e.id)) mapa.set(e.id, e)
+    }
+    return Array.from(mapa.values()).sort(
+      (a, b) => (b.creado_en?.toMillis() ?? 0) - (a.creado_en?.toMillis() ?? 0),
+    )
+  }, [equiposVivo, equiposExtra])
+
+  // Respaldo puntual (getDoc) únicamente si algún registro antiguo carece de `operativo_nombre`
+  useEffect(() => {
+    const faltantes = Array.from(
+      new Set(
+        equipos
+          .filter((e) => !e.operativo_nombre && !consultadosRef.current.has(e.operativo_id))
+          .map((e) => e.operativo_id),
+      ),
+    )
+    if (faltantes.length === 0) return
+    for (const id of faltantes) consultadosRef.current.add(id)
+    let activo = true
+    void Promise.all(
+      faltantes.map(async (opId) => {
+        try {
+          const op = await obtenerOperativoPorId(opId)
+          return [opId, op?.nombre ?? 'Operativo BUPC'] as const
+        } catch {
+          return [opId, 'Operativo BUPC'] as const
+        }
+      }),
+    ).then((pares) => {
+      if (!activo) return
+      setNombresFallback((prev) => {
+        const copia = { ...prev }
+        for (const [id, nombre] of pares) copia[id] = nombre
+        return copia
+      })
+    })
+    return () => {
+      activo = false
+    }
+  }, [equipos])
+
   const bajoResguardo = equipos.filter((e) => !e.devuelto && e.acta_incidencia === null)
   const historial = equipos.filter((e) => e.devuelto || e.acta_incidencia !== null)
+
+  async function cargarMasEquipos() {
+    const ultimo = equipos[equipos.length - 1]
+    if (!ultimo?.creado_en || cargandoMas) return
+    setCargandoMas(true)
+    setError(null)
+    try {
+      const res = await obtenerMasMisEquiposBupc(
+        perfil.uid,
+        ultimo.creado_en,
+        LIMITE_EQUIPOS_PAGINA,
+      )
+      setEquiposExtra((prev) => [...prev, ...res.equipos])
+      setHayMas(res.hayMas)
+    } catch (err) {
+      setError(mensajeDeError(err))
+    } finally {
+      setCargandoMas(false)
+    }
+  }
 
   async function enviarFalla(equipoId: string) {
     setError(null)
@@ -150,9 +222,7 @@ export function MiMaterialPanel({ perfil }: MiMaterialPanelProps) {
               <div className="flex flex-col gap-2.5">
                 {bajoResguardo.map((eq) => {
                   const opNombre =
-                    eq.operativo_nombre ||
-                    mapaOperativos.get(eq.operativo_id)?.nombre ||
-                    'Operativo BUPC'
+                    eq.operativo_nombre || nombresFallback[eq.operativo_id] || 'Operativo BUPC'
                   const cantidad = eq.cantidad ?? 1
                   const abriendoFalla = fallaAbiertaId === eq.id
 
@@ -260,9 +330,7 @@ export function MiMaterialPanel({ perfil }: MiMaterialPanelProps) {
               <div className="tarjeta divide-y divide-borde dark:divide-noche-borde">
                 {historial.map((eq) => {
                   const opNombre =
-                    eq.operativo_nombre ||
-                    mapaOperativos.get(eq.operativo_id)?.nombre ||
-                    'Operativo BUPC'
+                    eq.operativo_nombre || nombresFallback[eq.operativo_id] || 'Operativo BUPC'
                   const cantidad = eq.cantidad ?? 1
                   return (
                     <div
@@ -299,6 +367,19 @@ export function MiMaterialPanel({ perfil }: MiMaterialPanelProps) {
                   )
                 })}
               </div>
+            </div>
+          )}
+
+          {hayMas && (
+            <div className="flex justify-center pt-1">
+              <button
+                type="button"
+                disabled={cargandoMas}
+                onClick={() => void cargarMasEquipos()}
+                className="btn-salvia min-h-9 px-4 text-xs"
+              >
+                {cargandoMas ? 'Cargando...' : 'Cargar más entregas'}
+              </button>
             </div>
           )}
         </>

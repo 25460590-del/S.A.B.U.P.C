@@ -1,6 +1,7 @@
 import {
   collection,
   doc,
+  getCountFromServer,
   getDoc,
   onSnapshot,
   query,
@@ -13,6 +14,7 @@ import {
 } from 'firebase/firestore'
 import { rolOperativoPorAyudantia } from '../constants/catalogos'
 import { db } from '../lib/firebase'
+import { normalizarNombrePropio } from '../lib/nombres'
 import {
   ayudantiaEfectiva,
   ayudantiaJefatura,
@@ -22,20 +24,27 @@ import {
   type AyudantiaActiva,
 } from '../lib/permisos'
 import type {
+  ContadorPrerregistros,
   Operativo,
   PerfilOperativoMinimo,
   PrerregistroOperativo,
   RolEnTurno,
   Usuario,
 } from '../types'
-import { normalizarNombrePropio } from '../lib/nombres'
 import { nombreCompleto } from './authService'
 
 export type IntegrantePrerregistro =
   | Usuario
   | Pick<
       PerfilOperativoMinimo,
-      'uid' | 'nombre_completo' | 'numero_cuenta' | 'etapa' | 'subgrupo' | 'ayudantia' | 'ayudantia_slot' | 'grupo_operativo'
+      | 'uid'
+      | 'nombre_completo'
+      | 'numero_cuenta'
+      | 'etapa'
+      | 'subgrupo'
+      | 'ayudantia'
+      | 'ayudantia_slot'
+      | 'grupo_operativo'
     >
 
 function nombreIntegrante(integrante: IntegrantePrerregistro): string {
@@ -54,6 +63,59 @@ function prerregistrosRef(operativoId: string) {
 
 function prerregistroDocRef(operativoId: string, usuarioUid: string) {
   return doc(db, 'operativos', operativoId, 'prerregistros', usuarioUid)
+}
+
+function contadorDocRef(operativoId: string) {
+  return doc(db, 'operativos', operativoId, 'meta', 'contador')
+}
+
+/**
+ * Escucha el subdocumento dedicado `operativos/{operativoId}/meta/contador`
+ * (evita escribir en el documento caliente `operativos/{id}` durante picos de convocatoria).
+ */
+export function escucharContadorPrerregistros(
+  operativoId: string,
+  alCambiar: (conteo: number | null) => void,
+  alFallar?: (error: FirestoreError) => void,
+): Unsubscribe {
+  return onSnapshot(
+    contadorDocRef(operativoId),
+    (snap) => {
+      if (!snap.exists()) {
+        alCambiar(null)
+        return
+      }
+      const data = snap.data() as Partial<ContadorPrerregistros>
+      alCambiar(typeof data.prerregistros_count === 'number' ? data.prerregistros_count : 0)
+    },
+    (err) => {
+      if (alFallar) alFallar(err)
+      else console.warn('[SABUPC] Error al leer contador de prerregistros:', err.code)
+    },
+  )
+}
+
+/**
+ * Lectura puntual del contador en `operativos/{id}/meta/contador` (1 lectura),
+ * con respaldo a `fallbackLegacy` si el operativo fue creado antes de la migración.
+ */
+export async function obtenerConteoPrerregistros(
+  operativoId: string,
+  fallbackLegacy = 0,
+): Promise<number> {
+  const snap = await getDoc(contadorDocRef(operativoId))
+  if (!snap.exists()) return fallbackLegacy
+  const data = snap.data() as Partial<ContadorPrerregistros>
+  return typeof data.prerregistros_count === 'number' ? data.prerregistros_count : fallbackLegacy
+}
+
+/**
+ * Agregación liviana en servidor (`getCountFromServer`) para vistas de mando
+ * cuando se requiere verificar el total exacto sin descargar documentos.
+ */
+export async function contarPrerregistrosServidor(operativoId: string): Promise<number> {
+  const snap = await getCountFromServer(prerregistrosRef(operativoId))
+  return snap.data().count
 }
 
 /**
@@ -140,17 +202,23 @@ export function actualizarRolPrerregistro(
 
 /**
  * Autoregistro de un brigadista activo en un operativo con convocatoria abierta.
- * Valida atómicamente en transacción el estado del operativo, duplicados y `cupo_sugerido`.
+ * Actualiza atómicamente `prerregistros/{uid}` y `meta/contador` SIN escribir sobre `operativos/{id}`.
  */
 export async function apuntarseAOperativo(
   operativoId: string,
   perfil: Usuario,
-): Promise<void> {
+): Promise<number> {
   const opRef = doc(db, 'operativos', operativoId)
   const preRef = prerregistroDocRef(operativoId, perfil.uid)
+  const contRef = contadorDocRef(operativoId)
+  let nuevoConteo = 0
 
   await runTransaction(db, async (tx) => {
-    const [opSnap, preSnap] = await Promise.all([tx.get(opRef), tx.get(preRef)])
+    const [opSnap, preSnap, contSnap] = await Promise.all([
+      tx.get(opRef),
+      tx.get(preRef),
+      tx.get(contRef),
+    ])
     if (!opSnap.exists()) {
       throw new Error('El operativo ya no se encuentra disponible.')
     }
@@ -165,35 +233,56 @@ export async function apuntarseAOperativo(
     if (!op.convocatoria_abierta) {
       throw new Error('La convocatoria de este operativo ya fue cerrada.')
     }
+    const conteoActual = contSnap.exists()
+      ? ((contSnap.data() as Partial<ContadorPrerregistros>).prerregistros_count ?? 0)
+      : (op.prerregistros_count ?? 0)
     if (preSnap.exists()) {
+      nuevoConteo = conteoActual
       return
     }
-    const conteoActual = op.prerregistros_count ?? 0
     if (op.cupo_sugerido !== null && op.cupo_sugerido !== undefined && conteoActual >= op.cupo_sugerido) {
       throw new Error('El cupo sugerido para este operativo ya está completo.')
     }
 
+    nuevoConteo = conteoActual + 1
     tx.set(preRef, construirPayloadPrerregistro(perfil, perfil.uid, 'Autoregistro'))
-    tx.update(opRef, {
-      prerregistros_count: conteoActual + 1,
+    tx.set(contRef, {
+      prerregistros_count: nuevoConteo,
       actualizado_en: serverTimestamp(),
     })
   })
+
+  return nuevoConteo
 }
 
 /**
  * Cancelación del prerregistro propio mientras la convocatoria siga abierta y no esté finalizado.
+ * Actualiza únicamente `meta/contador` sin tocar `operativos/{id}`.
  */
 export async function cancelarMiPrerregistro(
   operativoId: string,
   usuarioUid: string,
-): Promise<void> {
+): Promise<number> {
   const opRef = doc(db, 'operativos', operativoId)
   const preRef = prerregistroDocRef(operativoId, usuarioUid)
+  const contRef = contadorDocRef(operativoId)
+  let nuevoConteo = 0
 
   await runTransaction(db, async (tx) => {
-    const [opSnap, preSnap] = await Promise.all([tx.get(opRef), tx.get(preRef)])
-    if (!preSnap.exists()) return
+    const [opSnap, preSnap, contSnap] = await Promise.all([
+      tx.get(opRef),
+      tx.get(preRef),
+      tx.get(contRef),
+    ])
+    const conteoActual = contSnap.exists()
+      ? ((contSnap.data() as Partial<ContadorPrerregistros>).prerregistros_count ?? 0)
+      : opSnap.exists()
+        ? ((opSnap.data() as Operativo).prerregistros_count ?? 0)
+        : 0
+    if (!preSnap.exists()) {
+      nuevoConteo = conteoActual
+      return
+    }
     if (!opSnap.exists()) {
       throw new Error('El operativo ya no se encuentra disponible.')
     }
@@ -206,19 +295,23 @@ export async function cancelarMiPrerregistro(
     if (!op.convocatoria_abierta) {
       throw new Error('La convocatoria está cerrada; solicita el cambio a tu Encargado.')
     }
-    const conteoActual = op.prerregistros_count ?? 0
+
+    nuevoConteo = Math.max(0, conteoActual - 1)
     tx.delete(preRef)
-    if (conteoActual > 0) {
-      tx.update(opRef, {
-        prerregistros_count: conteoActual - 1,
+    if (contSnap.exists() && conteoActual > 0) {
+      tx.update(contRef, {
+        prerregistros_count: nuevoConteo,
         actualizado_en: serverTimestamp(),
       })
     }
   })
+
+  return nuevoConteo
 }
 
 /**
- * Alta manual previa por Encargado o Administrador (permitida en operativos Programados o Activos).
+ * Alta manual previa por Encargado, Jefe de Ayudantía o Administrador.
+ * Actualiza `meta/contador` sin modificar `operativos/{id}`.
  */
 export async function registrarPrerregistroManual(
   operativoId: string,
@@ -231,9 +324,14 @@ export async function registrarPrerregistroManual(
   }
   const opRef = doc(db, 'operativos', operativoId)
   const preRef = prerregistroDocRef(operativoId, integrante.uid)
+  const contRef = contadorDocRef(operativoId)
 
   await runTransaction(db, async (tx) => {
-    const [opSnap, preSnap] = await Promise.all([tx.get(opRef), tx.get(preRef)])
+    const [opSnap, preSnap, contSnap] = await Promise.all([
+      tx.get(opRef),
+      tx.get(preRef),
+      tx.get(contRef),
+    ])
     if (!opSnap.exists()) {
       throw new Error('El operativo ya no se encuentra disponible.')
     }
@@ -246,9 +344,11 @@ export async function registrarPrerregistroManual(
     if (preSnap.exists()) {
       throw new Error(`${nombreIntegrante(integrante)} ya se encuentra prerregistrado.`)
     }
-    const conteoActual = op.prerregistros_count ?? 0
+    const conteoActual = contSnap.exists()
+      ? ((contSnap.data() as Partial<ContadorPrerregistros>).prerregistros_count ?? 0)
+      : (op.prerregistros_count ?? 0)
     tx.set(preRef, construirPayloadPrerregistro(integrante, encargado.uid, 'Manual_Encargado'))
-    tx.update(opRef, {
+    tx.set(contRef, {
       prerregistros_count: conteoActual + 1,
       actualizado_en: serverTimestamp(),
     })
@@ -256,7 +356,8 @@ export async function registrarPrerregistroManual(
 }
 
 /**
- * Baja manual de un asistente del prerregistro por Encargado o Administrador (mientras no esté Finalizado).
+ * Baja manual de un asistente del prerregistro por Encargado, Jefe de Ayudantía o Administrador.
+ * Actualiza `meta/contador` sin tocar `operativos/{id}`.
  */
 export async function quitarPrerregistroManual(
   operativoId: string,
@@ -264,9 +365,14 @@ export async function quitarPrerregistroManual(
 ): Promise<void> {
   const opRef = doc(db, 'operativos', operativoId)
   const preRef = prerregistroDocRef(operativoId, usuarioUid)
+  const contRef = contadorDocRef(operativoId)
 
   await runTransaction(db, async (tx) => {
-    const [opSnap, preSnap] = await Promise.all([tx.get(opRef), tx.get(preRef)])
+    const [opSnap, preSnap, contSnap] = await Promise.all([
+      tx.get(opRef),
+      tx.get(preRef),
+      tx.get(contRef),
+    ])
     if (!preSnap.exists()) return
     if (!opSnap.exists()) {
       throw new Error('El operativo ya no se encuentra disponible.')
@@ -277,13 +383,13 @@ export async function quitarPrerregistroManual(
         `No se puede modificar la lista previa de un operativo ${op.estatus === 'Cancelado' ? 'cancelado' : 'finalizado'}.`,
       )
     }
-    const conteoActual = op.prerregistros_count ?? 0
+    const conteoActual = contSnap.exists()
+      ? ((contSnap.data() as Partial<ContadorPrerregistros>).prerregistros_count ?? 0)
+      : (op.prerregistros_count ?? 0)
     tx.delete(preRef)
-    if (conteoActual > 0) {
-      tx.update(opRef, {
-        prerregistros_count: conteoActual - 1,
-        actualizado_en: serverTimestamp(),
-      })
-    }
+    tx.set(contRef, {
+      prerregistros_count: Math.max(0, conteoActual - 1),
+      actualizado_en: serverTimestamp(),
+    })
   })
 }

@@ -4,13 +4,17 @@ import {
   doc,
   getDoc,
   getDocs,
+  limit,
   onSnapshot,
+  orderBy,
   query,
   runTransaction,
   serverTimestamp,
+  startAfter,
   updateDoc,
   where,
   type FirestoreError,
+  type Timestamp,
   type Unsubscribe,
 } from 'firebase/firestore'
 import type { PersonaAlertaInactivo } from '../components/AlertaInactivoModal'
@@ -757,13 +761,21 @@ export function escucharAsistenciasDeOperativo(
   )
 }
 
+export const LIMITE_MIS_ASISTENCIAS = 50
+
 export function escucharMisAsistencias(
   uid: string,
   alCambiar: (lista: AsistenciaPersonal[]) => void,
   alFallar: (error: FirestoreError) => void,
+  limite = LIMITE_MIS_ASISTENCIAS,
 ): Unsubscribe {
   return onSnapshot(
-    query(asistenciasRef, where('usuario_uid', '==', uid)),
+    query(
+      asistenciasRef,
+      where('usuario_uid', '==', uid),
+      orderBy('hora_entrada', 'desc'),
+      limit(limite),
+    ),
     (snap) => {
       const lista = snap.docs.map((d) => d.data() as AsistenciaPersonal)
       lista.sort((a, b) => (b.hora_entrada?.toMillis() ?? 0) - (a.hora_entrada?.toMillis() ?? 0))
@@ -771,6 +783,30 @@ export function escucharMisAsistencias(
     },
     alFallar,
   )
+}
+
+/**
+ * Carga paginada ("Cargar más") de asistencias anteriores del brigadista.
+ */
+export async function obtenerMasMisAsistencias(
+  uid: string,
+  antesDe: Timestamp,
+  limite = LIMITE_MIS_ASISTENCIAS,
+): Promise<{ asistencias: AsistenciaPersonal[]; hayMas: boolean }> {
+  const snap = await getDocs(
+    query(
+      asistenciasRef,
+      where('usuario_uid', '==', uid),
+      orderBy('hora_entrada', 'desc'),
+      startAfter(antesDe),
+      limit(limite),
+    ),
+  )
+  const asistencias = snap.docs.map((d) => d.data() as AsistenciaPersonal)
+  return {
+    asistencias,
+    hayMas: snap.docs.length === limite,
+  }
 }
 
 /**

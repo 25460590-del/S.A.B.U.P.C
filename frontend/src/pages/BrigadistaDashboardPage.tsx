@@ -31,10 +31,11 @@ import {
   escucharEquiposDeAsistencia,
   escucharMisEquiposBupc,
 } from '../services/equiposService'
-import { escucharOperativosConConvocatoriaAbierta } from '../services/operativosService'
+import { escucharOperativosActivos } from '../services/operativosService'
 import {
   apuntarseAOperativo,
   cancelarMiPrerregistro,
+  obtenerConteoPrerregistros,
   obtenerMiPrerregistro,
 } from '../services/prerregistrosService'
 import type {
@@ -90,11 +91,12 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
   const [aviso, setAviso] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  // Convocatorias abiertas y estado propio de prerregistro (getDoc puntual, 0 list)
-  const [convocatoriasAbiertas, setConvocatoriasAbiertas] = useState<Operativo[]>([])
+  // Operativos activos y estado propio de prerregistro + contador dedicado `meta/contador`
+  const [operativosActivos, setOperativosActivos] = useState<Operativo[]>([])
   const [misPrerregistros, setMisPrerregistros] = useState<
     Record<string, PrerregistroOperativo | null>
   >({})
+  const [conteosPorOp, setConteosPorOp] = useState<Record<string, number>>({})
   const [ocupadoConvocatoriaId, setOcupadoConvocatoriaId] = useState<string | null>(null)
   const [operativoDetalleId, setOperativoDetalleId] = useState<string | null>(null)
 
@@ -113,44 +115,61 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
     const cancelarBupc = escucharMisEquiposBupc(perfil.uid, setMisEquiposBupc, (err) =>
       setError(mensajeDeError(err)),
     )
-    const cancelarConv = escucharOperativosConConvocatoriaAbierta(setConvocatoriasAbiertas)
+    const cancelarOps = escucharOperativosActivos((lista) => {
+      const ordenados = [...lista].sort((a, b) => a.fecha_inicio.localeCompare(b.fecha_inicio))
+      setOperativosActivos(ordenados)
+    })
     return () => {
       cancelar()
       cancelarBupc()
-      cancelarConv()
+      cancelarOps()
     }
   }, [perfil.uid])
 
-  const idsConvocatorias = useMemo(
-    () => convocatoriasAbiertas.map((op) => op.id).join('|'),
-    [convocatoriasAbiertas],
+  const idsOperativosActivos = useMemo(
+    () => operativosActivos.map((op) => op.id).join('|'),
+    [operativosActivos],
   )
 
   useEffect(() => {
-    if (!idsConvocatorias) return
     let activo = true
-    const ids = idsConvocatorias.split('|')
+    if (!idsOperativosActivos) {
+      void Promise.resolve().then(() => {
+        if (!activo) return
+        setMisPrerregistros({})
+        setConteosPorOp({})
+      })
+      return () => {
+        activo = false
+      }
+    }
+    const ids = idsOperativosActivos.split('|')
+    const mapaFallback = new Map(operativosActivos.map((op) => [op.id, op.prerregistros_count ?? 0]))
     void Promise.all(
       ids.map(async (opId) => {
-        try {
-          const docPre = await obtenerMiPrerregistro(opId, perfil.uid)
-          return [opId, docPre] as const
-        } catch {
-          return [opId, null] as const
-        }
+        const [docPre, conteo] = await Promise.all([
+          obtenerMiPrerregistro(opId, perfil.uid).catch(() => null),
+          obtenerConteoPrerregistros(opId, mapaFallback.get(opId) ?? 0).catch(
+            () => mapaFallback.get(opId) ?? 0,
+          ),
+        ])
+        return [opId, docPre, conteo] as const
       }),
-    ).then((pares) => {
+    ).then((resultados) => {
       if (!activo) return
-      const mapa: Record<string, PrerregistroOperativo | null> = {}
-      for (const [opId, docPre] of pares) {
-        mapa[opId] = docPre
+      const mapaPre: Record<string, PrerregistroOperativo | null> = {}
+      const mapaCont: Record<string, number> = {}
+      for (const [opId, docPre, conteo] of resultados) {
+        mapaPre[opId] = docPre
+        mapaCont[opId] = conteo
       }
-      setMisPrerregistros(mapa)
+      setMisPrerregistros(mapaPre)
+      setConteosPorOp(mapaCont)
     })
     return () => {
       activo = false
     }
-  }, [idsConvocatorias, perfil.uid])
+  }, [idsOperativosActivos, perfil.uid, operativosActivos])
 
   const asistenciaPorOperativo = useMemo(() => {
     const mapa = new Map<string, AsistenciaPersonal>()
@@ -162,8 +181,21 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
     return mapa
   }, [asistencias])
 
+  // Mostrar operativos con convocatoria abierta Y aquellos con convocatoria cerrada en los que el
+  // brigadista ya está prerregistrado o tiene asistencia confirmada (4A A-1).
+  const operativosVisibles = useMemo(
+    () =>
+      operativosActivos.filter(
+        (op) =>
+          Boolean(op.convocatoria_abierta) ||
+          Boolean(misPrerregistros[op.id]) ||
+          asistenciaPorOperativo.has(op.id),
+      ),
+    [operativosActivos, misPrerregistros, asistenciaPorOperativo],
+  )
+
   const operativoDetalle = operativoDetalleId
-    ? (convocatoriasAbiertas.find((op) => op.id === operativoDetalleId) ?? null)
+    ? (operativosVisibles.find((op) => op.id === operativoDetalleId) ?? null)
     : null
 
   async function manejarApuntarme(op: Operativo) {
@@ -171,8 +203,9 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
     setError(null)
     setAviso(null)
     try {
-      await apuntarseAOperativo(op.id, perfil)
+      const nuevoConteo = await apuntarseAOperativo(op.id, perfil)
       const actualizado = await obtenerMiPrerregistro(op.id, perfil.uid).catch(() => null)
+      setConteosPorOp((prev) => ({ ...prev, [op.id]: nuevoConteo }))
       setMisPrerregistros((prev) => ({
         ...prev,
         [op.id]:
@@ -206,7 +239,8 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
     setError(null)
     setAviso(null)
     try {
-      await cancelarMiPrerregistro(op.id, perfil.uid)
+      const nuevoConteo = await cancelarMiPrerregistro(op.id, perfil.uid)
+      setConteosPorOp((prev) => ({ ...prev, [op.id]: nuevoConteo }))
       setMisPrerregistros((prev) => ({ ...prev, [op.id]: null }))
       setAviso(`Se canceló tu prerregistro en "${op.nombre}".`)
     } catch (err) {
@@ -412,31 +446,32 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
         </span>
       </button>
 
-      {/* Próximos operativos con convocatoria abierta (autoregistro previo) */}
-      {convocatoriasAbiertas.length > 0 && (
+      {/* Próximos operativos (convocatoria abierta + inscritos aunque la convocatoria ya haya cerrado) */}
+      {operativosVisibles.length > 0 && (
         <section
-          aria-label="Próximos operativos con convocatoria abierta"
+          aria-label="Próximos operativos"
           className="tarjeta flex flex-col gap-3 p-4"
         >
           <div className="flex items-center justify-between gap-2 border-b border-borde pb-2.5 dark:border-noche-borde">
             <div className="flex items-center gap-2">
               <Megaphone size={16} strokeWidth={2} className="shrink-0 text-udec dark:text-activo-claro" />
               <h3 className="text-sm font-bold text-tinta dark:text-noche-tinta">
-                Próximos operativos con convocatoria
+                Próximos operativos
               </h3>
             </div>
             <span className="rounded-full bg-salvia px-2 py-0.5 text-[11px] font-bold tabular-nums text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
-              {convocatoriasAbiertas.length}
+              {operativosVisibles.length}
             </span>
           </div>
 
           <div className="flex flex-col gap-2.5">
-            {convocatoriasAbiertas.map((op) => {
+            {operativosVisibles.map((op) => {
               const asistenciaPropia = asistenciaPorOperativo.get(op.id) ?? null
               const miPre = misPrerregistros[op.id] ?? null
               const yaAsistio = Boolean(asistenciaPropia)
               const prerregistrado = Boolean(miPre)
-              const apuntados = op.prerregistros_count ?? 0
+              const convocatoriaAbierta = Boolean(op.convocatoria_abierta)
+              const apuntados = conteosPorOp[op.id] ?? op.prerregistros_count ?? 0
               const cupo = op.cupo_sugerido ?? null
               const cupoLleno = cupo !== null && apuntados >= cupo
               const ocupado = ocupadoConvocatoriaId === op.id
@@ -495,20 +530,26 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
                       <>
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-salvia px-2.5 py-1 text-[11px] font-bold text-udec-oscuro dark:bg-noche-tarjeta dark:text-activo-claro">
                           <CheckCircle2 size={13} strokeWidth={2} />
-                          <span>Prerregistrado</span>
+                          <span>
+                            {convocatoriaAbierta
+                              ? 'Prerregistrado'
+                              : 'Convocatoria cerrada — sigues inscrito'}
+                          </span>
                         </span>
-                        <button
-                          type="button"
-                          disabled={ocupado}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            void manejarCancelarPrerregistro(op)
-                          }}
-                          className="inline-flex min-h-8 cursor-pointer items-center gap-1 rounded-lg border border-borde-fuerte bg-tarjeta px-2.5 text-[11px] font-semibold text-tinta-suave hover:border-alerta hover:text-alerta disabled:opacity-50 dark:border-noche-borde dark:bg-noche-tarjeta dark:text-noche-tinta-suave dark:hover:text-noche-rojo-texto"
-                        >
-                          <UserMinus size={12} strokeWidth={2} />
-                          <span>{ocupado ? 'Cancelando...' : 'Cancelar registro'}</span>
-                        </button>
+                        {convocatoriaAbierta && (
+                          <button
+                            type="button"
+                            disabled={ocupado}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              void manejarCancelarPrerregistro(op)
+                            }}
+                            className="inline-flex min-h-8 cursor-pointer items-center gap-1 rounded-lg border border-borde-fuerte bg-tarjeta px-2.5 text-[11px] font-semibold text-tinta-suave hover:border-alerta hover:text-alerta disabled:opacity-50 dark:border-noche-borde dark:bg-noche-tarjeta dark:text-noche-tinta-suave dark:hover:text-noche-rojo-texto"
+                          >
+                            <UserMinus size={12} strokeWidth={2} />
+                            <span>{ocupado ? 'Cancelando...' : 'Cancelar registro'}</span>
+                          </button>
+                        )}
                       </>
                     ) : (
                       <>
@@ -711,11 +752,13 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
         </div>
       </article>
 
-      {/* Modal detalle de operativo con convocatoria */}
+      {/* Modal detalle de operativo */}
       {operativoDetalle && (() => {
         const asistenciaDet = asistenciaPorOperativo.get(operativoDetalle.id) ?? null
         const preDet = misPrerregistros[operativoDetalle.id] ?? null
-        const apuntadosDet = operativoDetalle.prerregistros_count ?? 0
+        const convAbiertaDet = Boolean(operativoDetalle.convocatoria_abierta)
+        const apuntadosDet =
+          conteosPorOp[operativoDetalle.id] ?? operativoDetalle.prerregistros_count ?? 0
         const cupoDet = operativoDetalle.cupo_sugerido ?? null
         const cupoLlenoDet = cupoDet !== null && apuntadosDet >= cupoDet
         const ocupadoDet = ocupadoConvocatoriaId === operativoDetalle.id
@@ -781,7 +824,11 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
                       ) : preDet ? (
                         <>
                           <CheckCircle2 size={12} strokeWidth={2} />
-                          <span>Prerregistrado</span>
+                          <span>
+                            {convAbiertaDet
+                              ? 'Prerregistrado'
+                              : 'Convocatoria cerrada — sigues inscrito'}
+                          </span>
                         </>
                       ) : (
                         <>
@@ -795,7 +842,9 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
                     {asistenciaDet
                       ? 'Tu asistencia ya quedó registrada en este operativo.'
                       : preDet
-                        ? 'Ya quedaste apuntado en la lista previa. Al llegar, escanea el código QR del Puesto de Mando para confirmar tu asistencia.'
+                        ? convAbiertaDet
+                          ? 'Ya quedaste apuntado en la lista previa. Al llegar, escanea el código QR del Puesto de Mando para confirmar tu asistencia.'
+                          : 'La convocatoria cerró, pero sigues inscrito en la lista previa. Al llegar, escanea el código QR del Puesto de Mando para confirmar tu asistencia.'
                         : 'Todavía no te has apuntado a este operativo. Puedes prerregistrarte ahora para asegurar tu lugar.'}
                   </p>
                   {(asistenciaDet || preDet) && (
@@ -873,7 +922,7 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
                     Cerrar
                   </button>
 
-                  {!asistenciaDet && preDet && (
+                  {!asistenciaDet && preDet && convAbiertaDet && (
                     <button
                       type="button"
                       disabled={ocupadoDet}
@@ -885,7 +934,7 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
                     </button>
                   )}
 
-                  {!asistenciaDet && !preDet && !cupoLlenoDet && (
+                  {!asistenciaDet && !preDet && convAbiertaDet && !cupoLlenoDet && (
                     <button
                       type="button"
                       disabled={ocupadoDet}

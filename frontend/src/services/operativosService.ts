@@ -1,16 +1,21 @@
 import {
   collection,
   doc,
+  getDoc,
   getDocs,
   limit,
   onSnapshot,
+  orderBy,
   query,
   runTransaction,
   serverTimestamp,
+  startAfter,
   updateDoc,
   where,
   writeBatch,
+  type DocumentData,
   type FirestoreError,
+  type QueryDocumentSnapshot,
   type Unsubscribe,
 } from 'firebase/firestore'
 import { db } from '../lib/firebase'
@@ -95,6 +100,7 @@ export async function crearYConfigurarOperativo(
   const opDoc = doc(operativosRef)
   const secretoEstaticoDoc = doc(db, 'operativos', opDoc.id, 'secretos', 'estatico')
   const secretoVigenteDoc = doc(db, 'operativos', opDoc.id, 'secretos', 'vigente')
+  const contadorMetaDoc = doc(db, 'operativos', opDoc.id, 'meta', 'contador')
   const qrTokenEstatico = generarTokenEstatico()
   const nonceInicial = generarNonceQr()
   const convocatoriaAbierta = Boolean(datos.convocatoria_abierta)
@@ -113,11 +119,15 @@ export async function crearYConfigurarOperativo(
     recepcion_abierta: datos.recepcion_abierta,
     convocatoria_abierta: convocatoriaAbierta,
     cupo_sugerido: cupoSugerido,
-    prerregistros_count: 0,
     modo_qr: datos.modo_qr,
     creado_por_uid: actor.uid,
     creado_por_nombre: nombreCompleto(actor),
     creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  })
+
+  lote.set(contadorMetaDoc, {
+    prerregistros_count: 0,
     actualizado_en: serverTimestamp(),
   })
 
@@ -146,43 +156,64 @@ export async function crearYConfigurarOperativo(
   return opDoc.id
 }
 
-export function escucharOperativos(
-  alCambiar: (operativos: Operativo[]) => void,
-  alFallar: (error: FirestoreError) => void,
-): Unsubscribe {
-  return onSnapshot(
-    operativosRef,
-    (snap) => {
-      const lista = snap.docs.map((d) => normalizarOperativo(d.data() as Operativo))
-      lista.sort((a, b) => (b.creado_en?.toMillis() ?? 0) - (a.creado_en?.toMillis() ?? 0))
-      alCambiar(lista)
-    },
-    alFallar,
-  )
-}
-
 /**
- * Escucha únicamente los operativos con convocatoria abierta (`convocatoria_abierta == true`)
- * y no finalizados (consulta acotada para ahorrar lecturas en Plan Spark en la vista del brigadista).
+ * Escucha únicamente los operativos activos (`estatus == 'Activo'`) para vistas operativas en vivo
+ * (Plan Spark: evita descargar todo el histórico de operativos cerrados en tiempo real).
  */
-export function escucharOperativosConConvocatoriaAbierta(
+export function escucharOperativosActivos(
   alCambiar: (operativos: Operativo[]) => void,
   alFallar?: (error: FirestoreError) => void,
 ): Unsubscribe {
   return onSnapshot(
-    query(operativosRef, where('convocatoria_abierta', '==', true)),
+    query(operativosRef, where('estatus', '==', 'Activo')),
     (snap) => {
       const lista = snap.docs
         .map((d) => normalizarOperativo(d.data() as Operativo))
         .filter((op) => !esOperativoCerrado(op))
-      lista.sort((a, b) => a.fecha_inicio.localeCompare(b.fecha_inicio))
+      lista.sort((a, b) => (b.creado_en?.toMillis() ?? 0) - (a.creado_en?.toMillis() ?? 0))
       alCambiar(lista)
     },
     (err) => {
       if (alFallar) alFallar(err)
-      else console.warn('[SABUPC] Error al consultar convocatorias abiertas:', err.code)
+      else console.warn('[SABUPC] Error al consultar operativos activos:', err.code)
     },
   )
+}
+
+export interface PaginaOperativos {
+  operativos: Operativo[]
+  ultimoDoc: QueryDocumentSnapshot<DocumentData> | null
+  hayMas: boolean
+}
+
+/**
+ * Lectura paginada (`getDocs` + `orderBy('creado_en', 'desc')` + `limit(N)`) para Archivo Operativo
+ * e históricos sin abrir listeners globales sobre toda la colección `operativos`.
+ */
+export async function obtenerOperativosPaginados(
+  tamanoPagina = 20,
+  cursor?: QueryDocumentSnapshot<DocumentData> | null,
+): Promise<PaginaOperativos> {
+  const consulta = cursor
+    ? query(operativosRef, orderBy('creado_en', 'desc'), startAfter(cursor), limit(tamanoPagina))
+    : query(operativosRef, orderBy('creado_en', 'desc'), limit(tamanoPagina))
+  const snap = await getDocs(consulta)
+  const operativos = snap.docs.map((d) => normalizarOperativo(d.data() as Operativo))
+  const ultimoDoc = snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null
+  return {
+    operativos,
+    ultimoDoc,
+    hayMas: snap.docs.length === tamanoPagina,
+  }
+}
+
+/**
+ * Lectura puntual de respaldo (`getDoc`) solo cuando un registro histórico carece de metadatos
+ * desnormalizados (ej. `operativo_nombre` o `categoria`).
+ */
+export async function obtenerOperativoPorId(operativoId: string): Promise<Operativo | null> {
+  const snap = await getDoc(doc(operativosRef, operativoId))
+  return snap.exists() ? normalizarOperativo(snap.data() as Operativo) : null
 }
 
 /**

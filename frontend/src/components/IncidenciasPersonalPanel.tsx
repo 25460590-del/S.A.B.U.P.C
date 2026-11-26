@@ -12,22 +12,21 @@ import {
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import * as XLSX from 'xlsx'
 import { GRAVEDADES_INCIDENCIA, TIPOS_INCIDENCIA_PERSONAL } from '../constants/catalogos'
+import { useDirectorio } from '../context/DirectorioContext'
 import { normalizarNombrePropio } from '../lib/nombres'
 import { ayudantiaJefatura, esAdmin, puedeGestionarBrigadista } from '../lib/permisos'
-import {
-  escucharDirectorioSegunRol,
-  mensajeDeError,
-  nombreCompleto,
-} from '../services/authService'
+import { mensajeDeError, nombreCompleto } from '../services/authService'
 import {
   escucharActasMaterialBupc,
+  LIMITE_EQUIPOS_PAGINA,
   obtenerEvidenciaEquipo,
+  obtenerMasActasMaterialBupc,
 } from '../services/equiposService'
 import {
   crearIncidenciaPersonal,
   escucharIncidenciasPersonalSegunRol,
 } from '../services/incidenciasPersonalService'
-import { escucharOperativos } from '../services/operativosService'
+import { escucharOperativosActivos } from '../services/operativosService'
 import type {
   EquipoTurno,
   GravedadIncidencia,
@@ -83,10 +82,13 @@ export function IncidenciasPersonalPanel({ actor }: IncidenciasPersonalPanelProp
   const soyAdmin = esAdmin(actor)
   const ayJefe = ayudantiaJefatura(actor)
 
-  const [usuarios, setUsuarios] = useState<Usuario[]>([])
+  const { usuarios } = useDirectorio()
   const [operativos, setOperativos] = useState<Operativo[]>([])
   const [incidenciasPers, setIncidenciasPers] = useState<IncidenciaPersonal[]>([])
-  const [actasMaterial, setActasMaterial] = useState<EquipoTurno[]>([])
+  const [actasVivo, setActasVivo] = useState<EquipoTurno[]>([])
+  const [actasExtra, setActasExtra] = useState<EquipoTurno[]>([])
+  const [hayMasActas, setHayMasActas] = useState(false)
+  const [cargandoMasActas, setCargandoMasActas] = useState(false)
 
   // Filtros en cliente
   const [categoriaFiltro, setCategoriaFiltro] = useState<CategoriaFiltro>('todas')
@@ -116,24 +118,57 @@ export function IncidenciasPersonalPanel({ actor }: IncidenciasPersonalPanelProp
   const [aviso, setAviso] = useState<string | null>(null)
 
   useEffect(() => {
-    const cOps = escucharOperativos(setOperativos, (err) => setError(mensajeDeError(err)))
-    const cUsers = escucharDirectorioSegunRol(actor, setUsuarios, () => undefined)
+    const cOps = escucharOperativosActivos(setOperativos, (err) => setError(mensajeDeError(err)))
     const cPers = escucharIncidenciasPersonalSegunRol(actor, setIncidenciasPers, (err) =>
       setError(mensajeDeError(err)),
     )
     const cMat = escucharActasMaterialBupc(
-      setActasMaterial,
+      (lista) => {
+        setActasVivo(lista)
+        setHayMasActas(lista.length >= LIMITE_EQUIPOS_PAGINA)
+      },
       (err) => setError(mensajeDeError(err)),
       ayJefe,
+      LIMITE_EQUIPOS_PAGINA,
     )
 
     return () => {
       cOps()
-      cUsers()
       cPers()
       cMat()
     }
   }, [actor, ayJefe])
+
+  const actasMaterial = useMemo(() => {
+    const mapa = new Map<string, EquipoTurno>()
+    for (const a of actasVivo) mapa.set(a.id, a)
+    for (const a of actasExtra) {
+      if (!mapa.has(a.id)) mapa.set(a.id, a)
+    }
+    return Array.from(mapa.values()).sort(
+      (a, b) => (b.actualizado_en?.toMillis() ?? 0) - (a.actualizado_en?.toMillis() ?? 0),
+    )
+  }, [actasVivo, actasExtra])
+
+  async function cargarMasActas() {
+    const ultima = actasMaterial[actasMaterial.length - 1]
+    if (!ultima?.actualizado_en || cargandoMasActas) return
+    setCargandoMasActas(true)
+    setError(null)
+    try {
+      const res = await obtenerMasActasMaterialBupc(
+        ultima.actualizado_en,
+        ayJefe,
+        LIMITE_EQUIPOS_PAGINA,
+      )
+      setActasExtra((prev) => [...prev, ...res.actas])
+      setHayMasActas(res.hayMas)
+    } catch (err) {
+      setError(mensajeDeError(err))
+    } finally {
+      setCargandoMasActas(false)
+    }
+  }
 
   const mapaUsuarios = useMemo(() => new Map(usuarios.map((u) => [u.uid, u])), [usuarios])
   const mapaOperativos = useMemo(() => new Map(operativos.map((o) => [o.id, o])), [operativos])
@@ -697,6 +732,19 @@ export function IncidenciasPersonalPanel({ actor }: IncidenciasPersonalPanelProp
             </div>
           ))}
         </article>
+      )}
+
+      {hayMasActas && categoriaFiltro !== 'personal' && (
+        <div className="flex justify-center">
+          <button
+            type="button"
+            disabled={cargandoMasActas}
+            onClick={() => void cargarMasActas()}
+            className="btn-salvia min-h-9 px-4 text-xs"
+          >
+            {cargandoMasActas ? 'Cargando...' : 'Cargar más actas de material'}
+          </button>
+        </div>
       )}
 
       {/* Visor bajo demanda de evidencia WebP */}

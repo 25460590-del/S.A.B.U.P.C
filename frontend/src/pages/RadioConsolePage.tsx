@@ -20,7 +20,7 @@ import { RebacePanel } from '../components/RebacePanel'
 import { CANALES_SUGERIDOS } from '../constants/rebaceSeed'
 import { useWakeLock } from '../hooks/useWakeLock'
 import { mensajeDeError } from '../services/authService'
-import { escucharOperativos } from '../services/operativosService'
+import { escucharOperativosActivos } from '../services/operativosService'
 import {
   actualizarUnidadesCanal,
   crearCanalRadio,
@@ -29,6 +29,8 @@ import {
   escucharCatalogoRebace,
   escucharRegistrosCanal,
   exportarBitacoraCsvLocal,
+  LIMITE_REGISTROS_RADIO,
+  obtenerRegistrosCanalAnteriores,
   poblarCatalogoRebace,
   registrarMensajeRadio,
 } from '../services/radioService'
@@ -56,7 +58,10 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
   const [registrosPorCanal, setRegistrosPorCanal] = useState<{
     canalId: string
     lista: RegistroBitacoraRadio[]
+    anteriores: RegistroBitacoraRadio[]
+    hayMas: boolean
   } | null>(null)
+  const [cargandoMasRadio, setCargandoMasRadio] = useState(false)
   const [claves, setClaves] = useState<ClaveRebace[]>([])
   const [cargandoClaves, setCargandoClaves] = useState(true)
   const [poblandoClaves, setPoblandoClaves] = useState(false)
@@ -91,25 +96,22 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
 
   const [error, setError] = useState<string | null>(null)
   const [aviso, setAviso] = useState<string | null>(null)
-  const opActivoIdRef = useRef<string | null>(null)
+  const opActivoRef = useRef<{ id: string; nombre: string } | null>(null)
 
   useEffect(() => {
-    const cancelarOps = escucharOperativos(
+    const cancelarOps = escucharOperativosActivos(
       (lista) => {
-        const actualId = opActivoIdRef.current
-        if (actualId) {
-          const opActualizado = lista.find((o) => o.id === actualId)
-          if (opActualizado && (opActualizado.estatus === 'Finalizado' || opActualizado.estatus === 'Cancelado')) {
-            setOperativoIdSel('')
-            setCanalIdSel('')
-            setRegistroEditando(null)
-            setTextoEditado('')
-            setMostrandoNuevoCanal(false)
-            setMostrandoNuevaUnidad(false)
-            setAviso(
-              `El operativo "${opActualizado.nombre}" fue ${opActualizado.estatus === 'Cancelado' ? 'cancelado' : 'finalizado'}. Su bitácora de radio quedó disponible solo para consulta en Archivo Operativo Global.`,
-            )
-          }
+        const actual = opActivoRef.current
+        if (actual && !lista.some((o) => o.id === actual.id)) {
+          setOperativoIdSel('')
+          setCanalIdSel('')
+          setRegistroEditando(null)
+          setTextoEditado('')
+          setMostrandoNuevoCanal(false)
+          setMostrandoNuevaUnidad(false)
+          setAviso(
+            `El operativo "${actual.nombre}" fue cerrado. Su bitácora de radio quedó disponible solo para consulta en Archivo Operativo Global.`,
+          )
         }
         setOperativos(lista)
       },
@@ -128,9 +130,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
     }
   }, [])
 
-  const operativosActivos = operativos.filter(
-    (o) => o.estatus !== 'Finalizado' && o.estatus !== 'Cancelado',
-  )
+  const operativosActivos = operativos
 
   const operativoActivo =
     operativosActivos.find((o) => o.id === operativoIdSel) ??
@@ -140,8 +140,10 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
   const opActivoId = operativoActivo?.id ?? null
 
   useEffect(() => {
-    opActivoIdRef.current = opActivoId
-  }, [opActivoId])
+    opActivoRef.current = operativoActivo
+      ? { id: operativoActivo.id, nombre: operativoActivo.nombre }
+      : null
+  }, [operativoActivo])
 
   useEffect(() => {
     if (!opActivoId) return
@@ -161,14 +163,65 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
     if (!canalActivoId) return
     const cancelar = escucharRegistrosCanal(
       canalActivoId,
-      (lista) => setRegistrosPorCanal({ canalId: canalActivoId, lista }),
+      (lista) =>
+        setRegistrosPorCanal((prev) => ({
+          canalId: canalActivoId,
+          lista,
+          anteriores: prev?.canalId === canalActivoId ? prev.anteriores : [],
+          hayMas:
+            prev?.canalId === canalActivoId && prev.anteriores.length > 0
+              ? prev.hayMas
+              : lista.length >= LIMITE_REGISTROS_RADIO,
+        })),
       (err) => setError(mensajeDeError(err)),
+      LIMITE_REGISTROS_RADIO,
     )
     return cancelar
   }, [canalActivoId])
 
-  const registros =
-    registrosPorCanal?.canalId === canalActivoId ? registrosPorCanal.lista : []
+  const registros = (() => {
+    if (registrosPorCanal?.canalId !== canalActivoId) return []
+    const mapa = new Map<string, RegistroBitacoraRadio>()
+    for (const r of registrosPorCanal.lista) mapa.set(r.id, r)
+    for (const r of registrosPorCanal.anteriores) {
+      if (!mapa.has(r.id)) mapa.set(r.id, r)
+    }
+    return Array.from(mapa.values()).sort(
+      (a, b) =>
+        (b.creado_en?.toMillis() ?? Number.MAX_SAFE_INTEGER) -
+        (a.creado_en?.toMillis() ?? Number.MAX_SAFE_INTEGER),
+    )
+  })()
+  const hayMasRegistrosRadio =
+    registrosPorCanal?.canalId === canalActivoId ? registrosPorCanal.hayMas : false
+
+  async function cargarMasRegistrosRadio() {
+    if (!canalActivoId || cargandoMasRadio) return
+    const ultimo = registros[registros.length - 1]
+    if (!ultimo?.creado_en) return
+    setCargandoMasRadio(true)
+    setError(null)
+    try {
+      const res = await obtenerRegistrosCanalAnteriores(
+        canalActivoId,
+        ultimo.creado_en,
+        LIMITE_REGISTROS_RADIO,
+      )
+      setRegistrosPorCanal((prev) =>
+        prev?.canalId === canalActivoId
+          ? {
+              ...prev,
+              anteriores: [...prev.anteriores, ...res.registros],
+              hayMas: res.hayMas,
+            }
+          : prev,
+      )
+    } catch (err) {
+      setError(mensajeDeError(err))
+    } finally {
+      setCargandoMasRadio(false)
+    }
+  }
 
   const unidadesCanal = canalActivo?.unidades_participantes ?? ['CECOM', '58A', 'BUPC 1']
 
@@ -881,6 +934,19 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
                       </tbody>
                     </table>
                   </div>
+
+                  {hayMasRegistrosRadio && (
+                    <div className="flex shrink-0 justify-center border-t border-borde bg-superficie-suave px-3 py-2 dark:border-noche-borde dark:bg-noche-campo">
+                      <button
+                        type="button"
+                        disabled={cargandoMasRadio}
+                        onClick={() => void cargarMasRegistrosRadio()}
+                        className="btn-salvia min-h-8 px-3.5 text-xs"
+                      >
+                        {cargandoMasRadio ? 'Cargando...' : 'Cargar mensajes anteriores'}
+                      </button>
+                    </div>
+                  )}
                 </>
               )}
             </article>

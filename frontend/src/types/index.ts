@@ -156,6 +156,12 @@ export interface PresenteOperativo {
   creado_en: Timestamp
 }
 
+/** Subdocumento dedicado `operativos/{operativoId}/meta/contador` para evitar contención en `operativos/{id}`. */
+export interface ContadorPrerregistros {
+  prerregistros_count: number
+  actualizado_en: Timestamp
+}
+
 export type OrigenPrerregistro = 'Autoregistro' | 'Manual_Encargado'
 
 /** Subcolección `operativos/{operativoId}/prerregistros/{usuarioUid}` (ID = usuario_uid). */

@@ -12,6 +12,15 @@
       "collectionGroup": "equipos_turno",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "usuario_uid", "order": "ASCENDING" },
+        { "fieldPath": "origen_material", "order": "ASCENDING" },
+        { "fieldPath": "creado_en", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "equipos_turno",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "operativo_id", "order": "ASCENDING" },
         { "fieldPath": "codigo_inventario", "order": "ASCENDING" }
       ]
@@ -55,7 +64,16 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "estado_reporte", "order": "ASCENDING" },
-        { "fieldPath": "ayudantia_slot", "order": "ASCENDING" }
+        { "fieldPath": "actualizado_en", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "equipos_turno",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "estado_reporte", "order": "ASCENDING" },
+        { "fieldPath": "ayudantia_slot", "order": "ASCENDING" },
+        { "fieldPath": "actualizado_en", "order": "DESCENDING" }
       ]
     },
     {
@@ -78,8 +96,24 @@
       "collectionGroup": "asistencias_personal",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "usuario_uid", "order": "ASCENDING" },
+        { "fieldPath": "hora_entrada", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "asistencias_personal",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "operativo_id", "order": "ASCENDING" },
         { "fieldPath": "ayudantia_slot", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "bitacora_radio_registros",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "canal_id", "order": "ASCENDING" },
+        { "fieldPath": "creado_en", "order": "DESCENDING" }
       ]
     }
   ],

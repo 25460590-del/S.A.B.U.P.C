@@ -8,15 +8,16 @@ import {
   X,
 } from 'lucide-react'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useDirectorio } from '../context/DirectorioContext'
 import { normalizarNombrePropio } from '../lib/nombres'
 import { ayudantiaJefatura, esAdmin, esOperativoCerrado } from '../lib/permisos'
-import { escucharDirectorioSegunRol, mensajeDeError } from '../services/authService'
+import { mensajeDeError } from '../services/authService'
 import {
   escucharResguardoGlobalBupc,
   levantarActaIncidencia,
   marcarEquipoDevueltoOk,
 } from '../services/equiposService'
-import { escucharOperativos } from '../services/operativosService'
+import { escucharOperativosActivos } from '../services/operativosService'
 import type { EquipoTurno, Operativo, Usuario } from '../types'
 import { IndicadorAlcanceAyudantia } from './IndicadorAlcanceAyudantia'
 
@@ -34,9 +35,9 @@ function formatearHoraCorta(ms?: number): string {
 export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
   const soyAdmin = esAdmin(encargado)
   const ayJefe = ayudantiaJefatura(encargado)
+  const { usuarios: directorio } = useDirectorio()
   const [equipos, setEquipos] = useState<EquipoTurno[]>([])
   const [operativos, setOperativos] = useState<Operativo[]>([])
-  const [usuariosAyudantia, setUsuariosAyudantia] = useState<Usuario[]>([])
   const [cargando, setCargando] = useState(true)
 
   // Filtros 100% en cliente
@@ -64,20 +65,16 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
       },
       ayJefe,
     )
-    const cOps = escucharOperativos(setOperativos, () => undefined)
-    const cUsr = ayJefe
-      ? escucharDirectorioSegunRol(encargado, setUsuariosAyudantia, () => undefined)
-      : () => undefined
+    const cOps = escucharOperativosActivos(setOperativos, () => undefined)
     return () => {
       cEq()
       cOps()
-      cUsr()
     }
-  }, [encargado, ayJefe])
+  }, [ayJefe])
 
   const uidsAyudantia = useMemo(
-    () => (ayJefe ? new Set(usuariosAyudantia.map((u) => u.uid)) : null),
-    [ayJefe, usuariosAyudantia],
+    () => (ayJefe ? new Set(directorio.map((u) => u.uid)) : null),
+    [ayJefe, directorio],
   )
 
   const equiposEnAlcance = useMemo(

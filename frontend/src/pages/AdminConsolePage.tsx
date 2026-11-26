@@ -32,9 +32,9 @@ import {
   puedeAsignarRadio,
   subgruposDeEtapa,
 } from '../lib/permisos'
+import { useDirectorio } from '../context/DirectorioContext'
 import {
   aprobarUsuario,
-  escucharDirectorioSegunRol,
   mensajeDeError,
   nombreCompleto,
   rechazarUsuario,
@@ -357,10 +357,9 @@ export function AdminConsolePage({
   const [pestana, setPestana] = useState<PestanaPersonal>(
     pestanaInicial === 'pendientes' && !puedeVerPendientes ? 'directorio' : pestanaInicial,
   )
-  const [usuarios, setUsuarios] = useState<Usuario[]>([])
+  const { usuarios, cargando, error: errorDirectorio } = useDirectorio()
   const [subgruposActivosRaw, setSubgruposActivosRaw] = useState<string[]>([])
   const [subgruposArchivados, setSubgruposArchivados] = useState<string[]>([])
-  const [cargando, setCargando] = useState(true)
 
   // Filtros 100% en cliente (cero lecturas extra en Firestore)
   const [busqueda, setBusqueda] = useState('')
@@ -373,29 +372,18 @@ export function AdminConsolePage({
   // Expediente Unificado abierto bajo demanda
   const [expedienteUid, setExpedienteUid] = useState<string | null>(null)
 
-  const [error, setError] = useState<string | null>(null)
+  const [errorLocal, setError] = useState<string | null>(null)
   const [aviso, setAviso] = useState<string | null>(null)
+  const error = errorLocal ?? errorDirectorio
 
   useEffect(() => {
-    const cDir = escucharDirectorioSegunRol(
-      admin,
-      (lista) => {
-        setUsuarios(lista)
-        setCargando(false)
-      },
-      (err) => {
-        setError(mensajeDeError(err))
-        setCargando(false)
-      },
-    )
     const cSub = escucharCatalogoSubgrupos(setSubgruposActivosRaw)
     const cArch = escucharSubgruposArchivados(setSubgruposArchivados, () => undefined)
     return () => {
-      cDir()
       cSub()
       cArch()
     }
-  }, [admin])
+  }, [])
 
   const subgruposActivos = useMemo(
     () => combinarSubgruposConSierraInicial(subgruposActivosRaw, subgruposArchivados),

@@ -203,10 +203,23 @@ export async function generarConstanciaHorasPdf(
 
 // ── Archivo Operativo Global (Encargado / Administrador) ─────────────────────
 
+export interface OpcionesExpedienteOperativo {
+  /** Si es false (ej. usuario sin permiso de Radio), omite la consulta a `bitacora_radio_registros`. */
+  incluirRadio?: boolean
+  /** Rango opcional de fechas YYYY-MM-DD para acotar el reporte solicitado. */
+  fechaDesde?: string
+  fechaHasta?: string
+}
+
 export async function obtenerDatosExpedienteOperativo(
   operativoId: string,
   ayudantiaFiltro?: AyudantiaActiva | null,
+  opciones?: OpcionesExpedienteOperativo,
 ): Promise<DatosExpedienteOperativo> {
+  const incluirRadio = opciones?.incluirRadio ?? true
+  const fechaDesde = opciones?.fechaDesde?.trim() || ''
+  const fechaHasta = opciones?.fechaHasta?.trim() || ''
+
   const consultaAsis = ayudantiaFiltro
     ? query(
         collection(db, 'asistencias_personal'),
@@ -226,13 +239,28 @@ export async function obtenerDatosExpedienteOperativo(
   const [asisSnap, eqSnap, radioSnap] = await Promise.all([
     getDocs(consultaAsis),
     getDocs(consultaEq),
-    getDocs(
-      query(collection(db, 'bitacora_radio_registros'), where('operativo_id', '==', operativoId)),
-    ).catch(() => null),
+    incluirRadio
+      ? getDocs(
+          query(
+            collection(db, 'bitacora_radio_registros'),
+            where('operativo_id', '==', operativoId),
+          ),
+        ).catch(() => null)
+      : Promise.resolve(null),
   ])
+
+  const enRango = (ms?: number): boolean => {
+    if (!fechaDesde && !fechaHasta) return true
+    if (!ms) return true
+    const fecha = formatearFechaHora(ms).slice(0, 10)
+    if (fechaDesde && fecha < fechaDesde) return false
+    if (fechaHasta && fecha > fechaHasta) return false
+    return true
+  }
 
   const asistencias = asisSnap.docs
     .map((d) => d.data() as AsistenciaPersonal)
+    .filter((a) => enRango(a.hora_entrada?.toMillis()))
     .sort((a, b) => (a.hora_entrada?.toMillis() ?? 0) - (b.hora_entrada?.toMillis() ?? 0))
 
   const idsAsistenciaPermitidos = ayudantiaFiltro
@@ -242,11 +270,13 @@ export async function obtenerDatosExpedienteOperativo(
   const equipos = eqSnap.docs
     .map((d) => d.data() as EquipoTurno)
     .filter((eq) => !idsAsistenciaPermitidos || idsAsistenciaPermitidos.has(eq.asistencia_id))
+    .filter((eq) => enRango(eq.creado_en?.toMillis()))
     .sort((a, b) => (a.creado_en?.toMillis() ?? 0) - (b.creado_en?.toMillis() ?? 0))
 
   const registrosRadio = radioSnap
     ? radioSnap.docs
         .map((d) => d.data() as RegistroBitacoraRadio)
+        .filter((r) => enRango(r.creado_en?.toMillis()))
         .sort((a, b) => (a.creado_en?.toMillis() ?? 0) - (b.creado_en?.toMillis() ?? 0))
     : []
 

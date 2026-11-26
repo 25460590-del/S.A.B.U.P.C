@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { BarraEstado } from './components/BarraEstado'
 import { BupcLogo } from './components/BupcLogo'
+import { DirectorioProvider } from './context/DirectorioContext'
 import { useSesion } from './context/SesionContext'
 import { CuentaEnRevisionPage } from './pages/CuentaEnRevisionPage'
 import { LoginPage } from './pages/LoginPage'
@@ -122,5 +123,9 @@ export default function App() {
   }
 
   // 9. Usuario activo (Brigadista, Encargado o Administrador) → Shell unificado RBAC aditivo
-  return <PanelActivoPage perfil={perfil} />
+  return (
+    <DirectorioProvider perfil={perfil}>
+      <PanelActivoPage perfil={perfil} />
+    </DirectorioProvider>
+  )
 }

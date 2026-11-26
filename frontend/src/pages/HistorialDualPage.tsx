@@ -16,13 +16,23 @@ import { useEffect, useState } from 'react'
 import { CATEGORIAS_OPERATIVO } from '../constants/catalogos'
 import { IndicadorAlcanceAyudantia } from '../components/IndicadorAlcanceAyudantia'
 import { ayudantiaJefatura, puedeUsarRadio } from '../lib/permisos'
-import { escucharMisAsistencias } from '../services/asistenciasService'
+import {
+  escucharMisAsistencias,
+  LIMITE_MIS_ASISTENCIAS,
+  obtenerMasMisAsistencias,
+} from '../services/asistenciasService'
 import { mensajeDeError } from '../services/authService'
-import { escucharOperativos } from '../services/operativosService'
+import {
+  obtenerOperativoPorId,
+  obtenerOperativosPaginados,
+  type PaginaOperativos,
+} from '../services/operativosService'
 import {
   escucharCanalesOperativo,
   escucharRegistrosCanal,
   exportarBitacoraCsvLocal,
+  LIMITE_REGISTROS_RADIO,
+  obtenerRegistrosCanalAnteriores,
 } from '../services/radioService'
 import {
   calcularDesgloseHoras,
@@ -65,7 +75,10 @@ function BitacoraRadioArchivoModal({
   const [registrosPorCanal, setRegistrosPorCanal] = useState<{
     canalId: string
     lista: RegistroBitacoraRadio[]
+    anteriores: RegistroBitacoraRadio[]
+    hayMas: boolean
   } | null>(null)
+  const [cargandoMasRadio, setCargandoMasRadio] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -90,14 +103,63 @@ function BitacoraRadioArchivoModal({
     if (!canalActivoId) return
     const cancelar = escucharRegistrosCanal(
       canalActivoId,
-      (lista) => setRegistrosPorCanal({ canalId: canalActivoId, lista }),
+      (lista) =>
+        setRegistrosPorCanal((prev) => ({
+          canalId: canalActivoId,
+          lista,
+          anteriores: prev?.canalId === canalActivoId ? prev.anteriores : [],
+          hayMas:
+            prev?.canalId === canalActivoId && prev.anteriores.length > 0
+              ? prev.hayMas
+              : lista.length >= LIMITE_REGISTROS_RADIO,
+        })),
       (err) => setError(mensajeDeError(err)),
+      LIMITE_REGISTROS_RADIO,
     )
     return cancelar
   }, [canalActivoId])
 
-  const registros =
-    registrosPorCanal?.canalId === canalActivoId ? registrosPorCanal.lista : []
+  const registros = (() => {
+    if (registrosPorCanal?.canalId !== canalActivoId) return []
+    const mapa = new Map<string, RegistroBitacoraRadio>()
+    for (const r of registrosPorCanal.lista) mapa.set(r.id, r)
+    for (const r of registrosPorCanal.anteriores) {
+      if (!mapa.has(r.id)) mapa.set(r.id, r)
+    }
+    return Array.from(mapa.values()).sort(
+      (a, b) => (b.creado_en?.toMillis() ?? 0) - (a.creado_en?.toMillis() ?? 0),
+    )
+  })()
+  const hayMasRadio =
+    registrosPorCanal?.canalId === canalActivoId ? registrosPorCanal.hayMas : false
+
+  async function cargarMasRadioArchivo() {
+    if (!canalActivoId || cargandoMasRadio) return
+    const ultimo = registros[registros.length - 1]
+    if (!ultimo?.creado_en) return
+    setCargandoMasRadio(true)
+    setError(null)
+    try {
+      const res = await obtenerRegistrosCanalAnteriores(
+        canalActivoId,
+        ultimo.creado_en,
+        LIMITE_REGISTROS_RADIO,
+      )
+      setRegistrosPorCanal((prev) =>
+        prev?.canalId === canalActivoId
+          ? {
+              ...prev,
+              anteriores: [...prev.anteriores, ...res.registros],
+              hayMas: res.hayMas,
+            }
+          : prev,
+      )
+    } catch (err) {
+      setError(mensajeDeError(err))
+    } finally {
+      setCargandoMasRadio(false)
+    }
+  }
 
   return (
     <div
@@ -317,6 +379,19 @@ function BitacoraRadioArchivoModal({
                   </tbody>
                 </table>
               </div>
+
+              {hayMasRadio && (
+                <div className="flex shrink-0 justify-center border-t border-borde bg-superficie-suave px-3 py-2 dark:border-noche-borde dark:bg-noche-campo">
+                  <button
+                    type="button"
+                    disabled={cargandoMasRadio}
+                    onClick={() => void cargarMasRadioArchivo()}
+                    className="btn-salvia min-h-8 px-3.5 text-xs"
+                  >
+                    {cargandoMasRadio ? 'Cargando...' : 'Cargar mensajes anteriores'}
+                  </button>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -337,8 +412,17 @@ export function HistorialDualPage({
   const [pestana, setPestana] = useState<'personal' | 'archivo'>(
     pestanaInicial === 'archivo' && esGestor ? 'archivo' : 'personal',
   )
-  const [misAsistencias, setMisAsistencias] = useState<AsistenciaPersonal[]>([])
+  const [asistenciasVivo, setAsistenciasVivo] = useState<AsistenciaPersonal[]>([])
+  const [asistenciasExtra, setAsistenciasExtra] = useState<AsistenciaPersonal[]>([])
+  const [hayMasAsis, setHayMasAsis] = useState(false)
+  const [cargandoMasAsis, setCargandoMasAsis] = useState(false)
+
+  // Archivo Operativo Global: paginado con getDocs (20 por página) en lugar de listener global
   const [operativos, setOperativos] = useState<Operativo[]>([])
+  const [cursorOps, setCursorOps] = useState<PaginaOperativos['ultimoDoc']>(null)
+  const [hayMasOps, setHayMasOps] = useState(false)
+  const [cargandoOps, setCargandoOps] = useState(false)
+  const [operativosExtra, setOperativosExtra] = useState<Record<string, Operativo>>({})
   const [cargando, setCargando] = useState(true)
 
   // Filtros del Archivo Operativo Global
@@ -358,24 +442,123 @@ export function HistorialDualPage({
     const cancelarAsis = escucharMisAsistencias(
       usuario.uid,
       (lista) => {
-        setMisAsistencias(lista)
+        setAsistenciasVivo(lista)
+        setHayMasAsis(lista.length >= LIMITE_MIS_ASISTENCIAS)
         setCargando(false)
       },
       (err) => {
         setError(mensajeDeError(err))
         setCargando(false)
       },
+      LIMITE_MIS_ASISTENCIAS,
     )
-    const cancelarOps = escucharOperativos(setOperativos, (err) => setError(mensajeDeError(err)))
-    return () => {
-      cancelarAsis()
-      cancelarOps()
-    }
+    return cancelarAsis
   }, [usuario.uid])
 
-  const mapaOperativos = new Map(operativos.map((o) => [o.id, o]))
+  // Cargar primera página de operativos (20) mediante getDocs al montar
+  useEffect(() => {
+    let activo = true
+    void obtenerOperativosPaginados(20, null)
+      .then((pagina) => {
+        if (!activo) return
+        setOperativos(pagina.operativos)
+        setCursorOps(pagina.ultimoDoc)
+        setHayMasOps(pagina.hayMas)
+      })
+      .catch((err) => {
+        if (activo) setError(mensajeDeError(err))
+      })
+    return () => {
+      activo = false
+    }
+  }, [])
+
+  const misAsistencias = (() => {
+    const mapa = new Map<string, AsistenciaPersonal>()
+    for (const a of asistenciasVivo) mapa.set(a.id, a)
+    for (const a of asistenciasExtra) {
+      if (!mapa.has(a.id)) mapa.set(a.id, a)
+    }
+    return Array.from(mapa.values()).sort(
+      (a, b) => (b.hora_entrada?.toMillis() ?? 0) - (a.hora_entrada?.toMillis() ?? 0),
+    )
+  })()
+
+  // Resolver metadatos (categoría) puntualmente solo si alguna asistencia personal apunta a un
+  // operativo fuera de las páginas cargadas
+  useEffect(() => {
+    const presentes = new Set([...operativos.map((o) => o.id), ...Object.keys(operativosExtra)])
+    const faltantes = Array.from(
+      new Set(misAsistencias.map((a) => a.operativo_id).filter((id) => id && !presentes.has(id))),
+    )
+    if (faltantes.length === 0) return
+    let activo = true
+    void Promise.all(
+      faltantes.map(async (id) => {
+        const op = await obtenerOperativoPorId(id).catch(() => null)
+        return [id, op] as const
+      }),
+    ).then((pares) => {
+      if (!activo) return
+      setOperativosExtra((prev) => {
+        const copia = { ...prev }
+        for (const [id, op] of pares) {
+          if (op) copia[id] = op
+        }
+        return copia
+      })
+    })
+    return () => {
+      activo = false
+    }
+  }, [misAsistencias, operativos, operativosExtra])
+
+  const mapaOperativos = new Map<string, Operativo>([
+    ...operativos.map((o) => [o.id, o] as const),
+    ...Object.entries(operativosExtra),
+  ])
   const asistenciasCerradas = misAsistencias.filter((a) => a.hora_salida !== null)
   const { totalHoras, desglose } = calcularDesgloseHoras(asistenciasCerradas, mapaOperativos)
+
+  async function cargarMasOperativos() {
+    if (!hayMasOps || cargandoOps || !cursorOps) return
+    setCargandoOps(true)
+    setError(null)
+    try {
+      const pagina = await obtenerOperativosPaginados(20, cursorOps)
+      setOperativos((prev) => {
+        const mapa = new Map(prev.map((o) => [o.id, o]))
+        for (const o of pagina.operativos) mapa.set(o.id, o)
+        return Array.from(mapa.values())
+      })
+      setCursorOps(pagina.ultimoDoc)
+      setHayMasOps(pagina.hayMas)
+    } catch (err) {
+      setError(mensajeDeError(err))
+    } finally {
+      setCargandoOps(false)
+    }
+  }
+
+  async function cargarMasMisAsistencias() {
+    const ultima = misAsistencias[misAsistencias.length - 1]
+    if (!ultima?.hora_entrada || cargandoMasAsis) return
+    setCargandoMasAsis(true)
+    setError(null)
+    try {
+      const res = await obtenerMasMisAsistencias(
+        usuario.uid,
+        ultima.hora_entrada,
+        LIMITE_MIS_ASISTENCIAS,
+      )
+      setAsistenciasExtra((prev) => [...prev, ...res.asistencias])
+      setHayMasAsis(res.hayMas)
+    } catch (err) {
+      setError(mensajeDeError(err))
+    } finally {
+      setCargandoMasAsis(false)
+    }
+  }
 
   const operativosFiltrados = operativos.filter((op) => {
     const cerrado = op.estatus === 'Finalizado' || op.estatus === 'Cancelado'
@@ -412,7 +595,11 @@ export function HistorialDualPage({
     setError(null)
     setAviso(null)
     try {
-      const datos = await obtenerDatosExpedienteOperativo(op.id, ayJefe)
+      const datos = await obtenerDatosExpedienteOperativo(op.id, ayJefe, {
+        incluirRadio: puedoVerRadio,
+        fechaDesde,
+        fechaHasta,
+      })
       if (formato === 'excel') {
         exportarExpedienteExcel(op, datos)
         setAviso(`Archivo Excel (.xlsx) generado para "${op.nombre}".`)
@@ -642,6 +829,18 @@ export function HistorialDualPage({
                 </table>
               </div>
             )}
+            {hayMasAsis && (
+              <div className="flex justify-center border-t border-borde bg-superficie-suave px-4 py-2.5 dark:border-noche-borde dark:bg-noche-campo">
+                <button
+                  type="button"
+                  disabled={cargandoMasAsis}
+                  onClick={() => void cargarMasMisAsistencias()}
+                  className="btn-salvia min-h-9 px-4 text-xs"
+                >
+                  {cargandoMasAsis ? 'Cargando...' : 'Cargar más asistencias'}
+                </button>
+              </div>
+            )}
           </article>
         </section>
       )}
@@ -836,6 +1035,18 @@ export function HistorialDualPage({
                     })}
                   </tbody>
                 </table>
+              </div>
+            )}
+            {hayMasOps && (
+              <div className="flex justify-center border-t border-borde bg-superficie-suave px-4 py-2.5 dark:border-noche-borde dark:bg-noche-campo">
+                <button
+                  type="button"
+                  disabled={cargandoOps}
+                  onClick={() => void cargarMasOperativos()}
+                  className="btn-salvia min-h-9 px-4 text-xs"
+                >
+                  {cargandoOps ? 'Cargando...' : 'Cargar más operativos'}
+                </button>
               </div>
             )}
           </article>

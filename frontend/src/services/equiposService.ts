@@ -4,15 +4,19 @@ import {
   getDoc,
   getDocs,
   increment,
+  limit,
   onSnapshot,
+  orderBy,
   query,
   runTransaction,
   serverTimestamp,
   setDoc,
+  startAfter,
   updateDoc,
   where,
   writeBatch,
   type FirestoreError,
+  type Timestamp,
   type Unsubscribe,
 } from 'firebase/firestore'
 import { db } from '../lib/firebase'
@@ -513,20 +517,28 @@ export function escucharEquiposDeOperativo(
   )
 }
 
+export const LIMITE_EQUIPOS_PAGINA = 50
+
 /**
- * Suscripción en tiempo real acotada al `uid` del brigadista para la vista "Mi Material".
+ * Suscripción en tiempo real acotada al `uid` del brigadista y `origen_material == 'BUPC_Asignado'`
+ * ordenada por `creado_en desc` con `limit(N)` para la vista "Mi Material".
  */
 export function escucharMisEquiposBupc(
   usuarioUid: string,
   alCambiar: (lista: EquipoTurno[]) => void,
   alFallar?: (error: FirestoreError) => void,
+  limite = LIMITE_EQUIPOS_PAGINA,
 ): Unsubscribe {
   return onSnapshot(
-    query(equiposRef, where('usuario_uid', '==', usuarioUid)),
+    query(
+      equiposRef,
+      where('usuario_uid', '==', usuarioUid),
+      where('origen_material', '==', 'BUPC_Asignado'),
+      orderBy('creado_en', 'desc'),
+      limit(limite),
+    ),
     (snap) => {
-      const lista = snap.docs
-        .map((d) => d.data() as EquipoTurno)
-        .filter((e) => e.origen_material === 'BUPC_Asignado')
+      const lista = snap.docs.map((d) => d.data() as EquipoTurno)
       lista.sort((a, b) => (b.creado_en?.toMillis() ?? 0) - (a.creado_en?.toMillis() ?? 0))
       alCambiar(lista)
     },
@@ -535,6 +547,31 @@ export function escucharMisEquiposBupc(
       else console.warn('[SABUPC] Error al leer Mi Material BUPC:', err.code)
     },
   )
+}
+
+/**
+ * Carga paginada ("Cargar más") de entregas BUPC anteriores del brigadista.
+ */
+export async function obtenerMasMisEquiposBupc(
+  usuarioUid: string,
+  antesDe: Timestamp,
+  limite = LIMITE_EQUIPOS_PAGINA,
+): Promise<{ equipos: EquipoTurno[]; hayMas: boolean }> {
+  const snap = await getDocs(
+    query(
+      equiposRef,
+      where('usuario_uid', '==', usuarioUid),
+      where('origen_material', '==', 'BUPC_Asignado'),
+      orderBy('creado_en', 'desc'),
+      startAfter(antesDe),
+      limit(limite),
+    ),
+  )
+  const equipos = snap.docs.map((d) => d.data() as EquipoTurno)
+  return {
+    equipos,
+    hayMas: snap.docs.length === limite,
+  }
 }
 
 /**
@@ -577,21 +614,29 @@ export function escucharResguardoGlobalBupc(
 }
 
 /**
- * Suscripción en tiempo real a todas las Actas de Incidencia de material BUPC
- * (sin descargar `evidencias_equipos`; las imágenes WebP se cargan solo bajo demanda).
+ * Suscripción en tiempo real acotada (`orderBy('actualizado_en', 'desc')` + `limit(N)`)
+ * a las Actas de Incidencia de material BUPC (sin descargar `evidencias_equipos`).
  */
 export function escucharActasMaterialBupc(
   alCambiar: (lista: EquipoTurno[]) => void,
   alFallar?: (error: FirestoreError) => void,
   ayudantiaFiltro?: AyudantiaActiva | null,
+  limite = LIMITE_EQUIPOS_PAGINA,
 ): Unsubscribe {
   const consulta = ayudantiaFiltro
     ? query(
         equiposRef,
         where('estado_reporte', '==', 'Incidencia'),
         where('ayudantia_slot', '==', ayudantiaFiltro),
+        orderBy('actualizado_en', 'desc'),
+        limit(limite),
       )
-    : query(equiposRef, where('estado_reporte', '==', 'Incidencia'))
+    : query(
+        equiposRef,
+        where('estado_reporte', '==', 'Incidencia'),
+        orderBy('actualizado_en', 'desc'),
+        limit(limite),
+      )
 
   return onSnapshot(
     consulta,
@@ -607,6 +652,40 @@ export function escucharActasMaterialBupc(
       else console.warn('[SABUPC] Error al leer actas de material:', err.code)
     },
   )
+}
+
+/**
+ * Carga paginada ("Cargar más") de Actas de Incidencia de material BUPC anteriores.
+ */
+export async function obtenerMasActasMaterialBupc(
+  antesDe: Timestamp,
+  ayudantiaFiltro?: AyudantiaActiva | null,
+  limite = LIMITE_EQUIPOS_PAGINA,
+): Promise<{ actas: EquipoTurno[]; hayMas: boolean }> {
+  const consulta = ayudantiaFiltro
+    ? query(
+        equiposRef,
+        where('estado_reporte', '==', 'Incidencia'),
+        where('ayudantia_slot', '==', ayudantiaFiltro),
+        orderBy('actualizado_en', 'desc'),
+        startAfter(antesDe),
+        limit(limite),
+      )
+    : query(
+        equiposRef,
+        where('estado_reporte', '==', 'Incidencia'),
+        orderBy('actualizado_en', 'desc'),
+        startAfter(antesDe),
+        limit(limite),
+      )
+  const snap = await getDocs(consulta)
+  const actas = snap.docs
+    .map((d) => d.data() as EquipoTurno)
+    .filter((e) => e.acta_incidencia !== null)
+  return {
+    actas,
+    hayMas: snap.docs.length === limite,
+  }
 }
 
 /**

@@ -1121,23 +1121,22 @@ function prerregistroBase(uid, registradoPorUid, origen, extra = {}) {
   };
 }
 
-test('Prerregistro propio: Brigadista Activo se apunta, lee su doc y cancela en operativo con convocatoria abierta', async () => {
+test('Prerregistro propio: Brigadista Activo se apunta, lee su doc y cancela actualizando meta/contador (sin tocar operativos/{id})', async () => {
   // Encargado abre convocatoria con cupo sugerido = 2 en operativo Programado (opCerrado)
   await assertSucceeds(updateDoc(doc(db('encargado1'), 'operativos/opCerrado'), {
     convocatoria_abierta: true,
     cupo_sugerido: 2,
-    prerregistros_count: 0,
     actualizado_en: serverTimestamp(),
   }));
 
-  // 1. Brigadista se apunta atómicamente actualizando contador +1
+  // 1. Brigadista se apunta atómicamente actualizando meta/contador +1 (sin escribir en operativos/opCerrado)
   const f = db('brigAlfa1');
   const bAlta = writeBatch(f);
   bAlta.set(
     doc(f, 'operativos/opCerrado/prerregistros/brigAlfa1'),
     prerregistroBase('brigAlfa1', 'brigAlfa1', 'Autoregistro'),
   );
-  bAlta.update(doc(f, 'operativos/opCerrado'), {
+  bAlta.set(doc(f, 'operativos/opCerrado/meta/contador'), {
     prerregistros_count: 1,
     actualizado_en: serverTimestamp(),
   });
@@ -1153,10 +1152,10 @@ test('Prerregistro propio: Brigadista Activo se apunta, lee su doc y cancela en 
     subgrupo: 'Alfa 2',
   }));
 
-  // 4. Brigadista cancela su prerregistro atómicamente bajando contador -1
+  // 4. Brigadista cancela su prerregistro atómicamente bajando meta/contador -1
   const bBaja = writeBatch(f);
   bBaja.delete(doc(f, 'operativos/opCerrado/prerregistros/brigAlfa1'));
-  bBaja.update(doc(f, 'operativos/opCerrado'), {
+  bBaja.update(doc(f, 'operativos/opCerrado/meta/contador'), {
     prerregistros_count: 0,
     actualizado_en: serverTimestamp(),
   });
@@ -1180,7 +1179,6 @@ test('Prerregistro propio: rechaza apuntar a otro uid, convocatoria cerrada, ope
   await assertSucceeds(updateDoc(doc(db('encargado1'), 'operativos/opAbierto'), {
     convocatoria_abierta: true,
     cupo_sugerido: 1,
-    prerregistros_count: 0,
     actualizado_en: serverTimestamp(),
   }));
 
@@ -1196,7 +1194,7 @@ test('Prerregistro propio: rechaza apuntar a otro uid, convocatoria cerrada, ope
     prerregistroBase('brigAlfa1', 'brigAlfa1', 'Manual_Encargado'),
   ));
 
-  // Brigadista NO puede editar convocatoria_abierta ni cupo_sugerido ni alterar contador sin su doc
+  // Brigadista NO puede editar convocatoria_abierta ni cupo_sugerido ni escribir en operativos/{id}
   await assertFails(updateDoc(doc(db('brigAlfa1'), 'operativos/opAbierto'), {
     convocatoria_abierta: false,
     actualizado_en: serverTimestamp(),
@@ -1206,27 +1204,27 @@ test('Prerregistro propio: rechaza apuntar a otro uid, convocatoria cerrada, ope
     actualizado_en: serverTimestamp(),
   }));
 
-  // Primer brigadista llena el cupo (1/1)
+  // Primer brigadista llena el cupo (1/1) en meta/contador
   const f1 = db('brigAlfa1');
   const b1 = writeBatch(f1);
   b1.set(
     doc(f1, 'operativos/opAbierto/prerregistros/brigAlfa1'),
     prerregistroBase('brigAlfa1', 'brigAlfa1', 'Autoregistro'),
   );
-  b1.update(doc(f1, 'operativos/opAbierto'), {
+  b1.set(doc(f1, 'operativos/opAbierto/meta/contador'), {
     prerregistros_count: 1,
     actualizado_en: serverTimestamp(),
   });
   await assertSucceeds(b1.commit());
 
-  // Segundo brigadista intenta superar cupo_sugerido (2 > 1) -> rechazado
+  // Segundo brigadista intenta superar cupo_sugerido (2 > 1) en meta/contador -> rechazado
   const f2 = db('brigOmega1');
   const b2 = writeBatch(f2);
   b2.set(
     doc(f2, 'operativos/opAbierto/prerregistros/brigOmega1'),
     prerregistroBase('brigOmega1', 'brigOmega1', 'Autoregistro', { etapa: 'Omega', subgrupo: 'Omega 1' }),
   );
-  b2.update(doc(f2, 'operativos/opAbierto'), {
+  b2.update(doc(f2, 'operativos/opAbierto/meta/contador'), {
     prerregistros_count: 2,
     actualizado_en: serverTimestamp(),
   });
@@ -1269,7 +1267,6 @@ test('Brigadista SIN prerregistro puede escanear QR y registrar asistencia norma
   await assertSucceeds(updateDoc(doc(db('encargado1'), 'operativos/opAbierto'), {
     convocatoria_abierta: true,
     cupo_sugerido: 1,
-    prerregistros_count: 1,
     actualizado_en: serverTimestamp(),
   }));
   await assertSucceeds(setDoc(
@@ -2816,4 +2813,78 @@ test('B7-4) Cambio de ayudantía entre prerregistro y escaneo QR: recalcula rol 
     ayudantia_slot: 'Capacitación',
     rol_en_turno: 'Radios',
   })));
+});
+
+// ============================================================================
+// BONCHE 8: OPTIMIZACIÓN PLAN SPARK — SUBDOCUMENTO `meta/contador` SIN HOT DOC
+// ============================================================================
+
+test('B8-1) meta/contador elimina escrituras calientes en operativos/{id}: Brigadista y Jefe bloqueados en operativos/{id}, actualizan meta/contador atómicamente', async () => {
+  // 1. Jefe de Ayudantía y Encargado sin ayudantía NO pueden escribir `prerregistros_count` en operativos/{id}
+  await assertFails(updateDoc(doc(db('jefeSocorros'), 'operativos/opAbierto'), {
+    prerregistros_count: 1,
+    actualizado_en: serverTimestamp(),
+  }));
+  await assertFails(updateDoc(doc(db('encargado1'), 'operativos/opAbierto'), {
+    prerregistros_count: 1,
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // 2. Encargado abre convocatoria con cupo = 2 (sin tocar prerregistros_count en operativos/{id})
+  await assertSucceeds(updateDoc(doc(db('encargado1'), 'operativos/opAbierto'), {
+    convocatoria_abierta: true,
+    cupo_sugerido: 2,
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // 3. Brigadista intenta escribir en operativos/{id} -> bloqueado; SÍ escribe atómicamente en meta/contador
+  const fBrig = db('brigAlfa1');
+  const bHotFail = writeBatch(fBrig);
+  bHotFail.set(
+    doc(fBrig, 'operativos/opAbierto/prerregistros/brigAlfa1'),
+    prerregistroBase('brigAlfa1', 'brigAlfa1', 'Autoregistro'),
+  );
+  bHotFail.update(doc(fBrig, 'operativos/opAbierto'), {
+    prerregistros_count: 1,
+    actualizado_en: serverTimestamp(),
+  });
+  await assertFails(bHotFail.commit());
+
+  const bMetaOk = writeBatch(fBrig);
+  bMetaOk.set(
+    doc(fBrig, 'operativos/opAbierto/prerregistros/brigAlfa1'),
+    prerregistroBase('brigAlfa1', 'brigAlfa1', 'Autoregistro'),
+  );
+  bMetaOk.set(doc(fBrig, 'operativos/opAbierto/meta/contador'), {
+    prerregistros_count: 1,
+    actualizado_en: serverTimestamp(),
+  });
+  await assertSucceeds(bMetaOk.commit());
+
+  // 4. Brigadista NO puede alterar meta/contador sin su prerregistro ni borrar meta/contador
+  await assertFails(updateDoc(doc(fBrig, 'operativos/opAbierto/meta/contador'), {
+    prerregistros_count: 5,
+    actualizado_en: serverTimestamp(),
+  }));
+  await assertFails(deleteDoc(doc(fBrig, 'operativos/opAbierto/meta/contador')));
+
+  // 5. Jefe de Ayudantía registra prerregistro manual y actualiza meta/contador sin tocar operativos/{id}
+  const fJefe = db('jefeSocorros');
+  const bJefe = writeBatch(fJefe);
+  bJefe.set(
+    doc(fJefe, 'operativos/opAbierto/prerregistros/brigSocorros'),
+    prerregistroBase('brigSocorros', 'jefeSocorros', 'Manual_Encargado', {
+      ayudantia: 'Socorros',
+      ayudantia_slot: 'Socorros',
+    }),
+  );
+  bJefe.set(doc(fJefe, 'operativos/opAbierto/meta/contador'), {
+    prerregistros_count: 2,
+    actualizado_en: serverTimestamp(),
+  });
+  await assertSucceeds(bJefe.commit());
+
+  // 6. Cualquier usuario Activo puede leer meta/contador puntualmente (get), pero nunca listarlo
+  await assertSucceeds(getDoc(doc(db('activo1'), 'operativos/opAbierto/meta/contador')));
+  await assertFails(getDocs(collection(db('activo1'), 'operativos/opAbierto/meta')));
 });

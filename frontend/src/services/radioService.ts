@@ -1,15 +1,20 @@
 import {
   collection,
   doc,
+  getDocs,
+  limit,
   onSnapshot,
+  orderBy,
   query,
   runTransaction,
   serverTimestamp,
   setDoc,
+  startAfter,
   updateDoc,
   where,
   writeBatch,
   type FirestoreError,
+  type Timestamp,
   type Unsubscribe,
 } from 'firebase/firestore'
 import * as XLSX from 'xlsx'
@@ -142,13 +147,21 @@ export async function registrarMensajeRadio(
   return nuevo.id
 }
 
+export const LIMITE_REGISTROS_RADIO = 80
+
 export function escucharRegistrosCanal(
   canalId: string,
   alCambiar: (registros: RegistroBitacoraRadio[]) => void,
   alFallar: (error: FirestoreError) => void,
+  limite = LIMITE_REGISTROS_RADIO,
 ): Unsubscribe {
   return onSnapshot(
-    query(registrosRef, where('canal_id', '==', canalId)),
+    query(
+      registrosRef,
+      where('canal_id', '==', canalId),
+      orderBy('creado_en', 'desc'),
+      limit(limite),
+    ),
     { includeMetadataChanges: true },
     (snap) => {
       const lista = snap.docs.map((d) => {
@@ -158,12 +171,39 @@ export function escucharRegistrosCanal(
           sync_status: d.metadata.hasPendingWrites ? ('pendiente' as const) : ('sincronizado' as const),
         }
       })
-      // Cronológico descendente (más reciente arriba)
+      // Cronológico descendente (más reciente arriba; registros pendientes sin timestamp quedan primero)
       lista.sort((a, b) => (b.creado_en?.toMillis() ?? Date.now()) - (a.creado_en?.toMillis() ?? Date.now()))
       alCambiar(lista)
     },
     alFallar,
   )
+}
+
+/**
+ * Carga paginada hacia atrás ("Cargar más") de mensajes anteriores en un canal de radio.
+ */
+export async function obtenerRegistrosCanalAnteriores(
+  canalId: string,
+  antesDe: Timestamp,
+  limite = LIMITE_REGISTROS_RADIO,
+): Promise<{ registros: RegistroBitacoraRadio[]; hayMas: boolean }> {
+  const snap = await getDocs(
+    query(
+      registrosRef,
+      where('canal_id', '==', canalId),
+      orderBy('creado_en', 'desc'),
+      startAfter(antesDe),
+      limit(limite),
+    ),
+  )
+  const registros = snap.docs.map((d) => ({
+    ...(d.data() as RegistroBitacoraRadio),
+    sync_status: 'sincronizado' as const,
+  }))
+  return {
+    registros,
+    hayMas: snap.docs.length === limite,
+  }
 }
 
 /**

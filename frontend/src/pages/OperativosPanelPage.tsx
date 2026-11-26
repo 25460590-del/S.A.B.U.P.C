@@ -46,17 +46,20 @@ import {
   crearYConfigurarOperativo,
   eliminarOperativo,
   ErrorDeudoresEnCierre,
-  escucharOperativos,
+  escucharOperativosActivos,
   escucharSecretoEstatico,
   escucharSecretoVigente,
   finalizarOperativoConCierreAsistencias,
+  obtenerOperativosPaginados,
   PERIODO_QR_DINAMICO_SEG,
   rotarNonceOperativo,
   verificarOperativoVacioParaBorrado,
   verificarPreCierreOperativo,
+  type PaginaOperativos,
   type ResultadoPreCierreOperativo,
   type VerificacionBorradoOperativo,
 } from '../services/operativosService'
+import { escucharContadorPrerregistros } from '../services/prerregistrosService'
 import type {
   CategoriaOperativo,
   ModoQrOperativo,
@@ -108,7 +111,15 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
   const soyAdmin = esAdmin(usuario)
   const ayJefe = ayudantiaJefatura(usuario)
 
-  const [operativos, setOperativos] = useState<Operativo[]>([])
+  const [operativosActivos, setOperativosActivos] = useState<Operativo[]>([])
+  const [operativosCerrados, setOperativosCerrados] = useState<Operativo[]>([])
+  const [cursorCerrados, setCursorCerrados] = useState<PaginaOperativos['ultimoDoc']>(null)
+  const [hayMasCerrados, setHayMasCerrados] = useState(false)
+  const [cerradosCargados, setCerradosCargados] = useState(false)
+  const [cargandoCerrados, setCargandoCerrados] = useState(false)
+  const [contadorPorOp, setContadorPorOp] = useState<{ opId: string; conteo: number | null } | null>(
+    null,
+  )
   const [cargando, setCargando] = useState(true)
   const [filtroEstado, setFiltroEstado] = useState<FiltroEstadoOperativo>('en_curso')
   const [seleccionadoId, setSeleccionadoId] = useState<string | null>(null)
@@ -165,9 +176,9 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
   const qrOperativoRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    const cancelar = escucharOperativos(
+    const cancelar = escucharOperativosActivos(
       (lista) => {
-        setOperativos(lista)
+        setOperativosActivos(lista)
         setCargando(false)
       },
       (err) => {
@@ -177,6 +188,39 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
     )
     return cancelar
   }, [])
+
+  async function cargarMasCerrados(reiniciar = false) {
+    if (cargandoCerrados) return
+    setCargandoCerrados(true)
+    setError(null)
+    try {
+      const pagina = await obtenerOperativosPaginados(20, reiniciar ? null : cursorCerrados)
+      const soloCerrados = pagina.operativos.filter((op) => esOperativoCerrado(op))
+      setOperativosCerrados((prev) => {
+        const base = reiniciar ? [] : prev
+        const mapa = new Map<string, Operativo>()
+        for (const o of base) mapa.set(o.id, o)
+        for (const o of soloCerrados) mapa.set(o.id, o)
+        return Array.from(mapa.values())
+      })
+      setCursorCerrados(pagina.ultimoDoc)
+      setHayMasCerrados(pagina.hayMas)
+      setCerradosCargados(true)
+    } catch (err) {
+      setError(mensajeDeError(err))
+    } finally {
+      setCargandoCerrados(false)
+    }
+  }
+
+  const operativos = useMemo(() => {
+    const mapa = new Map<string, Operativo>()
+    for (const o of operativosActivos) mapa.set(o.id, o)
+    for (const o of operativosCerrados) {
+      if (!mapa.has(o.id)) mapa.set(o.id, o)
+    }
+    return Array.from(mapa.values())
+  }, [operativosActivos, operativosCerrados])
 
   const referenciaClasificacionMs = useMemo(
     () => Date.now(),
@@ -215,6 +259,19 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
   const opRecepcionAbierta = Boolean(operativoActivo?.recepcion_abierta && !opEsCerrado)
   // El QR SOLO se monta y rota cuando estamos en la sub-vista QR, con recepción abierta y operativo activo.
   const mostrarQrActivo = subVista === 'qr' && opRecepcionAbierta
+
+  useEffect(() => {
+    if (!opActivoId) return
+    const cancelar = escucharContadorPrerregistros(opActivoId, (conteo) => {
+      setContadorPorOp({ opId: opActivoId, conteo })
+    })
+    return cancelar
+  }, [opActivoId])
+
+  const prerregistrosCountActivo =
+    contadorPorOp?.opId === opActivoId && contadorPorOp.conteo !== null
+      ? contadorPorOp.conteo
+      : (operativoActivo?.prerregistros_count ?? 0)
 
   useEffect(() => {
     if (!opActivoId || !puedeGestionar || !mostrarQrActivo) return
@@ -600,7 +657,12 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
               <button
                 key={chip.id}
                 type="button"
-                onClick={() => setFiltroEstado(chip.id)}
+                onClick={() => {
+                  setFiltroEstado(chip.id)
+                  if (chip.id === 'finalizados' && !cerradosCargados) {
+                    void cargarMasCerrados(true)
+                  }
+                }}
                 className={`inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-full px-3.5 text-xs font-semibold transition-colors ${
                   activo
                     ? 'bg-udec text-white'
@@ -608,7 +670,9 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                 }`}
               >
                 <span>{chip.label}</span>
-                <span className="tabular-nums opacity-80">({chip.count})</span>
+                {chip.id !== 'finalizados' || cerradosCargados ? (
+                  <span className="tabular-nums opacity-80">({chip.count})</span>
+                ) : null}
               </button>
             )
           })}
@@ -844,83 +908,94 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
             </p>
           </article>
         ) : (
-          <div className="tarjeta divide-y divide-borde overflow-hidden dark:divide-noche-borde">
-            {filtrados.map((op) => {
-              const cerrado = esOperativoCerrado(op)
-              return (
-                <button
-                  key={op.id}
-                  type="button"
-                  onClick={() => {
-                    setSeleccionadoId(op.id)
-                    setSubVista('resumen')
-                    setConfirmandoConvocatoria(null)
-                    setError(null)
-                    setAviso(null)
-                  }}
-                  className="flex w-full cursor-pointer flex-col gap-1.5 px-4 py-3 text-left transition-colors hover:bg-superficie-suave sm:flex-row sm:items-center sm:justify-between dark:hover:bg-noche-campo/60"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="truncate text-sm font-bold text-tinta dark:text-noche-tinta">
-                        {op.nombre}
-                      </h3>
-                      <span
-                        className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${estiloCategoria(op.categoria)}`}
-                      >
-                        {op.categoria}
-                      </span>
-                    </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-tinta-suave dark:text-noche-tinta-suave">
-                      <span className="inline-flex items-center gap-1">
-                        <MapPin size={12} strokeWidth={2} />
-                        <span>{op.sede}</span>
-                      </span>
-                      <span className="inline-flex items-center gap-1 tabular-nums">
-                        <Calendar size={12} strokeWidth={2} />
-                        <span>{op.fecha_inicio.replace('T', ' ')}</span>
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-                    {!cerrado && op.convocatoria_abierta && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-salvia px-2.5 py-0.5 text-[11px] font-bold tabular-nums text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
-                        <Megaphone size={11} strokeWidth={2} />
-                        <span>
-                          Convocatoria
-                          {op.cupo_sugerido
-                            ? ` (${op.prerregistros_count ?? 0}/${op.cupo_sugerido})`
-                            : op.prerregistros_count
-                              ? ` (${op.prerregistros_count})`
-                              : ''}
+          <div className="flex flex-col gap-3">
+            <div className="tarjeta divide-y divide-borde overflow-hidden dark:divide-noche-borde">
+              {filtrados.map((op) => {
+                const cerrado = esOperativoCerrado(op)
+                return (
+                  <button
+                    key={op.id}
+                    type="button"
+                    onClick={() => {
+                      setSeleccionadoId(op.id)
+                      setSubVista('resumen')
+                      setConfirmandoConvocatoria(null)
+                      setError(null)
+                      setAviso(null)
+                    }}
+                    className="flex w-full cursor-pointer flex-col gap-1.5 px-4 py-3 text-left transition-colors hover:bg-superficie-suave sm:flex-row sm:items-center sm:justify-between dark:hover:bg-noche-campo/60"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="truncate text-sm font-bold text-tinta dark:text-noche-tinta">
+                          {op.nombre}
+                        </h3>
+                        <span
+                          className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${estiloCategoria(op.categoria)}`}
+                        >
+                          {op.categoria}
                         </span>
-                      </span>
-                    )}
-                    {cerrado ? (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-superficie-suave px-2.5 py-0.5 text-[11px] font-bold text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave">
-                        {op.estatus === 'Cancelado' ? (
-                          <Ban size={11} strokeWidth={2} />
-                        ) : (
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-tinta-suave dark:text-noche-tinta-suave">
+                        <span className="inline-flex items-center gap-1">
+                          <MapPin size={12} strokeWidth={2} />
+                          <span>{op.sede}</span>
+                        </span>
+                        <span className="inline-flex items-center gap-1 tabular-nums">
+                          <Calendar size={12} strokeWidth={2} />
+                          <span>{op.fecha_inicio.replace('T', ' ')}</span>
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                      {!cerrado && op.convocatoria_abierta && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-salvia px-2.5 py-0.5 text-[11px] font-bold tabular-nums text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
+                          <Megaphone size={11} strokeWidth={2} />
+                          <span>
+                            Convocatoria
+                            {op.cupo_sugerido ? ` (cupo ${op.cupo_sugerido})` : ''}
+                          </span>
+                        </span>
+                      )}
+                      {cerrado ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-superficie-suave px-2.5 py-0.5 text-[11px] font-bold text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave">
+                          {op.estatus === 'Cancelado' ? (
+                            <Ban size={11} strokeWidth={2} />
+                          ) : (
+                            <Lock size={11} strokeWidth={2} />
+                          )}
+                          <span>{op.estatus === 'Cancelado' ? 'Cancelado' : 'Finalizado'}</span>
+                        </span>
+                      ) : op.recepcion_abierta ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-activo-suave px-2.5 py-0.5 text-[11px] font-bold text-activo dark:bg-noche-campo dark:text-activo-claro">
+                          <Unlock size={11} strokeWidth={2} />
+                          <span>Recepción abierta</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-ambar-suave px-2.5 py-0.5 text-[11px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
                           <Lock size={11} strokeWidth={2} />
-                        )}
-                        <span>{op.estatus === 'Cancelado' ? 'Cancelado' : 'Finalizado'}</span>
-                      </span>
-                    ) : op.recepcion_abierta ? (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-activo-suave px-2.5 py-0.5 text-[11px] font-bold text-activo dark:bg-noche-campo dark:text-activo-claro">
-                        <Unlock size={11} strokeWidth={2} />
-                        <span>Recepción abierta</span>
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-ambar-suave px-2.5 py-0.5 text-[11px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
-                        <Lock size={11} strokeWidth={2} />
-                        <span>Recepción cerrada</span>
-                      </span>
-                    )}
-                  </div>
+                          <span>Recepción cerrada</span>
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+
+            {filtroEstado === 'finalizados' && hayMasCerrados && (
+              <div className="flex justify-center">
+                <button
+                  type="button"
+                  disabled={cargandoCerrados}
+                  onClick={() => void cargarMasCerrados(false)}
+                  className="btn-salvia min-h-9 px-4 text-xs"
+                >
+                  {cargandoCerrados ? 'Cargando...' : 'Cargar más operativos cerrados'}
                 </button>
-              )
-            })}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1127,8 +1202,8 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                 <span className="inline-flex items-center gap-1 rounded-full bg-tarjeta px-2.5 py-0.5 text-[11px] font-bold tabular-nums text-tinta dark:bg-noche-tarjeta dark:text-noche-tinta">
                   <Users size={11} strokeWidth={2} />
                   <span>
-                    {operativoActivo.prerregistros_count ?? 0} apuntado
-                    {(operativoActivo.prerregistros_count ?? 0) === 1 ? '' : 's'}
+                    {prerregistrosCountActivo} apuntado
+                    {prerregistrosCountActivo === 1 ? '' : 's'}
                     {operativoActivo.cupo_sugerido ? ` / ${operativoActivo.cupo_sugerido}` : ''}
                   </span>
                 </span>

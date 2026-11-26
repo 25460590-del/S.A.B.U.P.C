@@ -1,9 +1,9 @@
 import { AlertCircle, CheckCircle2, Lock, Radio, Search } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
+import { useDirectorio } from '../context/DirectorioContext'
 import { ayudantiaJefatura, esAdmin, puedeAsignarRadio } from '../lib/permisos'
 import {
   actualizarRadioUsuario,
-  escucharUsuariosPorEstatus,
   mensajeDeError,
   nombreCompleto,
 } from '../services/authService'
@@ -22,40 +22,32 @@ function iniciales(u: Usuario): string {
 
 /**
  * Vista dedicada "Claves TESLA" (Dominio exclusivo de Radio):
- * - Sin datos médicos, sin incidencias de AP y sin cargar `fotos_perfiles`.
+ * - Consume el directorio centralizado de sesión (`DirectorioContext`, cero listeners extra).
  * - Bloquea autoasignación en UI cuando el actor no es Administrador.
  * - Si el actor es Jefe de Ayudantía Tesla, filtra estrictamente a su ayudantía.
  */
 export function GestionTeslaPanel({ actor }: GestionTeslaPanelProps) {
   const soyAdmin = esAdmin(actor)
   const ayJefe = ayudantiaJefatura(actor)
-  const [usuarios, setUsuarios] = useState<Usuario[]>([])
-  const [cargando, setCargando] = useState(true)
+  const { usuarios: directorio, cargando, error: errorDirectorio } = useDirectorio()
   const [busqueda, setBusqueda] = useState('')
   const [filtroRadio, setFiltroRadio] = useState<'todos' | 'autorizados' | 'sin_radio'>('todos')
   const [borradores, setBorradores] = useState<
     Record<string, { clave: string; autorizado: boolean }>
   >({})
   const [guardandoUid, setGuardandoUid] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [errorLocal, setError] = useState<string | null>(null)
   const [aviso, setAviso] = useState<string | null>(null)
 
-  useEffect(() => {
-    const cancelar = escucharUsuariosPorEstatus(
-      ['Activo'],
-      (lista) => {
-        lista.sort((a, b) => nombreCompleto(a).localeCompare(nombreCompleto(b), 'es-MX'))
-        setUsuarios(lista)
-        setCargando(false)
-      },
-      (err) => {
-        setError(mensajeDeError(err))
-        setCargando(false)
-      },
-      actor,
-    )
-    return cancelar
-  }, [actor])
+  const error = errorLocal ?? errorDirectorio
+
+  const usuarios = useMemo(
+    () =>
+      directorio
+        .filter((u) => u.estatus === 'Activo')
+        .sort((a, b) => nombreCompleto(a).localeCompare(nombreCompleto(b), 'es-MX')),
+    [directorio],
+  )
 
   const conteos = useMemo(() => {
     let autorizados = 0

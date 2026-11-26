@@ -129,11 +129,15 @@ rules_version = '2';
 //              'Finalizado' y 'Cancelado' son irreversibles; solo Admin cambia estatus)
 //   - convocatoria_abierta: bool (opcional, por defecto false)
 //   - cupo_sugerido: int 1..1000 | null (opcional, por defecto null = sin límite)
-//   - prerregistros_count: int >= 0 (opcional, 0 al crear; conteo sincronizado)
+//   - prerregistros_count: int >= 0 (opcional, legado/inicial; el conteo vivo vive en meta/contador)
 //   - creado_por_uid: string 1..128 (== request.auth.uid al crear, inmutable)
 //   - creado_por_nombre: string 1..200 (inmutable)
 //   - creado_en: timestamp (== request.time al crear, inmutable)
 //   - actualizado_en: timestamp (== request.time en cada escritura)
+//
+// Subcolección: operativos/{operativoId}/meta/contador   (conteo desacoplado Plan Spark)
+//   - prerregistros_count: int >= 0
+//   - actualizado_en: timestamp (== request.time)
 //
 // Subcolección: operativos/{operativoId}/secretos/{estatico | vigente | totp}
 //   Lectura/escritura exclusiva de Encargado o Administrador Activo (NUNCA Brigadista):
@@ -615,17 +619,42 @@ service cloud.firestore {
           && get(/databases/$(database)/documents/operativos/$(opId)).data.recepcion_abierta == true;
     }
 
-    // Actualización atómica del contador prerregistros_count por un brigadista Activo
-    // dentro de una transacción con su propio documento prerregistros/{request.auth.uid}.
-    function actualizacionContadorPrerregistroPropia(operativoId, changed) {
-      let prev = resource.data.get('prerregistros_count', 0);
-      let next = request.resource.data.get('prerregistros_count', -1);
-      let cupo = resource.data.get('cupo_sugerido', null);
+    // Inicialización perezosa de operativos/{operativoId}/meta/contador por un
+    // Brigadista Activo en su transacción de autoregistro sobre un operativo legado.
+    function altaContadorPrerregistroBrigadistaValida(operativoId) {
+      let op = get(/databases/$(database)/documents/operativos/$(operativoId)).data;
+      let cupo = op.get('cupo_sugerido', null);
+      let next = request.resource.data.prerregistros_count;
       let prePath = /databases/$(database)/documents/operativos/$(operativoId)/prerregistros/$(request.auth.uid);
-      return resource.data.get('convocatoria_abierta', false) == true
-          && changed.hasOnly(['prerregistros_count', 'actualizado_en'])
-          && next is int
-          && next >= 0
+      return op.get('convocatoria_abierta', false) == true
+          && next == op.get('prerregistros_count', 0) + 1
+          && (cupo == null || next <= cupo)
+          && !exists(prePath)
+          && existsAfter(prePath);
+    }
+
+    function puedeCrearContadorPrerregistros(operativoId) {
+      let p = perfilPropio();
+      let opPath = /databases/$(database)/documents/operativos/$(operativoId);
+      return p.estatus == 'Activo'
+          && (
+            (p.rol_sistema in ['Encargado', 'Administrador']
+             && (!exists(opPath) || operativoNoFinalizado(operativoId)))
+            || (p.rol_sistema == 'Brigadista'
+                && operativoNoFinalizado(operativoId)
+                && altaContadorPrerregistroBrigadistaValida(operativoId))
+          );
+    }
+
+    // Actualización atómica (+1 / -1) de operativos/{operativoId}/meta/contador
+    // por un Brigadista Activo vinculada a su propio prerregistros/{request.auth.uid}.
+    function actualizacionContadorPrerregistroBrigadistaValida(operativoId) {
+      let op = get(/databases/$(database)/documents/operativos/$(operativoId)).data;
+      let cupo = op.get('cupo_sugerido', null);
+      let prev = resource.data.prerregistros_count;
+      let next = request.resource.data.prerregistros_count;
+      let prePath = /databases/$(database)/documents/operativos/$(operativoId)/prerregistros/$(request.auth.uid);
+      return op.get('convocatoria_abierta', false) == true
           && (
             (next == prev + 1
              && (cupo == null || next <= cupo)
@@ -637,26 +666,32 @@ service cloud.firestore {
           );
     }
 
+    function puedeActualizarContadorPrerregistros(operativoId) {
+      let p = perfilPropio();
+      return p.estatus == 'Activo'
+          && operativoNoFinalizado(operativoId)
+          && (
+            p.rol_sistema in ['Encargado', 'Administrador']
+            || (p.rol_sistema == 'Brigadista'
+                && actualizacionContadorPrerregistroBrigadistaValida(operativoId))
+          );
+    }
+
     // Actualización unificada de operativos/{operativoId}: lee perfilPropio(),
     // ayudantiaDe(p) y camposCambiados() una sola vez y separa permisos por rol.
+    // El conteo de prerregistros vive desacoplado en operativos/{operativoId}/meta/contador.
     function puedeActualizarOperativo(operativoId) {
       let p = perfilPropio();
       let ay = ayudantiaDe(p);
       let changed = camposCambiados();
-      let esJefe = esJefeAyudantiaConAy(p, ay);
       return p.estatus == 'Activo'
           && (
             (p.rol_sistema == 'Administrador'
              && !changed.hasAny(['id', 'creado_por_uid', 'creado_por_nombre', 'creado_en']))
             || (p.rol_sistema == 'Encargado'
-                && !esJefe
+                && !esJefeAyudantiaConAy(p, ay)
                 && changed.hasOnly(['recepcion_abierta', 'convocatoria_abierta',
-                                    'cupo_sugerido', 'modo_qr',
-                                    'prerregistros_count', 'actualizado_en']))
-            || (esJefe
-                && changed.hasOnly(['prerregistros_count', 'actualizado_en']))
-            || (p.rol_sistema == 'Brigadista'
-                && actualizacionContadorPrerregistroPropia(operativoId, changed))
+                                    'cupo_sugerido', 'modo_qr', 'actualizado_en']))
           )
           && esOperativoValido(request.resource.data, operativoId);
     }
@@ -1438,6 +1473,15 @@ service cloud.firestore {
           && d.creado_en == request.time;
     }
 
+    function esContadorPrerregistrosValido(d) {
+      let campos = ['prerregistros_count', 'actualizado_en'];
+      return d.keys().hasAll(campos)
+          && d.keys().hasOnly(campos)
+          && d.prerregistros_count is int
+          && d.prerregistros_count >= 0
+          && d.actualizado_en == request.time;
+    }
+
     // -------------------------------------------------------------
     // Validador de dominio: operativos/{operativoId}/prerregistros/{uid}
     // -------------------------------------------------------------
@@ -1837,9 +1881,8 @@ service cloud.firestore {
       // Actualización únicamente mientras el operativo permanezca 'Activo'
       // ('Finalizado' y 'Cancelado' son irreversibles y bloquean toda mutación):
       // (a) Administrador Activo: único rol que cambia estatus y campos estructurales.
-      // (b) Encargado sin ayudantía Activo: recepción, convocatoria, cupo, modo_qr y conteo.
-      // (c) Jefe de Ayudantía Activo: únicamente ['prerregistros_count', 'actualizado_en'].
-      // (d) Brigadista Activo: ['prerregistros_count', 'actualizado_en'] con atomicidad propia.
+      // (b) Encargado sin ayudantía Activo: únicamente recepción, convocatoria, cupo y modo_qr.
+      // (El conteo de prerregistros se escribe en operativos/{operativoId}/meta/contador).
       allow update: if isSignedIn()
                     && resource.data.get('estatus', 'Activo') == 'Activo'
                     && request.resource.data.actualizado_en == request.time
@@ -1847,6 +1890,31 @@ service cloud.firestore {
 
       // Eliminación: exclusiva de Administrador Activo.
       allow delete: if esAdminActivo();
+
+      // -----------------------------------------------------------
+      // operativos/{operativoId}/meta/contador — conteo desacoplado
+      // -----------------------------------------------------------
+      match /meta/contador {
+
+        // Lectura puntual: cualquier usuario con cuenta Activa
+        // (incluye resource == null para tx.get(contadorRef) previo a inicialización).
+        allow get: if esActivo();
+
+        allow list, delete: if false;
+
+        // Alta: Encargado/Admin Activo (en writeBatch inicial o inicialización perezosa)
+        // o Brigadista Activo inicializando perezosamente en transacción de autoregistro.
+        allow create: if isSignedIn()
+                      && esContadorPrerregistrosValido(request.resource.data)
+                      && puedeCrearContadorPrerregistros(operativoId);
+
+        // Actualización mientras el operativo permanezca Activo:
+        // Encargado/Admin Activo o Brigadista Activo en transacción atómica (+1 / -1)
+        // vinculada a su propio prerregistros/{request.auth.uid}.
+        allow update: if isSignedIn()
+                      && esContadorPrerregistrosValido(request.resource.data)
+                      && puedeActualizarContadorPrerregistros(operativoId);
+      }
 
       // -----------------------------------------------------------
       // operativos/{operativoId}/secretos/totp — legado bloqueado
