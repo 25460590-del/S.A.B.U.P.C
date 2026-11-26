@@ -33,6 +33,8 @@ export interface DatosNuevoEquipo {
   nombre_articulo: string
   codigo_inventario: string
   cantidad?: number
+  /** Nonce opcional para idempotencia al reintentar entregas en lote tras fallo de red. */
+  operacion_nonce?: string
 }
 
 /**
@@ -158,6 +160,9 @@ export async function asignarEquipoBupc(
 /**
  * Asignación rápida de material repetitivo (chalecos, lámparas, radios genéricos) a
  * múltiples brigadistas seleccionados en lotes seguros de ≤ 400 operaciones.
+ * Usa IDs deterministas derivados de `asistencia_id` + `operacion_nonce` y verifica
+ * existencia antes de escribir para garantizar idempotencia en reintentos tras cortes de red
+ * (sin duplicar artículos ni incrementar dos veces `equipos_bupc_pendientes`).
  */
 export async function asignarEquipoBupcMultiple(
   encargado: Usuario,
@@ -174,18 +179,47 @@ export async function asignarEquipoBupcMultiple(
     throw new Error('Selecciona al menos un brigadista con turno abierto.')
   }
 
+  const nonceCrudo = (datos.operacion_nonce ?? '').trim() || crypto.randomUUID().replace(/-/g, '').slice(0, 12)
+  const nonceLimpio = nonceCrudo.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 24) || 'lote'
+
+  const ayJefe = ayudantiaJefatura(encargado)
+  const operativoId = abiertas[0].operativo_id
+
+  // Consulta acotada al operativo (+ ayudantía si aplica) para detectar entregas ya aplicadas en reintentos
+  const consultaExistentes = ayJefe
+    ? query(
+        equiposRef,
+        where('operativo_id', '==', operativoId),
+        where('ayudantia_slot', '==', ayJefe),
+      )
+    : query(equiposRef, where('operativo_id', '==', operativoId))
+  const existentesSnap = await getDocs(consultaExistentes)
+  const idsExistentes = new Set(existentesSnap.docs.map((d) => d.id))
+
+  const pendientes = abiertas
+    .map((asis) => ({
+      asis,
+      equipoId: `eq_${asis.id}_${nonceLimpio}`.slice(0, 120),
+    }))
+    .filter(({ equipoId }) => !idsExistentes.has(equipoId))
+
+  if (pendientes.length === 0) {
+    return abiertas.length
+  }
+
   const encargadoNombre = nombreCompleto(encargado)
   // Cada brigadista consume 3 operaciones (equipo + asistencia increment + auditoría)
   const personasPorLote = Math.floor(MAX_OPS_LOTE / 3)
 
-  for (let i = 0; i < abiertas.length; i += personasPorLote) {
-    const segmento = abiertas.slice(i, i + personasPorLote)
+  for (let i = 0; i < pendientes.length; i += personasPorLote) {
+    const segmento = pendientes.slice(i, i + personasPorLote)
     const lote = writeBatch(db)
 
-    for (const asis of segmento) {
-      const nuevoEquipo = doc(equiposRef)
+    for (const { asis, equipoId } of segmento) {
+      const nuevoEquipo = doc(equiposRef, equipoId)
+      const auditoriaDoc = doc(auditoriaRef, `aud_${equipoId}`.slice(0, 120))
       lote.set(nuevoEquipo, {
-        id: nuevoEquipo.id,
+        id: equipoId,
         asistencia_id: asis.id,
         operativo_id: asis.operativo_id,
         operativo_nombre: asis.operativo_nombre,
@@ -213,7 +247,7 @@ export async function asignarEquipoBupcMultiple(
         actualizado_en: serverTimestamp(),
       })
 
-      lote.set(doc(auditoriaRef), {
+      lote.set(auditoriaDoc, {
         tipo: 'ASIGNACION_EQUIPO',
         actor_uid: encargado.uid,
         actor_nombre: encargadoNombre,

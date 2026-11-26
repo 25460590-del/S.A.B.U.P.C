@@ -129,11 +129,31 @@ export interface Operativo {
   /** Conteo sincronizado de prerregistros para validar cupo sin listar subcolección. */
   prerregistros_count?: number
   modo_qr: ModoQrOperativo
-  qr_token_estatico: string
+  /** Campo legado opcional (en operativos nuevos el token vive protegido en `secretos/estatico`). */
+  qr_token_estatico?: string
   creado_por_uid: string
   creado_por_nombre: string
   creado_en: Timestamp
   actualizado_en: Timestamp
+}
+
+export interface SecretoEstaticoOperativo {
+  token: string
+  actualizado_en: Timestamp
+}
+
+export interface SecretoVigenteOperativo {
+  nonce: string
+  nonce_anterior: string | null
+  actualizado_en: Timestamp
+}
+
+export interface PresenteOperativo {
+  asistencia_id: string
+  usuario_uid: string
+  operativo_id: string
+  ayudantia_slot: AyudantiaSlot
+  creado_en: Timestamp
 }
 
 export type OrigenPrerregistro = 'Autoregistro' | 'Manual_Encargado'
@@ -222,6 +242,8 @@ export interface AsistenciaPersonal {
   salida_cerrada_manual: boolean
   /** Contador atómico del Candado Duro de Salida (must be 0 to close exit). */
   equipos_bupc_pendientes: number
+  /** Prueba de presencia física capturada al escanear el QR del operativo (VÍA 1). */
+  prueba_qr?: string | null
   registrado_por_uid: string
   creado_en: Timestamp
   actualizado_en: Timestamp

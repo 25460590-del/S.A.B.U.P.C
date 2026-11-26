@@ -124,7 +124,7 @@ rules_version = '2';
 //   - descripcion: string 0..500
 //   - recepcion_abierta: bool
 //   - modo_qr: 'estatico' | 'dinamico'
-//   - qr_token_estatico: string 1..128
+//   - qr_token_estatico: string 1..128 (opcional por retrocompatibilidad; secreto en secretos/estatico)
 //   - estatus: 'Activo' | 'Finalizado' | 'Cancelado' (opcional, por defecto 'Activo';
 //              'Finalizado' y 'Cancelado' son irreversibles; solo Admin cambia estatus)
 //   - convocatoria_abierta: bool (opcional, por defecto false)
@@ -135,11 +135,20 @@ rules_version = '2';
 //   - creado_en: timestamp (== request.time al crear, inmutable)
 //   - actualizado_en: timestamp (== request.time en cada escritura)
 //
-// Subcolección: operativos/{operativoId}/secretos/totp
-//   - secreto_base32: string 16..128 (Base32 ^[A-Z2-7]+$)
-//   - periodo_segundos: int (== 30)
-//   - digitos: int (== 6)
-//   - actualizado_en: timestamp (== request.time)
+// Subcolección: operativos/{operativoId}/secretos/{estatico | vigente | totp}
+//   Lectura/escritura exclusiva de Encargado o Administrador Activo (NUNCA Brigadista):
+//   - secretos/estatico: { token: string 8..128, actualizado_en: timestamp }
+//   - secretos/vigente:  { nonce: string 6..64, nonce_anterior: string 6..64 | null,
+//                          actualizado_en: timestamp }
+//   - secretos/totp:     legado deprecado (solo get para Encargado/Admin; sin escrituras)
+//
+// Subcolección: operativos/{operativoId}/presentes/{uid}   (candado atómico anti-duplicados)
+//   - asistencia_id: string 1..128
+//   - usuario_uid: string (== uid)
+//   - operativo_id: string (== operativoId)
+//   - ayudantia_slot: 'Capacitación' | 'Administración de Personal' |
+//                     'Tesla' | 'Socorros' | 'Logística' | 'Ninguna'
+//   - creado_en: timestamp (== request.time)
 //
 // Subcolección: operativos/{operativoId}/prerregistros/{uid}   (ID = usuario_uid)
 //   - usuario_uid: string (== ID del documento, inmutable)
@@ -183,6 +192,8 @@ rules_version = '2';
 //   - registrado_por_uid: string 1..128 (== request.auth.uid al crear, inmutable)
 //   - creado_en: timestamp (== request.time al crear, inmutable)
 //   - actualizado_en: timestamp (== request.time en cada escritura)
+//   - prueba_qr: string 1..128 | null (opcional; obligatorio 6..128 y validado contra
+//                secretos/estatico o secretos/vigente en auto-registro QR, inmutable)
 //
 // Colección: equipos_turno/{equipoId}   (aislado por ayudantia_slot para Jefe de Ayudantía;
 //   válvula de escape exclusiva para Admin sobre 'BUPC_Asignado' en operativos cerrados)
@@ -762,7 +773,88 @@ service cloud.firestore {
           && puedeEliminarPrerregistroEnOperativo(get(opPath).data, uid);
     }
 
-    // Helpers para asistencias_personal/{asistenciaId} y equipos_turno/{equipoId}.
+    // Helpers para operativos/{operativoId}/presentes/{uid} (candado anti-duplicados)
+    // y asistencias_personal/{asistenciaId}.
+    function puedeLeerPresentePorTercero() {
+      let p = perfilPropio();
+      let ay = ayudantiaDe(p);
+      return isSignedIn()
+          && p.estatus == 'Activo'
+          && (
+            p.rol_sistema == 'Administrador'
+            || (p.rol_sistema == 'Encargado'
+                && (!esJefeAyudantiaConAy(p, ay)
+                    || resource == null
+                    || resource.data.ayudantia_slot == ay))
+          );
+    }
+
+    function puedeCrearPresente(operativoId, uid) {
+      let d = request.resource.data;
+      let p = perfilPropio();
+      let ay = ayudantiaDe(p);
+      let presPath = /databases/$(database)/documents/operativos/$(operativoId)/presentes/$(uid);
+      let asisPath = /databases/$(database)/documents/asistencias_personal/$(d.asistencia_id);
+      return operativoConRecepcionAbierta(operativoId)
+          && !exists(presPath)
+          && !exists(asisPath)
+          && existsAfter(asisPath)
+          && getAfter(asisPath).data.usuario_uid == uid
+          && getAfter(asisPath).data.operativo_id == operativoId
+          && getAfter(asisPath).data.ayudantia_slot == d.ayudantia_slot
+          && getAfter(asisPath).data.hora_salida == null
+          && p.estatus == 'Activo'
+          && (
+            p.rol_sistema == 'Administrador'
+            || (p.rol_sistema == 'Encargado'
+                && (!esJefeAyudantiaConAy(p, ay)
+                    || d.ayudantia_slot == ay))
+            || (request.auth.uid == uid
+                && d.ayudantia_slot == ay)
+          );
+    }
+
+    function puedeEliminarPresenteExistente(uid) {
+      let p = perfilPropio();
+      let ay = ayudantiaDe(p);
+      let asisPath = /databases/$(database)/documents/asistencias_personal/$(resource.data.asistencia_id);
+      return p.estatus == 'Activo'
+          && (
+            request.auth.uid == uid
+            || p.rol_sistema == 'Administrador'
+            || (p.rol_sistema == 'Encargado'
+                && (!esJefeAyudantiaConAy(p, ay)
+                    || resource.data.ayudantia_slot == ay))
+          )
+          && exists(asisPath)
+          && existsAfter(asisPath)
+          && getAfter(asisPath).data.hora_salida != null
+          && getAfter(asisPath).data.equipos_bupc_pendientes == 0;
+    }
+
+    function puedeEliminarPresente(operativoId, uid) {
+      return operativoNoFinalizado(operativoId)
+          && (resource == null
+              ? esAdminActivo()
+              : puedeEliminarPresenteExistente(uid));
+    }
+
+    function candadoPresenteCreadoValido(d, asistenciaId) {
+      let presPath = /databases/$(database)/documents/operativos/$(d.operativo_id)/presentes/$(d.usuario_uid);
+      return !exists(presPath)
+          && existsAfter(presPath)
+          && getAfter(presPath).data.asistencia_id == asistenciaId;
+    }
+
+    function candadoPresenteSalidaLiberado(asistenciaId) {
+      let presPath = /databases/$(database)/documents/operativos/$(resource.data.operativo_id)/presentes/$(resource.data.usuario_uid);
+      return !(resource.data.hora_salida == null
+               && request.resource.data.hora_salida != null)
+          || !exists(presPath)
+          || get(presPath).data.asistencia_id != asistenciaId
+          || !existsAfter(presPath);
+    }
+
     function puedeLeerAsistencia() {
       let p = perfilPropio();
       let ay = ayudantiaDe(p);
@@ -778,13 +870,34 @@ service cloud.firestore {
     }
 
     // Valida el rol_en_turno en auto-registro QR propio: respeta el rol asignado
-    // en prerregistros/{uid} si existe y contiene rol_en_turno; en caso contrario
-    // exige el rol operativo predeterminado según la ayudantía del perfil.
+    // en prerregistros/{uid} únicamente cuando rol_editado_manual == true; en caso
+    // contrario exige el rol predeterminado según la ayudantía actual del perfil.
     function rolAutoRegistroAsistenciaValido(opId, rol, ay) {
       let prePath = /databases/$(database)/documents/operativos/$(opId)/prerregistros/$(request.auth.uid);
-      return (exists(prePath) && 'rol_en_turno' in get(prePath).data)
+      return (exists(prePath)
+              && get(prePath).data.get('rol_editado_manual', false) == true
+              && 'rol_en_turno' in get(prePath).data)
           ? rol == get(prePath).data.rol_en_turno
           : rol == rolOperativoPorAyudantia(ay);
+    }
+
+    // Verifica la prueba criptográfica/secreto de presencia física en auto-registro QR
+    // contra secretos/estatico o secretos/vigente (Plan Spark, sin Cloud Functions).
+    function pruebaQrValida(opId, metodo, prueba) {
+      let op = get(/databases/$(database)/documents/operativos/$(opId)).data;
+      let estPath = /databases/$(database)/documents/operativos/$(opId)/secretos/estatico;
+      let vigPath = /databases/$(database)/documents/operativos/$(opId)/secretos/vigente;
+      return metodo == 'QR_Operativo_Estatico'
+          ? (op.modo_qr == 'estatico'
+             && exists(estPath)
+             && prueba == get(estPath).data.token)
+          : (metodo == 'QR_Operativo_TOTP'
+             && op.modo_qr == 'dinamico'
+             && exists(vigPath)
+             && request.time <= get(vigPath).data.actualizado_en + duration.value(120, 's')
+             && (prueba == get(vigPath).data.nonce
+                 || (get(vigPath).data.nonce_anterior != null
+                     && prueba == get(vigPath).data.nonce_anterior)));
     }
 
     function puedeCrearAsistenciaPorRol() {
@@ -809,7 +922,12 @@ service cloud.firestore {
                 && request.resource.data.salida_cerrada_manual == false
                 && request.resource.data.signos_vitales == null
                 && request.resource.data.metodo_entrada in ['QR_Operativo_TOTP',
-                                                            'QR_Operativo_Estatico'])
+                                                            'QR_Operativo_Estatico']
+                && 'prueba_qr' in request.resource.data
+                && cadena(request.resource.data.prueba_qr, 6, 128)
+                && pruebaQrValida(request.resource.data.operativo_id,
+                                  request.resource.data.metodo_entrada,
+                                  request.resource.data.prueba_qr))
           );
     }
 
@@ -1255,12 +1373,13 @@ service cloud.firestore {
     function esOperativoValido(d, operativoId) {
       let camposBase = ['id', 'nombre', 'categoria', 'sede', 'fecha_inicio',
                         'fecha_fin', 'descripcion', 'recepcion_abierta', 'modo_qr',
-                        'qr_token_estatico', 'creado_por_uid', 'creado_por_nombre',
-                        'creado_en', 'actualizado_en'];
+                        'creado_por_uid', 'creado_por_nombre', 'creado_en',
+                        'actualizado_en'];
       let keys = d.keys();
       return keys.hasAll(camposBase)
-          && keys.hasOnly(camposBase.concat(['estatus', 'convocatoria_abierta',
-                                             'cupo_sugerido', 'prerregistros_count']))
+          && keys.hasOnly(camposBase.concat(['qr_token_estatico', 'estatus',
+                                             'convocatoria_abierta', 'cupo_sugerido',
+                                             'prerregistros_count']))
           && d.id == operativoId
           && cadena(d.nombre, 1, 120)
           && d.categoria in ['Operativos Masivos', 'Proyectos y Soporte Técnico',
@@ -1272,7 +1391,7 @@ service cloud.firestore {
           && cadena(d.descripcion, 0, 500)
           && d.recepcion_abierta is bool
           && d.modo_qr in ['estatico', 'dinamico']
-          && cadena(d.qr_token_estatico, 1, 128)
+          && (!('qr_token_estatico' in d) || cadena(d.qr_token_estatico, 1, 128))
           && (!('estatus' in d) || d.estatus in ['Activo', 'Finalizado', 'Cancelado'])
           && (!('convocatoria_abierta' in d) || d.convocatoria_abierta is bool)
           && (!('cupo_sugerido' in d)
@@ -1287,21 +1406,36 @@ service cloud.firestore {
     }
 
     // -------------------------------------------------------------
-    // Validador de dominio: operativos/{operativoId}/secretos/totp
+    // Validadores de dominio: secretos QR y candado presentes/{uid}
     // -------------------------------------------------------------
-    function esSecretoTotpValido(d) {
-      let campos = ['secreto_base32', 'periodo_segundos', 'digitos', 'actualizado_en'];
+    function esSecretoEstaticoValido(d) {
+      let campos = ['token', 'actualizado_en'];
       return d.keys().hasAll(campos)
           && d.keys().hasOnly(campos)
-          && d.secreto_base32 is string
-          && d.secreto_base32.size() >= 16
-          && d.secreto_base32.size() <= 128
-          && d.secreto_base32.matches('^[A-Z2-7]+$')
-          && d.periodo_segundos is int
-          && d.periodo_segundos == 30
-          && d.digitos is int
-          && d.digitos == 6
+          && cadena(d.token, 8, 128)
           && d.actualizado_en == request.time;
+    }
+
+    function esSecretoVigenteValido(d) {
+      let campos = ['nonce', 'nonce_anterior', 'actualizado_en'];
+      return d.keys().hasAll(campos)
+          && d.keys().hasOnly(campos)
+          && cadena(d.nonce, 6, 64)
+          && cadenaONull(d.nonce_anterior, 6, 64)
+          && d.actualizado_en == request.time;
+    }
+
+    function esPresenteValido(d, uid, operativoId) {
+      let campos = ['asistencia_id', 'usuario_uid', 'operativo_id',
+                    'ayudantia_slot', 'creado_en'];
+      return d.keys().hasAll(campos)
+          && d.keys().hasOnly(campos)
+          && cadena(d.asistencia_id, 1, 128)
+          && d.usuario_uid == uid
+          && d.operativo_id == operativoId
+          && d.ayudantia_slot in ['Capacitación', 'Administración de Personal',
+                                  'Tesla', 'Socorros', 'Logística', 'Ninguna']
+          && d.creado_en == request.time;
     }
 
     // -------------------------------------------------------------
@@ -1353,15 +1487,15 @@ service cloud.firestore {
     // Validador de dominio: asistencias_personal (create Y update)
     // -------------------------------------------------------------
     function esAsistenciaValida(d, asistenciaId) {
-      let campos = ['id', 'operativo_id', 'operativo_nombre', 'usuario_uid',
-                    'usuario_nombre', 'usuario_cuenta', 'grupo_operativo',
-                    'ayudantia_slot', 'rol_en_turno', 'estado_operativo',
-                    'signos_vitales', 'metodo_entrada', 'hora_entrada',
-                    'hora_salida', 'horas_totales', 'salida_cerrada_manual',
-                    'equipos_bupc_pendientes', 'registrado_por_uid',
-                    'creado_en', 'actualizado_en'];
-      return d.keys().hasAll(campos)
-          && d.keys().hasOnly(campos)
+      let camposBase = ['id', 'operativo_id', 'operativo_nombre', 'usuario_uid',
+                        'usuario_nombre', 'usuario_cuenta', 'grupo_operativo',
+                        'ayudantia_slot', 'rol_en_turno', 'estado_operativo',
+                        'signos_vitales', 'metodo_entrada', 'hora_entrada',
+                        'hora_salida', 'horas_totales', 'salida_cerrada_manual',
+                        'equipos_bupc_pendientes', 'registrado_por_uid',
+                        'creado_en', 'actualizado_en'];
+      return d.keys().hasAll(camposBase)
+          && d.keys().hasOnly(camposBase.concat(['prueba_qr']))
           && d.id == asistenciaId
           && cadena(d.operativo_id, 1, 128)
           && cadena(d.operativo_nombre, 1, 120)
@@ -1384,7 +1518,8 @@ service cloud.firestore {
           && d.equipos_bupc_pendientes >= 0
           && cadena(d.registrado_por_uid, 1, 128)
           && d.creado_en is timestamp
-          && d.actualizado_en is timestamp;
+          && d.actualizado_en is timestamp
+          && (!('prueba_qr' in d) || cadenaONull(d.prueba_qr, 1, 128));
     }
 
     // Candado Duro de Salida (servidor): nadie puede registrar o modificar
@@ -1714,30 +1849,82 @@ service cloud.firestore {
       allow delete: if esAdminActivo();
 
       // -----------------------------------------------------------
-      // operativos/{operativoId}/secretos/totp — secreto TOTP
+      // operativos/{operativoId}/secretos/totp — legado bloqueado
       // -----------------------------------------------------------
       match /secretos/totp {
 
-        // Lectura individual: cualquier usuario con cuenta Activa.
-        allow get: if esActivo();
+        // Solo Encargado o Administrador Activo puede leer secretos TOTP legados.
+        allow get: if esEncargadoOAdminActivo();
 
-        // No se permite listar secretos.
-        allow list: if false;
+        // Deprecado: sin listado ni escrituras.
+        allow list, create, update, delete: if false;
+      }
 
-        // Alta: Encargado o Administrador Activo, compatible con writeBatch
-        // junto al alta inicial del operativo (!exists) o sobre operativo Activo.
+      // -----------------------------------------------------------
+      // operativos/{operativoId}/secretos/estatico — token QR estático
+      // -----------------------------------------------------------
+      match /secretos/estatico {
+
+        // Lectura exclusiva de Encargado o Administrador Activo (NUNCA Brigadista).
+        allow get: if esEncargadoOAdminActivo();
+
+        allow list, delete: if false;
+
         allow create: if esEncargadoOAdminActivo()
                       && (!exists(/databases/$(database)/documents/operativos/$(operativoId))
                           || operativoNoFinalizado(operativoId))
-                      && esSecretoTotpValido(request.resource.data);
+                      && esSecretoEstaticoValido(request.resource.data);
 
-        // Actualización: solo mientras el operativo permanezca Activo.
         allow update: if esEncargadoOAdminActivo()
                       && operativoNoFinalizado(operativoId)
-                      && esSecretoTotpValido(request.resource.data);
+                      && esSecretoEstaticoValido(request.resource.data);
+      }
 
-        // Nunca se elimina el secreto TOTP.
-        allow delete: if false;
+      // -----------------------------------------------------------
+      // operativos/{operativoId}/secretos/vigente — nonce QR dinámico
+      // -----------------------------------------------------------
+      match /secretos/vigente {
+
+        // Lectura exclusiva de Encargado o Administrador Activo (NUNCA Brigadista).
+        allow get: if esEncargadoOAdminActivo();
+
+        allow list, delete: if false;
+
+        allow create: if esEncargadoOAdminActivo()
+                      && (!exists(/databases/$(database)/documents/operativos/$(operativoId))
+                          || operativoNoFinalizado(operativoId))
+                      && esSecretoVigenteValido(request.resource.data);
+
+        allow update: if esEncargadoOAdminActivo()
+                      && operativoNoFinalizado(operativoId)
+                      && esSecretoVigenteValido(request.resource.data);
+      }
+
+      // -----------------------------------------------------------
+      // operativos/{operativoId}/presentes/{uid} — candado anti-duplicados
+      // -----------------------------------------------------------
+      match /presentes/{uid} {
+
+        // Lectura puntual (incluye resource == null para tx.get(candadoRef) previo al alta):
+        // propio titular Activo, Admin Activo, Encargado sin ayudantía Activo o
+        // Jefe de Ayudantía Activo sobre su propia ayudantía.
+        allow get: if (esPropietario(uid) && esActivo())
+                   || puedeLeerPresentePorTercero();
+
+        allow list: if false;
+
+        // Alta atómica vinculada a asistencias_personal/{asistencia_id}.
+        allow create: if isSignedIn()
+                      && esPresenteValido(request.resource.data, uid, operativoId)
+                      && puedeCrearPresente(operativoId, uid);
+
+        // Inmutable mientras la asistencia permanezca abierta.
+        allow update: if false;
+
+        // Liberación atómica al cerrar hora_salida sin equipos BUPC pendientes
+        // (o tolerancia a resource == null para Admin en cierre masivo histórico).
+        allow delete: if isSignedIn()
+                      && puedeEliminarPresente(operativoId, uid);
       }
 
       // -----------------------------------------------------------
@@ -1799,11 +1986,13 @@ service cloud.firestore {
       // Jefe de Ayudantía (solo ayudantia_slot == su ayudantía) o Encargado sin ayudantía.
       allow get, list: if puedeLeerAsistencia();
 
-      // Alta: requiere operativo no finalizado con recepción abierta.
+      // Alta: requiere operativo Activo con recepción abierta y creación atómica
+      // del candado determinista operativos/{operativo_id}/presentes/{usuario_uid}.
       // Permitido para Admin, Jefe de Ayudantía (solo su ayudantia_slot),
-      // Encargado sin ayudantía o auto-registro QR propio.
+      // Encargado sin ayudantía o auto-registro QR propio con prueba_qr válida.
       allow create: if esAsistenciaValida(request.resource.data, asistenciaId)
                     && operativoConRecepcionAbierta(request.resource.data.operativo_id)
+                    && candadoPresenteCreadoValido(request.resource.data, asistenciaId)
                     && request.resource.data.equipos_bupc_pendientes == 0
                     && request.resource.data.hora_salida == null
                     && request.resource.data.horas_totales == null
@@ -1813,7 +2002,8 @@ service cloud.firestore {
                     && request.resource.data.registrado_por_uid == request.auth.uid
                     && puedeCrearAsistenciaPorRol();
 
-      // Actualización unificada (esAsistenciaValida se evalúa una sola vez):
+      // Actualización unificada (esAsistenciaValida se evalúa una sola vez; al cerrar
+      // hora_salida exige liberación atómica del candado presentes/{usuario_uid}):
       // (a) Operativo Activo: dueño cierra su propia salida sin equipos pendientes,
       //     o Admin / Jefe de Ayudantía (su ayudantia_slot) / Encargado sin ayudantía
       //     actualizan rol, estado, signos, equipos_bupc_pendientes y salida con Candado Duro.
@@ -1822,6 +2012,7 @@ service cloud.firestore {
       allow update: if isSignedIn()
                     && request.resource.data.actualizado_en == request.time
                     && esAsistenciaValida(request.resource.data, asistenciaId)
+                    && candadoPresenteSalidaLiberado(asistenciaId)
                     && puedeActualizarAsistenciaPorRol();
 
       // Nunca se eliminan registros de asistencia.

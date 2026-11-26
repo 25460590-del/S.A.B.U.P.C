@@ -58,15 +58,15 @@ export function rolOperativoPorAyudantia(
 
 /**
  * Resuelve el rol inicial al confirmar entrada a un operativo:
- * - Si el participante ya tiene un rol registrado en su prerregistro (incluyendo ediciones
- *   manuales durante la convocatoria), lo conserva intacto.
- * - De lo contrario, asigna automáticamente el rol según su ayudantía.
+ * - Respeta `prerregistro.rol_en_turno` ÚNICAMENTE cuando fue editado manualmente
+ *   (`rol_editado_manual === true`) durante la convocatoria.
+ * - En caso contrario, asigna automáticamente el rol según la ayudantía actual del perfil.
  */
 export function resolverRolInicialOperativo(
   ayudantia?: AyudantiaSlot | string | null,
   prerregistro?: Pick<PrerregistroOperativo, 'rol_en_turno' | 'rol_editado_manual'> | null,
 ): RolEnTurno {
-  if (prerregistro?.rol_en_turno) {
+  if (prerregistro?.rol_editado_manual === true && prerregistro.rol_en_turno) {
     return prerregistro.rol_en_turno
   }
   return rolOperativoPorAyudantia(ayudantia)

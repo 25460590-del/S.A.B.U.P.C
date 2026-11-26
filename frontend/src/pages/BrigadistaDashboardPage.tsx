@@ -80,6 +80,13 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
   const [procesandoQr, setProcesandoQr] = useState(false)
   const [abriendoEquipo, setAbriendoEquipo] = useState(enfoque === 'material')
   const [candadoPendientes, setCandadoPendientes] = useState<EquipoTurno[] | null>(null)
+  const [salidaAnticipadaPendiente, setSalidaAnticipadaPendiente] = useState<{
+    asistenciaId: string
+    operativoNombre: string
+    horaEntradaTexto: string
+    qrOriginal: string
+  } | null>(null)
+  const [confirmandoSalidaAnticipada, setConfirmandoSalidaAnticipada] = useState(false)
   const [aviso, setAviso] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -273,6 +280,13 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
         setAviso(
           `Salida registrada en "${resultado.operativoNombre}" (${resultado.horasTotales} h acumuladas).`,
         )
+      } else if (resultado.accion === 'confirmar_salida_anticipada') {
+        setSalidaAnticipadaPendiente({
+          asistenciaId: resultado.asistenciaId,
+          operativoNombre: resultado.operativoNombre,
+          horaEntradaTexto: resultado.horaEntradaTexto,
+          qrOriginal: resultado.qrOriginal,
+        })
       } else if (resultado.accion === 'candado_duro') {
         setCandadoPendientes(resultado.pendientes)
       }
@@ -284,6 +298,37 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
       )
     } finally {
       setProcesandoQr(false)
+    }
+  }
+
+  async function manejarConfirmarSalidaAnticipada() {
+    if (!salidaAnticipadaPendiente) return
+    setConfirmandoSalidaAnticipada(true)
+    setError(null)
+    setAviso(null)
+    try {
+      const resultado = await registrarAsistenciaQR(
+        perfil,
+        salidaAnticipadaPendiente.qrOriginal,
+        undefined,
+        { confirmarSalidaAnticipada: true },
+      )
+      setSalidaAnticipadaPendiente(null)
+      if (resultado.accion === 'salida') {
+        setAviso(
+          `Salida registrada en "${resultado.operativoNombre}" (${resultado.horasTotales} h acumuladas).`,
+        )
+      } else if (resultado.accion === 'candado_duro') {
+        setCandadoPendientes(resultado.pendientes)
+      }
+    } catch (err) {
+      setSalidaAnticipadaPendiente(null)
+      const tieneCodigoFirebase = Boolean((err as { code?: string })?.code)
+      setError(
+        !tieneCodigoFirebase && err instanceof Error ? err.message : mensajeDeError(err),
+      )
+    } finally {
+      setConfirmandoSalidaAnticipada(false)
     }
   }
 
@@ -905,6 +950,51 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
               : undefined
           }
         />
+      )}
+
+      {salidaAnticipadaPendiente && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Confirmar salida anticipada"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
+        >
+          <article className="tarjeta flex w-full max-w-sm flex-col gap-4 border-2 border-naranja p-5">
+            <div className="flex items-start gap-2.5">
+              <Clock size={20} strokeWidth={2} className="mt-0.5 shrink-0 text-naranja-oscuro dark:text-naranja" />
+              <div className="flex flex-col gap-1">
+                <h3 className="text-base font-bold text-tinta dark:text-noche-tinta">
+                  Confirmar salida anticipada
+                </h3>
+                <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
+                  Ya registraste entrada a las{' '}
+                  <strong className="tabular-nums text-tinta dark:text-noche-tinta">
+                    {salidaAnticipadaPendiente.horaEntradaTexto}
+                  </strong>{' '}
+                  en {salidaAnticipadaPendiente.operativoNombre}. ¿Confirmar salida anticipada?
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={confirmandoSalidaAnticipada}
+                onClick={() => setSalidaAnticipadaPendiente(null)}
+                className="btn-salvia text-xs"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={confirmandoSalidaAnticipada}
+                onClick={() => void manejarConfirmarSalidaAnticipada()}
+                className="btn-naranja text-xs"
+              >
+                {confirmandoSalidaAnticipada ? 'Cerrando salida...' : 'Sí, confirmar salida'}
+              </button>
+            </div>
+          </article>
+        </div>
       )}
     </div>
   )

@@ -1,4 +1,5 @@
 import {
+  addDoc,
   collection,
   doc,
   getDoc,
@@ -12,15 +13,17 @@ import {
   type FirestoreError,
   type Unsubscribe,
 } from 'firebase/firestore'
-import * as OTPAuth from 'otpauth'
+import type { PersonaAlertaInactivo } from '../components/AlertaInactivoModal'
 import { resolverRolInicialOperativo, rolOperativoPorAyudantia } from '../constants/catalogos'
 import { db } from '../lib/firebase'
+import { normalizarNombrePropio } from '../lib/nombres'
 import {
   ayudantiaEfectiva,
   ayudantiaJefatura,
   esAdmin,
   esEncargado,
   esOperativoCerrado,
+  etapaEfectiva,
   grupoDesdeEtapa,
   normalizarOperativo,
   normalizarUsuario,
@@ -32,8 +35,8 @@ import type {
   EstadoOperativo,
   MetodoEntrada,
   Operativo,
+  PerfilOperativoMinimo,
   RolEnTurno,
-  SecretoTotpOperativo,
   Usuario,
 } from '../types'
 import { escucharDirectorioSegunRol, nombreCompleto } from './authService'
@@ -42,9 +45,60 @@ import { obtenerMiPrerregistro } from './prerregistrosService'
 const asistenciasRef = collection(db, 'asistencias_personal')
 const equiposRef = collection(db, 'equipos_turno')
 const usuariosRef = collection(db, 'usuarios')
+const perfilesOperativosRef = collection(db, 'perfiles_operativos')
 const auditoriaRef = collection(db, 'auditoria_eventos')
 
-// ── Parseo y validación de códigos QR ────────────────────────────────────────
+/** Ventana anti-rebote: si un turno abierto tiene menos de 5 min, exige confirmación explícita antes de cerrar salida. */
+export const VENTANA_ANTIREBOTE_MS = 5 * 60 * 1000
+
+export type PersonaOperativa = Usuario | PerfilOperativoMinimo
+
+export function nombreDePersona(persona: PersonaOperativa): string {
+  if ('nombre_completo' in persona && persona.nombre_completo) {
+    return normalizarNombrePropio(persona.nombre_completo)
+  }
+  if ('nombres' in persona) {
+    return nombreCompleto(persona)
+  }
+  return 'Brigadista'
+}
+
+function normalizarPerfilOperativo(raw: Partial<PerfilOperativoMinimo>, uidFallback: string): PerfilOperativoMinimo {
+  const ay = ayudantiaEfectiva({
+    ayudantia: raw.ayudantia,
+    ayudantia_slot: raw.ayudantia_slot ?? 'Ninguna',
+  })
+  const etapa = etapaEfectiva({
+    etapa: raw.etapa,
+    grupo_operativo: raw.grupo_operativo ?? 'Ninguno',
+  })
+  const grupo =
+    raw.grupo_operativo === 'Alfa' || raw.grupo_operativo === 'Omega' || raw.grupo_operativo === 'Ninguno'
+      ? raw.grupo_operativo
+      : grupoDesdeEtapa(etapa)
+  return {
+    uid: raw.uid || uidFallback,
+    nombre_completo: normalizarNombrePropio(raw.nombre_completo ?? 'Brigadista'),
+    numero_cuenta: (raw.numero_cuenta || '0').trim() || '0',
+    estatus: raw.estatus ?? 'Pendiente',
+    etapa,
+    subgrupo: (raw.subgrupo ?? '').trim(),
+    ayudantia: ay,
+    grupo_operativo: grupo,
+    ayudantia_slot: ay,
+    qr_codigo_unico: raw.qr_codigo_unico ?? null,
+    clave_radio: (raw.clave_radio ?? '').trim(),
+    actualizado_en: raw.actualizado_en as PerfilOperativoMinimo['actualizado_en'],
+  }
+}
+
+function formatearHoraHHMM(ms: number): string {
+  const d = new Date(ms)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+// ── Parseo de códigos QR ─────────────────────────────────────────────────────
 
 export type QrEscaneado =
   | { tipo: 'operativo_totp'; op: string; totp: string }
@@ -86,23 +140,6 @@ export function parsearQrEscaneado(texto: string): QrEscaneado | null {
   }
 }
 
-function validarTotpOffline(
-  operativoId: string,
-  secretoBase32: string,
-  codigo: string,
-): boolean {
-  const totp = new OTPAuth.TOTP({
-    issuer: 'SABUPC',
-    label: operativoId,
-    algorithm: 'SHA1',
-    digits: 6,
-    period: 30,
-    secret: OTPAuth.Secret.fromBase32(secretoBase32),
-  })
-  // Ventana ±1 (±30 s) para tolerar ligero desfase de reloj en campo offline
-  return totp.validate({ token: codigo, window: 1 }) !== null
-}
-
 // ── Resultados estructurados ─────────────────────────────────────────────────
 
 export type ResultadoRegistroQR =
@@ -115,13 +152,22 @@ export type ResultadoRegistroQR =
       horasTotales: number
     }
   | {
+      accion: 'confirmar_salida_anticipada'
+      asistenciaId: string
+      operativoNombre: string
+      usuarioNombre: string
+      horaEntradaTexto: string
+      minutosTranscurridos: number
+      qrOriginal: string
+    }
+  | {
       accion: 'candado_duro'
       asistencia: AsistenciaPersonal
       pendientes: EquipoTurno[]
     }
   | {
       accion: 'perfil_inactivo'
-      usuario: Usuario
+      usuario: PersonaAlertaInactivo
     }
 
 async function obtenerEquiposBupcPendientes(
@@ -162,7 +208,8 @@ async function buscarAsistenciaAbierta(
 
 /**
  * Cierra la salida de una asistencia respetando el Candado Duro (`equipos_bupc_pendientes == 0`)
- * dentro de una transacción atómica.
+ * y eliminando atómicamente el candado determinista `operativos/{opId}/presentes/{uid}`
+ * dentro de la misma transacción.
  */
 export async function cerrarSalidaConCandado(
   asistenciaId: string,
@@ -190,6 +237,9 @@ export async function cerrarSalidaConCandado(
       return
     }
 
+    const candadoRef = doc(db, 'operativos', actual.operativo_id, 'presentes', actual.usuario_uid)
+    const candadoSnap = await tx.get(candadoRef)
+
     const entradaMs = actual.hora_entrada?.toMillis() ?? Date.now()
     horasCalculadas = Math.max(0, Number(((Date.now() - entradaMs) / 3_600_000).toFixed(2)))
 
@@ -204,6 +254,10 @@ export async function cerrarSalidaConCandado(
     }
 
     tx.update(ref, cambios)
+
+    if (candadoSnap.exists() && candadoSnap.data()?.asistencia_id === asistenciaId) {
+      tx.delete(candadoRef)
+    }
 
     if (esManual) {
       tx.set(doc(auditoriaRef), {
@@ -230,14 +284,20 @@ export async function cerrarSalidaConCandado(
   return { bloqueado: false, horasTotales: horasCalculadas }
 }
 
+/**
+ * Crea la entrada junto al documento candado determinista `operativos/{opId}/presentes/{uid}`
+ * dentro de la misma transacción: elimina cualquier condición de carrera ante escaneos simultáneos.
+ */
 async function crearEntradaAtomica(
   actor: Usuario,
-  brigadista: Usuario,
+  brigadista: PersonaOperativa,
   operativo: Operativo,
   metodo: MetodoEntrada,
   rolInicial?: RolEnTurno,
+  pruebaQr?: string,
 ): Promise<string> {
   const nuevoDoc = doc(asistenciasRef)
+  const candadoRef = doc(db, 'operativos', operativo.id, 'presentes', brigadista.uid)
   const grupoValido =
     brigadista.grupo_operativo === 'Alfa' ||
     brigadista.grupo_operativo === 'Omega' ||
@@ -247,14 +307,28 @@ async function crearEntradaAtomica(
   const ayudantiaValida = ayudantiaEfectiva(brigadista)
   const rolFinal = rolInicial ?? rolOperativoPorAyudantia(ayudantiaValida)
   const cuentaValida = (brigadista.numero_cuenta || '0').trim().slice(0, 12) || '0'
+  const nombreBrig = nombreDePersona(brigadista)
 
   await runTransaction(db, async (tx) => {
-    tx.set(nuevoDoc, {
+    const candadoSnap = await tx.get(candadoRef)
+    if (candadoSnap.exists()) {
+      throw new Error(`${nombreBrig} ya tiene un turno abierto en este operativo.`)
+    }
+
+    tx.set(candadoRef, {
+      asistencia_id: nuevoDoc.id,
+      usuario_uid: brigadista.uid,
+      operativo_id: operativo.id,
+      ayudantia_slot: ayudantiaValida,
+      creado_en: serverTimestamp(),
+    })
+
+    const payloadAsistencia: Record<string, unknown> = {
       id: nuevoDoc.id,
       operativo_id: operativo.id,
       operativo_nombre: operativo.nombre,
       usuario_uid: brigadista.uid,
-      usuario_nombre: nombreCompleto(brigadista),
+      usuario_nombre: nombreBrig,
       usuario_cuenta: cuentaValida,
       grupo_operativo: grupoValido,
       ayudantia_slot: ayudantiaValida,
@@ -270,22 +344,76 @@ async function crearEntradaAtomica(
       registrado_por_uid: actor.uid,
       creado_en: serverTimestamp(),
       actualizado_en: serverTimestamp(),
-    })
+    }
+    if (pruebaQr) {
+      payloadAsistencia.prueba_qr = pruebaQr
+    }
+
+    tx.set(nuevoDoc, payloadAsistencia)
   })
 
   return nuevoDoc.id
 }
 
+async function leerPersonaPorCredencial(
+  actor: Usuario,
+  uidObjetivo: string,
+): Promise<PersonaOperativa | null> {
+  const ayJefe = ayudantiaJefatura(actor)
+
+  try {
+    const perfilSnap = await getDoc(doc(perfilesOperativosRef, uidObjetivo))
+    if (perfilSnap.exists()) {
+      return normalizarPerfilOperativo(
+        perfilSnap.data() as Partial<PerfilOperativoMinimo>,
+        uidObjetivo,
+      )
+    }
+  } catch (err) {
+    const code = (err as { code?: string })?.code ?? ''
+    if (code === 'permission-denied' && ayJefe) {
+      throw new Error(
+        `Esta credencial corresponde a un integrante fuera de tu ayudantía (${ayJefe}). Solo puedes pasar lista a personal de ${ayJefe}.`,
+      )
+    }
+    throw err
+  }
+
+  // Respaldo para cuentas históricas sin proyección en `perfiles_operativos`
+  try {
+    const userSnap = await getDoc(doc(usuariosRef, uidObjetivo))
+    if (userSnap.exists()) {
+      return normalizarUsuario(userSnap.data() as Usuario)
+    }
+  } catch (err) {
+    const code = (err as { code?: string })?.code ?? ''
+    if (code === 'permission-denied') {
+      if (ayJefe) {
+        throw new Error(
+          `Esta credencial corresponde a un integrante fuera de tu ayudantía (${ayJefe}). Solo puedes pasar lista a personal de ${ayJefe}.`,
+        )
+      }
+      return null
+    }
+    throw err
+  }
+
+  return null
+}
+
 /**
  * Registro de asistencia por QR de doble vía:
- * - Si el texto corresponde a un QR de Operativo (Estático o Dinámico TOTP), registra Entrada o Salida del propio usuario.
- * - Si el texto corresponde a una Credencial QR de Brigadista (escaneada por Encargado/Admin),
- *   verifica estatus (alerta roja si es Inactivo) y registra Entrada o Salida en `operativoActual`.
+ * - VÍA 1: QR del Operativo (Dinámico o Fijo). Valida la prueba de presencia (`prueba_qr`)
+ *   directamente en `firestore.rules` sin exponer secretos al brigadista.
+ * - VÍA 2: Credencial QR de Brigadista (escaneada por Encargado/Admin). Lee `perfiles_operativos/{uid}`
+ *   para no depender de `usuarios/{uid}` (preservando privacidad de Ficha de Emergencia).
+ * - Protege contra doble escaneo accidental en los primeros 5 minutos exigiendo confirmación explícita.
  */
 export async function registrarAsistenciaQR(
   actor: Usuario,
   qrRaw: string,
   operativoActual?: Operativo | null,
+  opciones?: { confirmarSalidaAnticipada?: boolean },
 ): Promise<ResultadoRegistroQR> {
   const qr = parsearQrEscaneado(qrRaw)
   if (!qr) {
@@ -309,30 +437,33 @@ export async function registrarAsistenciaQR(
       )
     }
 
-    if (qr.tipo === 'operativo_estatico') {
-      if (operativo.modo_qr !== 'estatico') {
-        throw new Error('Este operativo requiere escanear el código QR dinámico vigente.')
-      }
-      if (operativo.qr_token_estatico !== qr.token) {
-        throw new Error('El código QR fijo no corresponde a este operativo.')
-      }
-    } else {
-      if (operativo.modo_qr !== 'dinamico') {
-        throw new Error('Este operativo utiliza código QR fijo.')
-      }
-      const secretoSnap = await getDoc(doc(db, 'operativos', operativo.id, 'secretos', 'totp'))
-      if (!secretoSnap.exists()) {
-        throw new Error('No se encontró el código de verificación del operativo.')
-      }
-      const secreto = secretoSnap.data() as SecretoTotpOperativo
-      if (!validarTotpOffline(operativo.id, secreto.secreto_base32, qr.totp)) {
-        throw new Error('El código QR dinámico expiró. Escanea nuevamente el código en pantalla.')
-      }
+    if (qr.tipo === 'operativo_estatico' && operativo.modo_qr !== 'estatico') {
+      throw new Error('Este operativo requiere escanear el código QR dinámico vigente.')
+    }
+    if (qr.tipo === 'operativo_totp' && operativo.modo_qr !== 'dinamico') {
+      throw new Error('Este operativo utiliza código QR fijo.')
     }
 
     // Recepción Cerrada: permite registrar salida a quien ya tiene entrada abierta.
     const abierta = await buscarAsistenciaAbierta(actor.uid, operativo.id)
     if (abierta) {
+      const entradaMs = abierta.hora_entrada?.toMillis() ?? 0
+      if (
+        !opciones?.confirmarSalidaAnticipada &&
+        entradaMs > 0 &&
+        Date.now() - entradaMs < VENTANA_ANTIREBOTE_MS
+      ) {
+        return {
+          accion: 'confirmar_salida_anticipada',
+          asistenciaId: abierta.id,
+          operativoNombre: operativo.nombre,
+          usuarioNombre: nombreCompleto(actor),
+          horaEntradaTexto: formatearHoraHHMM(entradaMs),
+          minutosTranscurridos: Math.max(0, Math.floor((Date.now() - entradaMs) / 60_000)),
+          qrOriginal: qrRaw,
+        }
+      }
+
       const resSalida = await cerrarSalidaConCandado(abierta.id, actor, false)
       if (resSalida.bloqueado) {
         return {
@@ -358,16 +489,41 @@ export async function registrarAsistenciaQR(
 
     const metodo: MetodoEntrada =
       qr.tipo === 'operativo_totp' ? 'QR_Operativo_TOTP' : 'QR_Operativo_Estatico'
+    const pruebaQr = (qr.tipo === 'operativo_totp' ? qr.totp : qr.token).trim()
+    if (!pruebaQr) {
+      throw new Error('El código QR escaneado no incluye un token de verificación válido.')
+    }
+
     const prerregistroPropio = await obtenerMiPrerregistro(operativo.id, actor.uid).catch(
       () => null,
     )
     const rolInicial = resolverRolInicialOperativo(ayudantiaEfectiva(actor), prerregistroPropio)
-    const asistenciaId = await crearEntradaAtomica(actor, actor, operativo, metodo, rolInicial)
-    return {
-      accion: 'entrada',
-      asistenciaId,
-      operativoNombre: operativo.nombre,
-      usuarioNombre: nombreCompleto(actor),
+
+    try {
+      const asistenciaId = await crearEntradaAtomica(
+        actor,
+        actor,
+        operativo,
+        metodo,
+        rolInicial,
+        pruebaQr,
+      )
+      return {
+        accion: 'entrada',
+        asistenciaId,
+        operativoNombre: operativo.nombre,
+        usuarioNombre: nombreCompleto(actor),
+      }
+    } catch (err) {
+      const code = (err as { code?: string })?.code ?? ''
+      if (code === 'permission-denied') {
+        throw new Error(
+          qr.tipo === 'operativo_totp'
+            ? 'El código QR dinámico expiró o no es válido. Escanea nuevamente el código proyectado en pantalla.'
+            : 'El código QR fijo no corresponde a este operativo o la recepción fue cerrada.',
+        )
+      }
+      throw err
     }
   }
 
@@ -386,39 +542,25 @@ export async function registrarAsistenciaQR(
   }
 
   const ayJefe = ayudantiaJefatura(actor)
-  let userSnap
-  try {
-    userSnap = await getDoc(doc(usuariosRef, qr.uid))
-  } catch (err) {
-    const code = (err as { code?: string })?.code ?? ''
-    if (code === 'permission-denied' && ayJefe) {
-      throw new Error(
-        `Esta credencial corresponde a un integrante fuera de tu ayudantía (${ayJefe}). Solo puedes pasar lista a personal de ${ayJefe}.`,
-      )
-    }
-    throw err
-  }
-  if (!userSnap.exists()) {
+  const brigadista = await leerPersonaPorCredencial(actor, qr.uid)
+  if (!brigadista) {
     throw new Error('La credencial escaneada no corresponde a un usuario registrado.')
   }
-  const brigadista = normalizarUsuario(userSnap.data() as Usuario)
   if (ayJefe && ayudantiaEfectiva(brigadista) !== ayJefe) {
-    throw new Error(
-      `Solo puedes pasar lista a integrantes de tu ayudantía (${ayJefe}).`,
-    )
+    throw new Error(`Solo puedes pasar lista a integrantes de tu ayudantía (${ayJefe}).`)
   }
 
+  const nombreBrig = nombreDePersona(brigadista)
+
   if (brigadista.estatus === 'Inactivo') {
-    await runTransaction(db, async (tx) => {
-      tx.set(doc(auditoriaRef), {
-        tipo: 'INTENTO_ACCESO_INACTIVO',
-        actor_uid: actor.uid,
-        actor_nombre: nombreCompleto(actor),
-        objetivo_uid: brigadista.uid,
-        objetivo_nombre: nombreCompleto(brigadista),
-        detalle: `Intento de escaneo bloqueado en ${opNormalizado.nombre}`,
-        creado_en: serverTimestamp(),
-      })
+    await addDoc(auditoriaRef, {
+      tipo: 'INTENTO_ACCESO_INACTIVO',
+      actor_uid: actor.uid,
+      actor_nombre: nombreCompleto(actor),
+      objetivo_uid: brigadista.uid,
+      objetivo_nombre: nombreBrig,
+      detalle: `Intento de escaneo bloqueado en ${opNormalizado.nombre}`,
+      creado_en: serverTimestamp(),
     })
     return { accion: 'perfil_inactivo', usuario: brigadista }
   }
@@ -434,6 +576,23 @@ export async function registrarAsistenciaQR(
   // Recepción Cerrada: permite registrar salida a quien ya tiene entrada abierta.
   const abierta = await buscarAsistenciaAbierta(brigadista.uid, opNormalizado.id)
   if (abierta) {
+    const entradaMs = abierta.hora_entrada?.toMillis() ?? 0
+    if (
+      !opciones?.confirmarSalidaAnticipada &&
+      entradaMs > 0 &&
+      Date.now() - entradaMs < VENTANA_ANTIREBOTE_MS
+    ) {
+      return {
+        accion: 'confirmar_salida_anticipada',
+        asistenciaId: abierta.id,
+        operativoNombre: opNormalizado.nombre,
+        usuarioNombre: nombreBrig,
+        horaEntradaTexto: formatearHoraHHMM(entradaMs),
+        minutosTranscurridos: Math.max(0, Math.floor((Date.now() - entradaMs) / 60_000)),
+        qrOriginal: qrRaw,
+      }
+    }
+
     const resSalida = await cerrarSalidaConCandado(abierta.id, actor, false)
     if (resSalida.bloqueado) {
       return {
@@ -446,7 +605,7 @@ export async function registrarAsistenciaQR(
       accion: 'salida',
       asistenciaId: abierta.id,
       operativoNombre: opNormalizado.nombre,
-      usuarioNombre: nombreCompleto(brigadista),
+      usuarioNombre: nombreBrig,
       horasTotales: resSalida.horasTotales,
     }
   }
@@ -472,7 +631,7 @@ export async function registrarAsistenciaQR(
     accion: 'entrada',
     asistenciaId,
     operativoNombre: opNormalizado.nombre,
-    usuarioNombre: nombreCompleto(brigadista),
+    usuarioNombre: nombreBrig,
   }
 }
 
@@ -481,7 +640,7 @@ export async function registrarAsistenciaQR(
 export async function registrarAsistenciaManual(
   encargado: Usuario,
   operativo: Operativo,
-  brigadista: Usuario,
+  brigadista: PersonaOperativa,
   rolEnTurno?: RolEnTurno,
 ): Promise<ResultadoRegistroQR> {
   const ayJefe = ayudantiaJefatura(encargado)
@@ -505,10 +664,7 @@ export async function registrarAsistenciaManual(
   if (brigadista.estatus !== 'Activo') {
     throw new Error('Solo se puede registrar personal con cuenta Activa.')
   }
-  const abierta = await buscarAsistenciaAbierta(brigadista.uid, operativo.id)
-  if (abierta) {
-    throw new Error(`${nombreCompleto(brigadista)} ya tiene una entrada abierta en este operativo.`)
-  }
+  const nombreBrig = nombreDePersona(brigadista)
   const rolFinal =
     rolEnTurno ??
     resolverRolInicialOperativo(
@@ -526,7 +682,7 @@ export async function registrarAsistenciaManual(
     accion: 'entrada',
     asistenciaId,
     operativoNombre: operativo.nombre,
-    usuarioNombre: nombreCompleto(brigadista),
+    usuarioNombre: nombreBrig,
   }
 }
 
@@ -618,10 +774,39 @@ export function escucharMisAsistencias(
 }
 
 /**
- * Suscripción al padrón para Bitácora Operativa respetando Plan Spark y `firestore.rules`:
- * - Administrador: consulta global `estatus in ['Activo', 'Inactivo']`.
- * - Jefe de Ayudantía: consulta exacta `where('ayudantia', '==', ayJefe)` filtrando estatus en cliente.
- * - Encargado sin ayudantía (Opción B): delega a `escucharDirectorioSegunRol`.
+ * Suscripción a `perfiles_operativos` (sin datos médicos) para Bitácora Operativa:
+ * - Administrador y Encargado sin ayudantía: padrón operativo global Activo/Inactivo
+ *   (desbloquea Manual, Prerregistrar y Confirmar entrada sin relajar privacidad de `usuarios`).
+ * - Jefe de Ayudantía: consulta estrictamente acotada por `where('ayudantia', '==', ayJefe)`.
+ */
+export function escucharPerfilesOperativosParaBitacora(
+  actor: Usuario,
+  alCambiar: (lista: PerfilOperativoMinimo[]) => void,
+  alFallar: (error: FirestoreError) => void,
+): Unsubscribe {
+  const ayJefe = ayudantiaJefatura(actor)
+  const consulta = ayJefe
+    ? query(perfilesOperativosRef, where('ayudantia', '==', ayJefe))
+    : query(perfilesOperativosRef, where('estatus', 'in', ['Activo', 'Inactivo']))
+
+  return onSnapshot(
+    consulta,
+    (snap) => {
+      const lista = snap.docs
+        .map((d) => normalizarPerfilOperativo(d.data() as Partial<PerfilOperativoMinimo>, d.id))
+        .filter((p) => p.estatus === 'Activo' || p.estatus === 'Inactivo')
+      lista.sort((a, b) => a.nombre_completo.localeCompare(b.nombre_completo, 'es-MX'))
+      alCambiar(lista)
+    },
+    alFallar,
+  )
+}
+
+/**
+ * Suscripción a `usuarios` (con Ficha de Emergencia) para Bitácora Operativa:
+ * - Administrador: global `estatus in ['Activo', 'Inactivo']`.
+ * - Jefe de Ayudantía: `where('ayudantia', '==', ayJefe)`.
+ * - Encargado sin ayudantía (Opción B): estrictamente acotado a sus `grupos_a_cargo`.
  */
 export function escucharUsuariosParaBitacora(
   actor: Usuario,

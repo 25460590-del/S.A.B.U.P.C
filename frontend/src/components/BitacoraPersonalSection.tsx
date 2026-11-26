@@ -18,7 +18,7 @@ import {
   X,
   Zap,
 } from 'lucide-react'
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import {
   EQUIPO_BUPC_SUGERIDO,
   ESTADOS_OPERATIVOS,
@@ -38,8 +38,10 @@ import {
   actualizarRolEnTurno,
   cerrarSalidaConCandado,
   escucharAsistenciasDeOperativo,
+  escucharPerfilesOperativosParaBitacora,
   escucharUsuariosParaBitacora,
   guardarSignosVitales,
+  nombreDePersona,
   parsearQrEscaneado,
   registrarAsistenciaManual,
   registrarAsistenciaQR,
@@ -63,11 +65,12 @@ import type {
   EquipoTurno,
   EstadoOperativo,
   Operativo,
+  PerfilOperativoMinimo,
   PrerregistroOperativo,
   RolEnTurno,
   Usuario,
 } from '../types'
-import { AlertaInactivoModal } from './AlertaInactivoModal'
+import { AlertaInactivoModal, type PersonaAlertaInactivo } from './AlertaInactivoModal'
 import { CandadoDuroModal } from './CandadoDuroModal'
 import { IndicadorAlcanceAyudantia } from './IndicadorAlcanceAyudantia'
 import { QrScannerModal } from './QrScannerModal'
@@ -99,10 +102,13 @@ function etiquetaMetodoEntrada(metodo: AsistenciaPersonal['metodo_entrada']): st
   }
 }
 
-function etiquetaGrupoAsistencia(a: AsistenciaPersonal, mapaUsuarios: Map<string, Usuario>): string {
-  const u = mapaUsuarios.get(a.usuario_uid)
-  if (u?.subgrupo) return u.subgrupo
-  if (u?.etapa) return u.etapa
+function etiquetaGrupoAsistencia(
+  a: AsistenciaPersonal,
+  mapaPerfiles: Map<string, PerfilOperativoMinimo>,
+): string {
+  const p = mapaPerfiles.get(a.usuario_uid)
+  if (p?.subgrupo) return p.subgrupo
+  if (p?.etapa) return p.etapa
   return a.grupo_operativo === 'Ninguno' ? 'Grupo Operativo' : a.grupo_operativo
 }
 
@@ -114,6 +120,8 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
   const [asistencias, setAsistencias] = useState<AsistenciaPersonal[]>([])
   const [prerregistros, setPrerregistros] = useState<PrerregistroOperativo[]>([])
   const [equipos, setEquipos] = useState<EquipoTurno[]>([])
+  const [perfilesOperativos, setPerfilesOperativos] = useState<PerfilOperativoMinimo[]>([])
+  const [perfilesCargados, setPerfilesCargados] = useState(false)
   const [usuarios, setUsuarios] = useState<Usuario[]>([])
   const [cargando, setCargando] = useState(true)
 
@@ -127,11 +135,12 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
   const [modalPrerregistro, setModalPrerregistro] = useState(false)
   const [busquedaPrerregistro, setBusquedaPrerregistro] = useState('')
 
-  // Selección múltiple para asignación rápida de equipo repetitivo
+  // Selección múltiple para asignación rápida de equipo repetitivo (con nonce idempotente ante reintentos)
   const [seleccionadosIds, setSeleccionadosIds] = useState<string[]>([])
   const [modoRapidoAbierto, setModoRapidoAbierto] = useState(false)
   const [rapidoArticulo, setRapidoArticulo] = useState(EQUIPO_BUPC_SUGERIDO[2])
   const [rapidoCantidad, setRapidoCantidad] = useState(1)
+  const nonceLoteRef = useRef<string | null>(null)
 
   const [error, setError] = useState<string | null>(null)
   const [aviso, setAviso] = useState<string | null>(null)
@@ -140,8 +149,16 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
   // Escáner QR dual: asistencia o acceso directo a material del brigadista
   const [modoEscaner, setModoEscaner] = useState<null | 'asistencia' | 'material'>(null)
   const [procesandoQr, setProcesandoQr] = useState(false)
-  const [alertaInactivo, setAlertaInactivo] = useState<Usuario | null>(null)
+  const [alertaInactivo, setAlertaInactivo] = useState<PersonaAlertaInactivo | null>(null)
   const [candadoPendientes, setCandadoPendientes] = useState<EquipoTurno[] | null>(null)
+  const [salidaAnticipadaPendiente, setSalidaAnticipadaPendiente] = useState<{
+    asistenciaId: string
+    operativoNombre: string
+    usuarioNombre: string
+    horaEntradaTexto: string
+    qrOriginal: string
+  } | null>(null)
+  const [confirmandoSalidaAnticipada, setConfirmandoSalidaAnticipada] = useState(false)
 
   // Modal Registro Manual
   const [modalManual, setModalManual] = useState(false)
@@ -196,19 +213,38 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
       (err) => setError(mensajeDeError(err)),
       ayJefe,
     )
+    const cancelarPerfiles = escucharPerfilesOperativosParaBitacora(
+      encargado,
+      (lista) => {
+        setPerfilesOperativos(lista)
+        setPerfilesCargados(true)
+      },
+      () => setPerfilesCargados(true),
+    )
     const cancelarUsr = escucharUsuariosParaBitacora(encargado, setUsuarios, () => undefined)
 
     return () => {
       cancelarAsis()
       cancelarPre()
       cancelarEq()
+      cancelarPerfiles()
       cancelarUsr()
     }
   }, [operativo.id, encargado, ayJefe])
 
+  // Reiniciar nonce de idempotencia cada vez que cambian los parámetros del lote
+  useEffect(() => {
+    nonceLoteRef.current = null
+  }, [seleccionadosIds, rapidoArticulo, rapidoCantidad])
+
   const mapaUsuarios = useMemo(
     () => new Map(usuarios.map((u) => [u.uid, u])),
     [usuarios],
+  )
+
+  const mapaPerfiles = useMemo(
+    () => new Map(perfilesOperativos.map((p) => [p.uid, p])),
+    [perfilesOperativos],
   )
 
   const mapaPrerregistros = useMemo(
@@ -226,22 +262,27 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
     [equipos, ayJefe, idsAsistenciasVisibles],
   )
 
-  // Cruce en memoria prerregistros <-> asistencias_personal (0 escrituras extra al escanear QR)
+  // Cruce en memoria prerregistros <-> asistencias_personal estrictamente por `usuario_uid`
+  // (nunca por ayudantía). Si el actor es Jefe de Ayudantía y el integrante fue reasignado fuera
+  // de su ayudantía después del prerregistro, se excluye de "Por llegar" para evitar pendientes fantasma.
   const { uidsPrerregistrados, pendientesDeLlegar, confirmadosCount } = useMemo(() => {
     const uidsAsis = new Set(asistencias.map((a) => a.usuario_uid))
     const uidsPre = new Set(prerregistros.map((p) => p.usuario_uid))
     const pendientes: PrerregistroOperativo[] = []
     let confirmados = 0
     for (const p of prerregistros) {
-      if (uidsAsis.has(p.usuario_uid)) confirmados++
-      else pendientes.push(p)
+      if (uidsAsis.has(p.usuario_uid)) {
+        confirmados++
+      } else if (!ayJefe || !perfilesCargados || mapaPerfiles.has(p.usuario_uid)) {
+        pendientes.push(p)
+      }
     }
     return {
       uidsPrerregistrados: uidsPre,
       pendientesDeLlegar: pendientes,
       confirmadosCount: confirmados,
     }
-  }, [asistencias, prerregistros])
+  }, [asistencias, prerregistros, ayJefe, perfilesCargados, mapaPerfiles])
 
   const { equiposBupcPorAsistencia, equiposPropiosPorAsistencia } = useMemo(() => {
     const mapaBupc = new Map<string, EquipoTurno[]>()
@@ -258,13 +299,13 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
   const gruposDisponibles = useMemo(() => {
     const set = new Set<string>()
     for (const a of asistencias) {
-      set.add(etiquetaGrupoAsistencia(a, mapaUsuarios))
+      set.add(etiquetaGrupoAsistencia(a, mapaPerfiles))
     }
     for (const p of prerregistros) {
       set.add(p.subgrupo || p.etapa)
     }
     return Array.from(set).sort((x, y) => x.localeCompare(y, 'es-MX'))
-  }, [asistencias, prerregistros, mapaUsuarios])
+  }, [asistencias, prerregistros, mapaPerfiles])
 
   const ayudantiasDisponibles = useMemo(() => {
     const set = new Set<string>()
@@ -303,13 +344,14 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
       if (filtroEstado === 'con_adeudo' && a.equipos_bupc_pendientes <= 0) return false
       if (filtroEstado === 'salidos' && a.hora_salida === null) return false
 
-      const grupo = etiquetaGrupoAsistencia(a, mapaUsuarios)
+      const grupo = etiquetaGrupoAsistencia(a, mapaPerfiles)
       if (filtroGrupo !== 'TODOS' && grupo !== filtroGrupo) return false
       if (filtroAyudantia !== 'TODAS' && a.ayudantia_slot !== filtroAyudantia) return false
 
       if (!q) return true
+      const p = mapaPerfiles.get(a.usuario_uid)
       const u = mapaUsuarios.get(a.usuario_uid)
-      const claveRadio = (u?.clave_radio || u?.clave_personal_radio || '').toLowerCase()
+      const claveRadio = (p?.clave_radio || u?.clave_radio || u?.clave_personal_radio || '').toLowerCase()
       return (
         a.usuario_nombre.toLowerCase().includes(q) ||
         a.usuario_cuenta.toLowerCase().includes(q) ||
@@ -318,7 +360,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
         claveRadio.includes(q)
       )
     })
-  }, [asistencias, filtroEstado, filtroGrupo, filtroAyudantia, busqueda, mapaUsuarios])
+  }, [asistencias, filtroEstado, filtroGrupo, filtroAyudantia, busqueda, mapaPerfiles, mapaUsuarios])
 
   const pendientesFiltrados = useMemo(() => {
     const q = busqueda.trim().toLowerCase()
@@ -335,25 +377,25 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
     })
   }, [pendientesDeLlegar, filtroGrupo, filtroAyudantia, busqueda])
 
-  const usuariosActivos = useMemo(
-    () => usuarios.filter((u) => u.estatus === 'Activo'),
-    [usuarios],
+  const perfilesActivos = useMemo(
+    () => perfilesOperativos.filter((p) => p.estatus === 'Activo'),
+    [perfilesOperativos],
   )
 
   const candidatosPrerregistro = useMemo(() => {
     const q = busquedaPrerregistro.trim().toLowerCase()
     const uidsConAsis = new Set(asistencias.map((a) => a.usuario_uid))
-    return usuariosActivos.filter((u) => {
-      if (uidsPrerregistrados.has(u.uid) || uidsConAsis.has(u.uid)) return false
+    return perfilesActivos.filter((p) => {
+      if (uidsPrerregistrados.has(p.uid) || uidsConAsis.has(p.uid)) return false
       if (!q) return true
-      const grupo = (u.subgrupo || u.etapa || '').toLowerCase()
+      const grupo = (p.subgrupo || p.etapa || '').toLowerCase()
       return (
-        nombreCompleto(u).toLowerCase().includes(q) ||
-        u.numero_cuenta.toLowerCase().includes(q) ||
+        p.nombre_completo.toLowerCase().includes(q) ||
+        p.numero_cuenta.toLowerCase().includes(q) ||
         grupo.includes(q)
       )
     })
-  }, [usuariosActivos, uidsPrerregistrados, asistencias, busquedaPrerregistro])
+  }, [perfilesActivos, uidsPrerregistrados, asistencias, busquedaPrerregistro])
   const asistenciaMaterialActiva =
     asistencias.find((a) => a.id === materialAsistenciaId) ?? null
   const equiposBupcMaterialActivo = asistenciaMaterialActiva
@@ -419,6 +461,14 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
         setAlertaInactivo(res.usuario)
       } else if (res.accion === 'candado_duro') {
         setCandadoPendientes(res.pendientes)
+      } else if (res.accion === 'confirmar_salida_anticipada') {
+        setSalidaAnticipadaPendiente({
+          asistenciaId: res.asistenciaId,
+          operativoNombre: res.operativoNombre,
+          usuarioNombre: res.usuarioNombre,
+          horaEntradaTexto: res.horaEntradaTexto,
+          qrOriginal: res.qrOriginal,
+        })
       } else if (res.accion === 'entrada') {
         setAviso(`Entrada registrada por QR para ${res.usuarioNombre}.`)
       } else if (res.accion === 'salida') {
@@ -432,11 +482,37 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
     }
   }
 
+  async function manejarConfirmarSalidaAnticipada() {
+    if (!salidaAnticipadaPendiente) return
+    setConfirmandoSalidaAnticipada(true)
+    setError(null)
+    setAviso(null)
+    try {
+      const res = await registrarAsistenciaQR(
+        encargado,
+        salidaAnticipadaPendiente.qrOriginal,
+        operativo,
+        { confirmarSalidaAnticipada: true },
+      )
+      setSalidaAnticipadaPendiente(null)
+      if (res.accion === 'candado_duro') {
+        setCandadoPendientes(res.pendientes)
+      } else if (res.accion === 'salida') {
+        setAviso(`Salida registrada por QR para ${res.usuarioNombre} (${res.horasTotales} h).`)
+      }
+    } catch (err) {
+      setSalidaAnticipadaPendiente(null)
+      setError(err instanceof Error ? err.message : mensajeDeError(err))
+    } finally {
+      setConfirmandoSalidaAnticipada(false)
+    }
+  }
+
   async function manejarRegistroManual(e: FormEvent) {
     e.preventDefault()
     setError(null)
     setAviso(null)
-    const brigadista = usuarios.find((u) => u.uid === uidManual)
+    const brigadista = mapaPerfiles.get(uidManual) ?? mapaUsuarios.get(uidManual)
     if (!brigadista) {
       setError('Selecciona un brigadista del padrón.')
       return
@@ -522,6 +598,9 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
       setError('Selecciona al menos un brigadista en turno para asignar material.')
       return
     }
+    if (!nonceLoteRef.current) {
+      nonceLoteRef.current = crypto.randomUUID().replace(/-/g, '').slice(0, 12)
+    }
     setOcupadoId('rapido')
     setError(null)
     setAviso(null)
@@ -530,7 +609,9 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
         nombre_articulo: rapidoArticulo,
         codigo_inventario: '',
         cantidad: rapidoCantidad,
+        operacion_nonce: nonceLoteRef.current,
       })
+      nonceLoteRef.current = null
       setAviso(
         `"${rapidoArticulo.trim()}" asignado en lote a ${total} brigadista${total === 1 ? '' : 's'}.`,
       )
@@ -584,13 +665,13 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
     }
   }
 
-  async function manejarAgregarPrerregistro(u: Usuario) {
-    setOcupadoId(`pre-${u.uid}`)
+  async function manejarAgregarPrerregistro(p: PerfilOperativoMinimo) {
+    setOcupadoId(`pre-${p.uid}`)
     setError(null)
     setAviso(null)
     try {
-      await registrarPrerregistroManual(operativo.id, encargado, u)
-      setAviso(`${nombreCompleto(u)} agregado a la lista previa del operativo.`)
+      await registrarPrerregistroManual(operativo.id, encargado, p)
+      setAviso(`${nombreDePersona(p)} agregado a la lista previa del operativo.`)
     } catch (err) {
       setError(err instanceof Error ? err.message : mensajeDeError(err))
     } finally {
@@ -626,8 +707,8 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
 
   async function manejarEntradaDesdePrerregistro(p: PrerregistroOperativo) {
     if (!recepcionAbierta) return
-    const u = mapaUsuarios.get(p.usuario_uid)
-    if (!u) {
+    const integrante = mapaPerfiles.get(p.usuario_uid) ?? mapaUsuarios.get(p.usuario_uid)
+    if (!integrante) {
       setError('No se encontró el perfil activo de este integrante para registrar entrada manual.')
       return
     }
@@ -635,8 +716,8 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
     setError(null)
     setAviso(null)
     try {
-      const rolInicial = resolverRolInicialOperativo(ayudantiaEfectiva(u), p)
-      const res = await registrarAsistenciaManual(encargado, operativo, u, rolInicial)
+      const rolInicial = resolverRolInicialOperativo(ayudantiaEfectiva(integrante), p)
+      const res = await registrarAsistenciaManual(encargado, operativo, integrante, rolInicial)
       if (res.accion === 'perfil_inactivo') {
         setAlertaInactivo(res.usuario)
       } else if (res.accion === 'entrada') {
@@ -1092,7 +1173,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
           <div className="divide-y divide-borde md:hidden dark:divide-noche-borde">
             {filtradas.map((a) => {
               const cerrada = a.hora_salida !== null
-              const grupo = etiquetaGrupoAsistencia(a, mapaUsuarios)
+              const grupo = etiquetaGrupoAsistencia(a, mapaPerfiles)
               const marcado = seleccionadosIds.includes(a.id)
               const propios = equiposPropiosPorAsistencia.get(a.id) ?? []
               const estabaPrerregistrado = uidsPrerregistrados.has(a.usuario_uid)
@@ -1277,9 +1358,10 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
               <tbody className="divide-y divide-borde dark:divide-noche-borde">
                 {filtradas.map((a) => {
                   const cerrada = a.hora_salida !== null
-                  const grupo = etiquetaGrupoAsistencia(a, mapaUsuarios)
+                  const grupo = etiquetaGrupoAsistencia(a, mapaPerfiles)
+                  const p = mapaPerfiles.get(a.usuario_uid)
                   const u = mapaUsuarios.get(a.usuario_uid)
-                  const claveRadio = u?.clave_radio || u?.clave_personal_radio || ''
+                  const claveRadio = p?.clave_radio || u?.clave_radio || u?.clave_personal_radio || ''
                   const marcado = seleccionadosIds.includes(a.id)
                   const propios = equiposPropiosPorAsistencia.get(a.id) ?? []
                   const estabaPrerregistrado = uidsPrerregistrados.has(a.usuario_uid)
@@ -1516,6 +1598,55 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
           pendientes={candadoPendientes}
           alEntendido={() => setCandadoPendientes(null)}
         />
+      )}
+
+      {/* Modal Anti-Rebote: Confirmación de salida anticipada (< 5 min) */}
+      {salidaAnticipadaPendiente && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Confirmar salida anticipada"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
+        >
+          <article className="tarjeta flex w-full max-w-sm flex-col gap-4 border-2 border-naranja p-5">
+            <div className="flex items-start gap-2.5">
+              <Clock size={20} strokeWidth={2} className="mt-0.5 shrink-0 text-naranja-oscuro dark:text-naranja" />
+              <div className="flex flex-col gap-1">
+                <h3 className="text-base font-bold text-tinta dark:text-noche-tinta">
+                  Confirmar salida anticipada
+                </h3>
+                <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
+                  <strong className="text-tinta dark:text-noche-tinta">
+                    {salidaAnticipadaPendiente.usuarioNombre}
+                  </strong>{' '}
+                  ya registró entrada a las{' '}
+                  <strong className="tabular-nums text-tinta dark:text-noche-tinta">
+                    {salidaAnticipadaPendiente.horaEntradaTexto}
+                  </strong>
+                  . ¿Confirmar salida anticipada?
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={confirmandoSalidaAnticipada}
+                onClick={() => setSalidaAnticipadaPendiente(null)}
+                className="btn-salvia text-xs"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={confirmandoSalidaAnticipada}
+                onClick={() => void manejarConfirmarSalidaAnticipada()}
+                className="btn-naranja text-xs"
+              >
+                {confirmandoSalidaAnticipada ? 'Cerrando salida...' : 'Sí, confirmar salida'}
+              </button>
+            </div>
+          </article>
+        </div>
       )}
 
       {/* Modal de consulta rápida de Ficha de Emergencia */}
@@ -1928,28 +2059,28 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                   </p>
                 ) : (
                   <div className="flex max-h-56 flex-col divide-y divide-borde overflow-y-auto rounded-lg border border-borde dark:divide-noche-borde dark:border-noche-borde">
-                    {candidatosPrerregistro.slice(0, 40).map((u) => (
+                    {candidatosPrerregistro.slice(0, 40).map((p) => (
                       <div
-                        key={u.uid}
+                        key={p.uid}
                         className="flex items-center justify-between gap-2 px-3 py-2"
                       >
                         <div className="min-w-0">
                           <span className="block truncate text-xs font-bold text-tinta dark:text-noche-tinta">
-                            {nombreCompleto(u)}
+                            {p.nombre_completo}
                           </span>
                           <span className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
-                            {u.subgrupo || u.etapa} · {etiquetaAyudantia(u.ayudantia)} ·{' '}
-                            <span className="tabular-nums">{u.numero_cuenta}</span>
+                            {p.subgrupo || p.etapa} · {etiquetaAyudantia(p.ayudantia)} ·{' '}
+                            <span className="tabular-nums">{p.numero_cuenta}</span>
                           </span>
                         </div>
                         <button
                           type="button"
-                          disabled={ocupadoId === `pre-${u.uid}`}
-                          onClick={() => void manejarAgregarPrerregistro(u)}
+                          disabled={ocupadoId === `pre-${p.uid}`}
+                          onClick={() => void manejarAgregarPrerregistro(p)}
                           className="btn-verde min-h-8 shrink-0 px-2.5 text-[11px]"
                         >
                           <UserPlus size={12} strokeWidth={2} />
-                          <span>{ocupadoId === `pre-${u.uid}` ? '...' : 'Agregar'}</span>
+                          <span>{ocupadoId === `pre-${p.uid}` ? '...' : 'Agregar'}</span>
                         </button>
                       </div>
                     ))}
@@ -2062,7 +2193,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                   onChange={(e) => {
                     const uid = e.target.value
                     setUidManual(uid)
-                    const seleccionado = usuariosActivos.find((u) => u.uid === uid)
+                    const seleccionado = perfilesActivos.find((p) => p.uid === uid)
                     if (seleccionado) {
                       setRolManual(
                         resolverRolInicialOperativo(
@@ -2078,9 +2209,9 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                   required
                 >
                   <option value="">Selecciona un brigadista...</option>
-                  {usuariosActivos.map((u) => (
-                    <option key={u.uid} value={u.uid}>
-                      {nombreCompleto(u)} ({u.numero_cuenta})
+                  {perfilesActivos.map((p) => (
+                    <option key={p.uid} value={p.uid}>
+                      {p.nombre_completo} ({p.numero_cuenta})
                     </option>
                   ))}
                 </select>

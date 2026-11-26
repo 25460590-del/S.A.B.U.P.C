@@ -37,17 +37,21 @@ import {
 import { mensajeDeError } from '../services/authService'
 import {
   actualizarConvocatoriaOperativo,
+  asegurarSecretoEstatico,
   cambiarModoQrOperativo,
   cambiarRecepcionOperativo,
   cancelarOperativo,
+  construirPayloadQrDinamico,
   construirPayloadQrEstatico,
   crearYConfigurarOperativo,
   eliminarOperativo,
   ErrorDeudoresEnCierre,
   escucharOperativos,
-  escucharSecretoTotp,
+  escucharSecretoEstatico,
+  escucharSecretoVigente,
   finalizarOperativoConCierreAsistencias,
-  generarEstadoTotpOffline,
+  PERIODO_QR_DINAMICO_SEG,
+  rotarNonceOperativo,
   verificarOperativoVacioParaBorrado,
   verificarPreCierreOperativo,
   type ResultadoPreCierreOperativo,
@@ -57,7 +61,8 @@ import type {
   CategoriaOperativo,
   ModoQrOperativo,
   Operativo,
-  SecretoTotpOperativo,
+  SecretoEstaticoOperativo,
+  SecretoVigenteOperativo,
   Usuario,
 } from '../types'
 
@@ -109,9 +114,13 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
   const [seleccionadoId, setSeleccionadoId] = useState<string | null>(null)
   const [subVista, setSubVista] = useState<SubVistaOperativo>('resumen')
 
-  const [secretoPorOp, setSecretoPorOp] = useState<{
+  const [secretoEstaticoPorOp, setSecretoEstaticoPorOp] = useState<{
     opId: string
-    secreto: SecretoTotpOperativo | null
+    secreto: SecretoEstaticoOperativo | null
+  } | null>(null)
+  const [secretoVigentePorOp, setSecretoVigentePorOp] = useState<{
+    opId: string
+    secreto: SecretoVigenteOperativo | null
   } | null>(null)
   const [ahoraMs, setAhoraMs] = useState(() => Date.now())
 
@@ -208,16 +217,34 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
   const mostrarQrActivo = subVista === 'qr' && opRecepcionAbierta
 
   useEffect(() => {
-    if (!opActivoId || !puedeGestionar || !opRecepcionAbierta) return
-    const cancelar = escucharSecretoTotp(
-      opActivoId,
-      (secreto) => setSecretoPorOp({ opId: opActivoId, secreto }),
-      (err) => setError(mensajeDeError(err)),
-    )
-    return cancelar
-  }, [opActivoId, puedeGestionar, opRecepcionAbierta])
+    if (!opActivoId || !puedeGestionar || !mostrarQrActivo) return
+    if (opModoQr === 'estatico') {
+      const cancelar = escucharSecretoEstatico(
+        opActivoId,
+        (secreto) => setSecretoEstaticoPorOp({ opId: opActivoId, secreto }),
+        (err) => setError(mensajeDeError(err)),
+      )
+      void asegurarSecretoEstatico(opActivoId).catch((err) => setError(mensajeDeError(err)))
+      return cancelar
+    }
+    if (opModoQr === 'dinamico') {
+      const cancelar = escucharSecretoVigente(
+        opActivoId,
+        (secreto) => setSecretoVigentePorOp({ opId: opActivoId, secreto }),
+        (err) => setError(mensajeDeError(err)),
+      )
+      void rotarNonceOperativo(opActivoId).catch((err) => setError(mensajeDeError(err)))
+      const rotadorId = window.setInterval(() => {
+        void rotarNonceOperativo(opActivoId).catch((err) => setError(mensajeDeError(err)))
+      }, PERIODO_QR_DINAMICO_SEG * 1000)
+      return () => {
+        cancelar()
+        window.clearInterval(rotadorId)
+      }
+    }
+  }, [opActivoId, opModoQr, puedeGestionar, mostrarQrActivo])
 
-  // El setInterval TOTP se detiene y limpia completamente cuando recepcion_abierta === false,
+  // El reloj visual de cuenta regresiva se detiene cuando recepcion_abierta === false,
   // el operativo está Finalizado/Cancelado, o fuera de la sub-vista QR.
   useEffect(() => {
     if (!opActivoId || opModoQr !== 'dinamico' || !mostrarQrActivo) return
@@ -225,19 +252,32 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
     return () => window.clearInterval(id)
   }, [opActivoId, opModoQr, mostrarQrActivo])
 
-  const secretoTotp =
-    opRecepcionAbierta && secretoPorOp?.opId === opActivoId ? secretoPorOp.secreto : null
-
-  const estadoTotp =
-    operativoActivo && mostrarQrActivo && operativoActivo.modo_qr === 'dinamico' && secretoTotp
-      ? generarEstadoTotpOffline(operativoActivo, secretoTotp.secreto_base32, ahoraMs)
+  const secretoEstatico =
+    mostrarQrActivo && secretoEstaticoPorOp?.opId === opActivoId
+      ? secretoEstaticoPorOp.secreto
       : null
+
+  const secretoVigente =
+    mostrarQrActivo && secretoVigentePorOp?.opId === opActivoId
+      ? secretoVigentePorOp.secreto
+      : null
+
+  const segundosRestantesQr = (() => {
+    if (!secretoVigente) return PERIODO_QR_DINAMICO_SEG
+    const actualizadoMs = secretoVigente.actualizado_en?.toMillis() ?? ahoraMs
+    const transcurridos = Math.floor(Math.max(0, ahoraMs - actualizadoMs) / 1000)
+    return Math.max(1, PERIODO_QR_DINAMICO_SEG - (transcurridos % PERIODO_QR_DINAMICO_SEG))
+  })()
 
   const payloadQrActual =
     operativoActivo && mostrarQrActivo
       ? operativoActivo.modo_qr === 'dinamico'
-        ? (estadoTotp?.payloadQr ?? '')
-        : construirPayloadQrEstatico(operativoActivo)
+        ? secretoVigente?.nonce
+          ? construirPayloadQrDinamico(operativoActivo.id, secretoVigente.nonce)
+          : ''
+        : secretoEstatico?.token
+          ? construirPayloadQrEstatico(operativoActivo.id, secretoEstatico.token)
+          : ''
       : ''
 
   async function manejarCrearOperativo(e: FormEvent) {
@@ -1410,15 +1450,15 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                   <div className="flex w-full flex-1 flex-col gap-2.5">
                     <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
                       <RefreshCw size={14} strokeWidth={2} />
-                      <span>Rotación automática sin internet</span>
+                      <span>Rotación automática verificada (cada 30 s)</span>
                     </span>
 
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="text-3xl font-extrabold tracking-widest tabular-nums text-udec dark:text-activo-claro">
-                        {estadoTotp ? estadoTotp.codigo : '------'}
+                        {secretoVigente ? secretoVigente.nonce : '--------'}
                       </span>
                       <span className="text-sm font-bold tabular-nums text-naranja-oscuro dark:text-naranja">
-                        00:{String(estadoTotp?.segundosRestantes ?? 30).padStart(2, '0')}s
+                        00:{String(segundosRestantesQr).padStart(2, '0')}s
                       </span>
                     </div>
 
@@ -1426,14 +1466,14 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                       <div
                         className="h-full rounded-full bg-naranja transition-all duration-300"
                         style={{
-                          width: `${((estadoTotp?.segundosRestantes ?? 30) / 30) * 100}%`,
+                          width: `${(segundosRestantesQr / PERIODO_QR_DINAMICO_SEG) * 100}%`,
                         }}
                       />
                     </div>
 
                     <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-                      El código cambia cada 30 segundos. Al cerrar la recepción, se desactiva
-                      automáticamente.
+                      El código cambia cada 30 segundos (con ventana de gracia de 60 s) y se valida
+                      en el servidor. Al cerrar la recepción, se desactiva automáticamente.
                     </p>
                   </div>
                 ) : (
@@ -1444,6 +1484,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                     </p>
                     <button
                       type="button"
+                      disabled={!payloadQrActual}
                       onClick={descargarQrOperativoPng}
                       className="btn-salvia w-full text-xs"
                     >

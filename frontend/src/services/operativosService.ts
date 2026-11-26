@@ -5,6 +5,7 @@ import {
   limit,
   onSnapshot,
   query,
+  runTransaction,
   serverTimestamp,
   updateDoc,
   where,
@@ -12,7 +13,6 @@ import {
   type FirestoreError,
   type Unsubscribe,
 } from 'firebase/firestore'
-import * as OTPAuth from 'otpauth'
 import { db } from '../lib/firebase'
 import {
   esAdmin,
@@ -28,7 +28,8 @@ import type {
   EquipoTurno,
   ModoQrOperativo,
   Operativo,
-  SecretoTotpOperativo,
+  SecretoEstaticoOperativo,
+  SecretoVigenteOperativo,
   Usuario,
 } from '../types'
 import { nombreCompleto } from './authService'
@@ -41,8 +42,12 @@ const auditoriaRef = collection(db, 'auditoria_eventos')
 /** Máximo seguro de operaciones por writeBatch (límite Firestore = 500). */
 const MAX_OPS_LOTE = 400
 
-const PERIODO_TOTP = 30
-const DIGITOS_TOTP = 6
+/** Intervalo de rotación del nonce QR dinámico en pantalla del Encargado/Admin (30 s). */
+export const PERIODO_QR_DINAMICO_SEG = 30
+/** Ventana mínima entre rotaciones en Firestore para evitar colisiones entre múltiples pantallas. */
+const UMBRAL_ROTACION_MS = 25_000
+
+const ALFABETO_NONCE = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 
 export interface DatosNuevoOperativo {
   nombre: string
@@ -63,23 +68,35 @@ function normalizarCupoSugerido(cupo?: number | null): number | null {
   return entero > 0 ? Math.min(entero, 1000) : null
 }
 
-function generarSecretoBase32(): string {
-  // 20 bytes aleatorios criptográficos -> 32 caracteres Base32 (A-Z2-7)
-  return new OTPAuth.Secret({ size: 20 }).base32
+/** Genera un código criptográfico alfanumérico de 8 caracteres para prueba de presencia QR. */
+export function generarNonceQr(longitud = 8): string {
+  const bytes = new Uint8Array(longitud)
+  crypto.getRandomValues(bytes)
+  let salida = ''
+  for (let i = 0; i < longitud; i++) {
+    salida += ALFABETO_NONCE[bytes[i] % ALFABETO_NONCE.length]
+  }
+  return salida
+}
+
+function generarTokenEstatico(): string {
+  return `BUPC-OP-${crypto.randomUUID()}`
 }
 
 /**
- * Crea un operativo, su secreto TOTP protegido (`operativos/{id}/secretos/totp`)
- * y el evento de auditoría en un solo `writeBatch`.
+ * Crea un operativo y sus secretos QR protegidos en la subcolección `operativos/{id}/secretos/`
+ * (`estatico` y `vigente`, legibles/escribibles únicamente por Encargado o Administrador),
+ * sin exponer el token estático en el documento público del operativo.
  */
 export async function crearYConfigurarOperativo(
   actor: Usuario,
   datos: DatosNuevoOperativo,
 ): Promise<string> {
   const opDoc = doc(operativosRef)
-  const secretoDoc = doc(db, 'operativos', opDoc.id, 'secretos', 'totp')
-  const qrTokenEstatico = `BUPC-OP-${crypto.randomUUID()}`
-  const secretoBase32 = generarSecretoBase32()
+  const secretoEstaticoDoc = doc(db, 'operativos', opDoc.id, 'secretos', 'estatico')
+  const secretoVigenteDoc = doc(db, 'operativos', opDoc.id, 'secretos', 'vigente')
+  const qrTokenEstatico = generarTokenEstatico()
+  const nonceInicial = generarNonceQr()
   const convocatoriaAbierta = Boolean(datos.convocatoria_abierta)
   const cupoSugerido = normalizarCupoSugerido(datos.cupo_sugerido)
 
@@ -98,17 +115,20 @@ export async function crearYConfigurarOperativo(
     cupo_sugerido: cupoSugerido,
     prerregistros_count: 0,
     modo_qr: datos.modo_qr,
-    qr_token_estatico: qrTokenEstatico,
     creado_por_uid: actor.uid,
     creado_por_nombre: nombreCompleto(actor),
     creado_en: serverTimestamp(),
     actualizado_en: serverTimestamp(),
   })
 
-  lote.set(secretoDoc, {
-    secreto_base32: secretoBase32,
-    periodo_segundos: PERIODO_TOTP,
-    digitos: DIGITOS_TOTP,
+  lote.set(secretoEstaticoDoc, {
+    token: qrTokenEstatico,
+    actualizado_en: serverTimestamp(),
+  })
+
+  lote.set(secretoVigenteDoc, {
+    nonce: nonceInicial,
+    nonce_anterior: null,
     actualizado_en: serverTimestamp(),
   })
 
@@ -196,21 +216,104 @@ export async function actualizarConvocatoriaOperativo(
   await lote.commit()
 }
 
-export function escucharSecretoTotp(
+// ── Secretos de prueba de presencia QR (exclusivos Encargado / Administrador) ─
+
+export function escucharSecretoEstatico(
   operativoId: string,
-  alCambiar: (secreto: SecretoTotpOperativo | null) => void,
+  alCambiar: (secreto: SecretoEstaticoOperativo | null) => void,
   alFallar?: (error: FirestoreError) => void,
 ): Unsubscribe {
   return onSnapshot(
-    doc(db, 'operativos', operativoId, 'secretos', 'totp'),
+    doc(db, 'operativos', operativoId, 'secretos', 'estatico'),
     (snap) => {
-      alCambiar(snap.exists() ? (snap.data() as SecretoTotpOperativo) : null)
+      alCambiar(snap.exists() ? (snap.data() as SecretoEstaticoOperativo) : null)
     },
     (err) => {
       if (alFallar) alFallar(err)
-      else console.warn('[SABUPC] Error al leer secreto TOTP:', err.code)
+      else console.warn('[SABUPC] Error al leer secreto QR fijo:', err.code)
     },
   )
+}
+
+/**
+ * Garantiza que exista `operativos/{id}/secretos/estatico` (útil para operativos
+ * históricos creados antes del blindaje de secretos QR).
+ */
+export async function asegurarSecretoEstatico(operativoId: string): Promise<string> {
+  const ref = doc(db, 'operativos', operativoId, 'secretos', 'estatico')
+  let tokenFinal = ''
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref)
+    if (snap.exists()) {
+      tokenFinal = (snap.data() as SecretoEstaticoOperativo).token
+      return
+    }
+    tokenFinal = generarTokenEstatico()
+    tx.set(ref, {
+      token: tokenFinal,
+      actualizado_en: serverTimestamp(),
+    })
+  })
+  return tokenFinal
+}
+
+export function escucharSecretoVigente(
+  operativoId: string,
+  alCambiar: (secreto: SecretoVigenteOperativo | null) => void,
+  alFallar?: (error: FirestoreError) => void,
+): Unsubscribe {
+  return onSnapshot(
+    doc(db, 'operativos', operativoId, 'secretos', 'vigente'),
+    (snap) => {
+      alCambiar(snap.exists() ? (snap.data() as SecretoVigenteOperativo) : null)
+    },
+    (err) => {
+      if (alFallar) alFallar(err)
+      else console.warn('[SABUPC] Error al leer secreto QR dinámico:', err.code)
+    },
+  )
+}
+
+/**
+ * Rota el nonce vigente en `operativos/{id}/secretos/vigente` preservando `nonce_anterior`
+ * para mantener una ventana de gracia (~60 s). Si otra pantalla de Encargado ya rotó hace
+ * menos de 25 s, respeta ese valor sin sobrescribir la ventana de gracia.
+ */
+export async function rotarNonceOperativo(
+  operativoId: string,
+  forzar = false,
+): Promise<string> {
+  const ref = doc(db, 'operativos', operativoId, 'secretos', 'vigente')
+  let nonceFinal = ''
+
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref)
+    if (!snap.exists()) {
+      nonceFinal = generarNonceQr()
+      tx.set(ref, {
+        nonce: nonceFinal,
+        nonce_anterior: null,
+        actualizado_en: serverTimestamp(),
+      })
+      return
+    }
+
+    const actual = snap.data() as SecretoVigenteOperativo
+    const ultimoMs = actual.actualizado_en?.toMillis() ?? 0
+    if (!forzar && ultimoMs > 0 && Date.now() - ultimoMs < UMBRAL_ROTACION_MS) {
+      nonceFinal = actual.nonce
+      return
+    }
+
+    nonceFinal = generarNonceQr()
+    tx.set(ref, {
+      nonce: nonceFinal,
+      nonce_anterior: actual.nonce,
+      actualizado_en: serverTimestamp(),
+    })
+  })
+
+  return nonceFinal
 }
 
 export async function cambiarRecepcionOperativo(
@@ -257,7 +360,7 @@ export async function cambiarModoQrOperativo(
     actor_nombre: nombreCompleto(actor),
     objetivo_uid: operativo.id,
     objetivo_nombre: operativo.nombre,
-    detalle: `Modo QR cambiado a ${modoQr === 'dinamico' ? 'Dinámico TOTP (30s)' : 'Estático (PNG)'}`,
+    detalle: `Modo QR cambiado a ${modoQr === 'dinamico' ? 'Dinámico (30s)' : 'Estático (PNG)'}`,
     creado_en: serverTimestamp(),
   })
   await lote.commit()
@@ -334,7 +437,8 @@ export class ErrorDeudoresEnCierre extends Error {
  *    para frenar nuevas entradas o entregas mientras se verifica.
  * 2. Re-ejecuta `verificarPreCierreOperativo`; si apareció material BUPC pendiente en ese instante,
  *    aborta el cierre dejando recepción cerrada preventivamente y expone los deudores para resolverlos.
- * 3. Cierra las asistencias abiertas en bloques de ≤ 400 operaciones y marca `estatus: 'Finalizado'`.
+ * 3. Cierra las asistencias abiertas y libera sus candados `presentes/{uid}` en bloques de ≤ 400
+ *    operaciones, y finalmente marca `estatus: 'Finalizado'`.
  */
 export async function finalizarOperativoConCierreAsistencias(
   actor: Usuario,
@@ -368,9 +472,10 @@ export async function finalizarOperativoConCierreAsistencias(
   }
 
   const ahoraMs = Date.now()
-  // Paso 3a: Cerrar todas las asistencias abiertas en lotes seguros ≤ 400 ops
-  for (let i = 0; i < post.asistenciasAbiertas.length; i += MAX_OPS_LOTE) {
-    const segmento = post.asistenciasAbiertas.slice(i, i + MAX_OPS_LOTE)
+  // Paso 3a: Cerrar todas las asistencias abiertas y liberar candados `presentes/{uid}` (2 ops por registro)
+  const porLote = Math.floor(MAX_OPS_LOTE / 2)
+  for (let i = 0; i < post.asistenciasAbiertas.length; i += porLote) {
+    const segmento = post.asistenciasAbiertas.slice(i, i + porLote)
     const loteAsis = writeBatch(db)
     for (const a of segmento) {
       const entradaMs = a.hora_entrada?.toMillis() ?? ahoraMs
@@ -382,6 +487,7 @@ export async function finalizarOperativoConCierreAsistencias(
         salida_cerrada_manual: true,
         actualizado_en: serverTimestamp(),
       })
+      loteAsis.delete(doc(db, 'operativos', operativo.id, 'presentes', a.usuario_uid))
     }
     await loteAsis.commit()
   }
@@ -509,47 +615,22 @@ export async function eliminarOperativo(admin: Usuario, operativo: Operativo): P
   await lote.commit()
 }
 
-// ── Generación offline de código TOTP (rotación cada 30s) ────────────────────
+// ── Construcción de payloads QR (validados en servidor mediante prueba_qr) ───
 
-export interface EstadoTotp {
-  codigo: string
-  segundosRestantes: number
-  payloadQr: string
-}
-
-export function generarEstadoTotpOffline(
-  operativo: Operativo,
-  secretoBase32: string,
-  ahoraMs = Date.now(),
-): EstadoTotp {
-  const totp = new OTPAuth.TOTP({
-    issuer: 'SABUPC',
-    label: operativo.id,
-    algorithm: 'SHA1',
-    digits: DIGITOS_TOTP,
-    period: PERIODO_TOTP,
-    secret: OTPAuth.Secret.fromBase32(secretoBase32),
-  })
-
-  const codigo = totp.generate({ timestamp: ahoraMs })
-  const transcurridos = Math.floor(ahoraMs / 1000) % PERIODO_TOTP
-  const segundosRestantes = PERIODO_TOTP - transcurridos
-
-  const payloadQr = JSON.stringify({
+export function construirPayloadQrDinamico(operativoId: string, nonce: string): string {
+  return JSON.stringify({
     v: 1,
     tipo: 'operativo_totp',
-    op: operativo.id,
-    totp: codigo,
+    op: operativoId,
+    totp: nonce,
   })
-
-  return { codigo, segundosRestantes, payloadQr }
 }
 
-export function construirPayloadQrEstatico(operativo: Operativo): string {
+export function construirPayloadQrEstatico(operativoId: string, token: string): string {
   return JSON.stringify({
     v: 1,
     tipo: 'operativo_estatico',
-    op: operativo.id,
-    token: operativo.qr_token_estatico,
+    op: operativoId,
+    token,
   })
 }

@@ -1,10 +1,25 @@
 import { ShieldAlert, X } from 'lucide-react'
+import { normalizarNombrePropio } from '../lib/nombres'
 import { nombreCompleto } from '../services/authService'
-import type { Usuario } from '../types'
+import type { PerfilOperativoMinimo, Usuario } from '../types'
+
+export type PersonaAlertaInactivo =
+  | Usuario
+  | Pick<PerfilOperativoMinimo, 'uid' | 'nombre_completo' | 'numero_cuenta' | 'estatus'>
 
 interface AlertaInactivoModalProps {
-  usuario: Usuario
+  usuario: PersonaAlertaInactivo
   alCerrar: () => void
+}
+
+function resolverNombreAlerta(u: PersonaAlertaInactivo): string {
+  if ('nombre_completo' in u && u.nombre_completo) {
+    return normalizarNombrePropio(u.nombre_completo)
+  }
+  if ('nombres' in u) {
+    return nombreCompleto(u)
+  }
+  return 'Integrante'
 }
 
 export function AlertaInactivoModal({ usuario, alCerrar }: AlertaInactivoModalProps) {
@@ -36,7 +51,7 @@ export function AlertaInactivoModal({ usuario, alCerrar }: AlertaInactivoModalPr
         <div className="flex flex-col gap-4 p-5">
           <p className="text-sm text-tinta dark:text-noche-tinta">
             La credencial QR escaneada pertenece a{' '}
-            <strong>{nombreCompleto(usuario)}</strong> (Cuenta{' '}
+            <strong>{resolverNombreAlerta(usuario)}</strong> (Cuenta{' '}
             <span className="tabular-nums font-bold">{usuario.numero_cuenta}</span>), cuenta dada de
             baja del padrón operativo de la BUPC.
           </p>

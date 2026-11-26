@@ -81,6 +81,39 @@ function eventoValido(actorUid, extra = {}) {
   };
 }
 
+const TOKEN_ESTATICO_OP = 'ESTATICO-TOKEN-OPABIERTO';
+const NONCE_VIGENTE_OP = 'NONCEVIG1';
+const NONCE_ANTERIOR_OP = 'NONCEANT1';
+
+function crearEntradaConCandado(f, asistenciaData) {
+  const b = writeBatch(f);
+  b.set(
+    doc(f, `operativos/${asistenciaData.operativo_id}/presentes/${asistenciaData.usuario_uid}`),
+    {
+      asistencia_id: asistenciaData.id,
+      usuario_uid: asistenciaData.usuario_uid,
+      operativo_id: asistenciaData.operativo_id,
+      ayudantia_slot: asistenciaData.ayudantia_slot,
+      creado_en: serverTimestamp(),
+    },
+  );
+  b.set(doc(f, `asistencias_personal/${asistenciaData.id}`), asistenciaData);
+  return b.commit();
+}
+
+function cerrarSalidaConCandadoTest(f, operativoId, usuarioUid, asistenciaId, extra = {}) {
+  const b = writeBatch(f);
+  b.update(doc(f, `asistencias_personal/${asistenciaId}`), {
+    hora_salida: serverTimestamp(),
+    horas_totales: 1.5,
+    estado_operativo: 'Retirado',
+    actualizado_en: serverTimestamp(),
+    ...extra,
+  });
+  b.delete(doc(f, `operativos/${operativoId}/presentes/${usuarioUid}`));
+  return b.commit();
+}
+
 before(async () => {
   env = await initializeTestEnvironment({
     projectId: 'demo-sabupc',
@@ -188,11 +221,20 @@ beforeEach(async () => {
       actualizado_en: Timestamp.now(),
       ...extra,
     });
-    await setDoc(doc(f, 'operativos/opAbierto'), opBase('opAbierto'));
+    await setDoc(doc(f, 'operativos/opAbierto'), opBase('opAbierto', { modo_qr: 'dinamico' }));
     await setDoc(doc(f, 'operativos/opAbierto/secretos/totp'), {
       secreto_base32: 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP',
       periodo_segundos: 30,
       digitos: 6,
+      actualizado_en: Timestamp.now(),
+    });
+    await setDoc(doc(f, 'operativos/opAbierto/secretos/estatico'), {
+      token: TOKEN_ESTATICO_OP,
+      actualizado_en: Timestamp.now(),
+    });
+    await setDoc(doc(f, 'operativos/opAbierto/secretos/vigente'), {
+      nonce: NONCE_VIGENTE_OP,
+      nonce_anterior: NONCE_ANTERIOR_OP,
       actualizado_en: Timestamp.now(),
     });
     await setDoc(doc(f, 'operativos/opCerrado'), opBase('opCerrado', { recepcion_abierta: false }));
@@ -704,15 +746,17 @@ test('Incidencias de personal: creación controlada e inmutabilidad', async () =
 // Y BLOQUEO DE CONSOLA DE RADIO EN OPERATIVOS FINALIZADOS
 // ============================================================================
 
-test('Flujo real Brigadista QR: entrada, lecturas posteriores En servicio y salida sin permission-denied', async () => {
+test('Flujo real Brigadista QR: entrada con prueba_qr y candado, bloqueo de secretos/*, lecturas En servicio y salida atómica', async () => {
   const f = db('activo1');
 
-  // 1. Validación previa de operativo y secreto QR
+  // 1. Operativo legible por Activo, pero secretos QR jamás legibles por Brigadista (C-3)
   await assertSucceeds(getDoc(doc(f, 'operativos/opAbierto')));
-  await assertSucceeds(getDoc(doc(f, 'operativos/opAbierto/secretos/totp')));
+  await assertFails(getDoc(doc(f, 'operativos/opAbierto/secretos/totp')));
+  await assertFails(getDoc(doc(f, 'operativos/opAbierto/secretos/estatico')));
+  await assertFails(getDoc(doc(f, 'operativos/opAbierto/secretos/vigente')));
 
-  // 2. Auto-registro de entrada por QR
-  await assertSucceeds(setDoc(doc(f, 'asistencias_personal/asisQrReal'), {
+  // 2. Auto-registro de entrada por QR con candado determinista `presentes/{uid}` y `prueba_qr`
+  await assertSucceeds(crearEntradaConCandado(f, {
     id: 'asisQrReal',
     operativo_id: 'opAbierto',
     operativo_nombre: 'Operativo opAbierto',
@@ -725,6 +769,7 @@ test('Flujo real Brigadista QR: entrada, lecturas posteriores En servicio y sali
     estado_operativo: 'En servicio',
     signos_vitales: null,
     metodo_entrada: 'QR_Operativo_TOTP',
+    prueba_qr: NONCE_VIGENTE_OP,
     hora_entrada: serverTimestamp(),
     hora_salida: null,
     horas_totales: null,
@@ -754,13 +799,8 @@ test('Flujo real Brigadista QR: entrada, lecturas posteriores En servicio y sali
     where('asistencia_id', '==', 'asisQrReal'),
   )));
 
-  // 5. Registro de salida propia con 0 equipos BUPC pendientes
-  await assertSucceeds(updateDoc(doc(f, 'asistencias_personal/asisQrReal'), {
-    hora_salida: serverTimestamp(),
-    horas_totales: 1.5,
-    estado_operativo: 'Retirado',
-    actualizado_en: serverTimestamp(),
-  }));
+  // 5. Registro de salida propia con 0 equipos BUPC pendientes + liberación atómica de `presentes/activo1`
+  await assertSucceeds(cerrarSalidaConCandadoTest(f, 'opAbierto', 'activo1', 'asisQrReal'));
 });
 
 test('Radio en operativo Finalizado: bloquea create/update en canales y bitácora, permite lectura histórica', async () => {
@@ -1238,7 +1278,7 @@ test('Brigadista SIN prerregistro puede escanear QR y registrar asistencia norma
   ));
 
   // activo1 NO está prerregistrado y el cupo sugerido ya está en 1/1: igual entra con QR sin bloqueos
-  await assertSucceeds(setDoc(doc(db('activo1'), 'asistencias_personal/asisSinPre'), {
+  await assertSucceeds(crearEntradaConCandado(db('activo1'), {
     id: 'asisSinPre',
     operativo_id: 'opAbierto',
     operativo_nombre: 'Operativo opAbierto',
@@ -1251,6 +1291,7 @@ test('Brigadista SIN prerregistro puede escanear QR y registrar asistencia norma
     estado_operativo: 'En servicio',
     signos_vitales: null,
     metodo_entrada: 'QR_Operativo_TOTP',
+    prueba_qr: NONCE_VIGENTE_OP,
     hora_entrada: serverTimestamp(),
     hora_salida: null,
     horas_totales: null,
@@ -1402,7 +1443,7 @@ test('Jefe de Ayudantía en operativos: pasa/aprueba lista, asigna roles y consu
   await assertFails(getDocs(collection(fJefe, 'operativos/opAbierto/prerregistros')));
 
   // 2. Pase/aprobación de lista para brigSocorros permitido; para brigLogistica bloqueado
-  await assertSucceeds(setDoc(doc(fJefe, 'asistencias_personal/asisSocorros1'), {
+  await assertSucceeds(crearEntradaConCandado(fJefe, {
     id: 'asisSocorros1',
     operativo_id: 'opAbierto',
     operativo_nombre: 'Operativo opAbierto',
@@ -1617,7 +1658,7 @@ test('Mapeo automático de rol operativo por ayudantía (5 ayudantías + Sin def
     ));
 
     // 3. Auto-registro QR con rol suplantado -> rechazado
-    await assertFails(setDoc(doc(f, `asistencias_personal/asisBad_${c.uid}`), {
+    await assertFails(crearEntradaConCandado(f, {
       id: `asisBad_${c.uid}`,
       operativo_id: 'opAbierto',
       operativo_nombre: 'Operativo opAbierto',
@@ -1630,6 +1671,7 @@ test('Mapeo automático de rol operativo por ayudantía (5 ayudantías + Sin def
       estado_operativo: 'En servicio',
       signos_vitales: null,
       metodo_entrada: 'QR_Operativo_TOTP',
+      prueba_qr: NONCE_VIGENTE_OP,
       hora_entrada: serverTimestamp(),
       hora_salida: null,
       horas_totales: null,
@@ -1641,7 +1683,7 @@ test('Mapeo automático de rol operativo por ayudantía (5 ayudantías + Sin def
     }));
 
     // 4. Auto-registro QR con rol mapeado exacto y ayudantia_slot exacto -> permitido
-    await assertSucceeds(setDoc(doc(f, `asistencias_personal/asisOk_${c.uid}`), {
+    await assertSucceeds(crearEntradaConCandado(f, {
       id: `asisOk_${c.uid}`,
       operativo_id: 'opAbierto',
       operativo_nombre: 'Operativo opAbierto',
@@ -1654,6 +1696,7 @@ test('Mapeo automático de rol operativo por ayudantía (5 ayudantías + Sin def
       estado_operativo: 'En servicio',
       signos_vitales: null,
       metodo_entrada: 'QR_Operativo_TOTP',
+      prueba_qr: NONCE_VIGENTE_OP,
       hora_entrada: serverTimestamp(),
       hora_salida: null,
       horas_totales: null,
@@ -1709,7 +1752,7 @@ test('Conservación de rol editado manualmente en convocatoria al confirmar por 
 
   // 4. Al confirmar entrada por QR del operativo, brigSocorros DEBE conservar "Búsqueda y Rescate"
   //    (intentar sobrescribir de vuelta a "Atención" es rechazado por las reglas)
-  await assertFails(setDoc(doc(db('brigSocorros'), 'asistencias_personal/asisSocOverwriteFail'), {
+  await assertFails(crearEntradaConCandado(db('brigSocorros'), {
     id: 'asisSocOverwriteFail',
     operativo_id: 'opAbierto',
     operativo_nombre: 'Operativo opAbierto',
@@ -1722,6 +1765,7 @@ test('Conservación de rol editado manualmente en convocatoria al confirmar por 
     estado_operativo: 'En servicio',
     signos_vitales: null,
     metodo_entrada: 'QR_Operativo_TOTP',
+    prueba_qr: NONCE_VIGENTE_OP,
     hora_entrada: serverTimestamp(),
     hora_salida: null,
     horas_totales: null,
@@ -1732,7 +1776,7 @@ test('Conservación de rol editado manualmente en convocatoria al confirmar por 
     actualizado_en: serverTimestamp(),
   }));
 
-  await assertSucceeds(setDoc(doc(db('brigSocorros'), 'asistencias_personal/asisSocQrConservado'), {
+  await assertSucceeds(crearEntradaConCandado(db('brigSocorros'), {
     id: 'asisSocQrConservado',
     operativo_id: 'opAbierto',
     operativo_nombre: 'Operativo opAbierto',
@@ -1745,6 +1789,7 @@ test('Conservación de rol editado manualmente en convocatoria al confirmar por 
     estado_operativo: 'En servicio',
     signos_vitales: null,
     metodo_entrada: 'QR_Operativo_TOTP',
+    prueba_qr: NONCE_VIGENTE_OP,
     hora_entrada: serverTimestamp(),
     hora_salida: null,
     horas_totales: null,
@@ -1834,7 +1879,7 @@ test('Conservación de rol editado manualmente en convocatoria al confirmar por 
   }));
 
   // Brigadista con "Sin definir" puede recibir rol fácilmente en campo por Encargado/Admin
-  await assertSucceeds(setDoc(doc(db('admin1'), 'asistencias_personal/asisSinDefCampo'), {
+  await assertSucceeds(crearEntradaConCandado(db('admin1'), {
     id: 'asisSinDefCampo',
     operativo_id: 'opAbierto',
     operativo_nombre: 'Operativo opAbierto',
@@ -1913,7 +1958,7 @@ test('Convocatoria cerrada bloquea autoregistro externo pero permite altas manua
   ));
 
   // Brigadista con convocatoria cerrada puede confirmar asistencia por QR respetando el rol editado
-  await assertSucceeds(setDoc(doc(db('brigAlfa1'), 'asistencias_personal/asisConvCerradaQr'), {
+  await assertSucceeds(crearEntradaConCandado(db('brigAlfa1'), {
     id: 'asisConvCerradaQr',
     operativo_id: 'opAbierto',
     operativo_nombre: 'Operativo opAbierto',
@@ -1926,6 +1971,7 @@ test('Convocatoria cerrada bloquea autoregistro externo pero permite altas manua
     estado_operativo: 'En servicio',
     signos_vitales: null,
     metodo_entrada: 'QR_Operativo_TOTP',
+    prueba_qr: NONCE_VIGENTE_OP,
     hora_entrada: serverTimestamp(),
     hora_salida: null,
     horas_totales: null,
@@ -1942,7 +1988,7 @@ test('Convocatoria cerrada bloquea autoregistro externo pero permite altas manua
     actualizado_en: serverTimestamp(),
   }));
 
-  await assertSucceeds(setDoc(doc(db('encargado1'), 'asistencias_personal/asisConvCerradaManual'), {
+  await assertSucceeds(crearEntradaConCandado(db('encargado1'), {
     id: 'asisConvCerradaManual',
     operativo_id: 'opAbierto',
     operativo_nombre: 'Operativo opAbierto',
@@ -2062,7 +2108,7 @@ test('No regresión: Encargados en Alfa, Omega y SIERRA sin ayudantía operan co
     await assertSucceeds(getDocs(collection(f, 'operativos/opAbierto/prerregistros')));
 
     // 3. Alta de asistencia, listado y edición de rol en campo
-    await assertSucceeds(setDoc(doc(f, `asistencias_personal/${asisId}`), {
+    await assertSucceeds(crearEntradaConCandado(f, {
       id: asisId,
       operativo_id: 'opAbierto',
       operativo_nombre: 'Operativo opAbierto',
@@ -2403,6 +2449,7 @@ const asistenciaPropiaQr = (id, uid, extra = {}) => ({
   estado_operativo: 'En servicio',
   signos_vitales: null,
   metodo_entrada: 'QR_Operativo_TOTP',
+  prueba_qr: NONCE_VIGENTE_OP,
   hora_entrada: serverTimestamp(),
   hora_salida: null,
   horas_totales: null,
@@ -2443,7 +2490,7 @@ test('B6-1) Jefe de Ayudantía y Encargado rechazados al cambiar estatus a Final
   }
   // Jefe de Ayudantía no modifica configuración global
   await assertFails(updateDoc(doc(db('jefeSocorros'), 'operativos/opAbierto'), { recepcion_abierta: false, actualizado_en: serverTimestamp() }));
-  await assertFails(updateDoc(doc(db('jefeSocorros'), 'operativos/opAbierto'), { modo_qr: 'dinamico', actualizado_en: serverTimestamp() }));
+  await assertFails(updateDoc(doc(db('jefeSocorros'), 'operativos/opAbierto'), { modo_qr: 'estatico', actualizado_en: serverTimestamp() }));
   // Encargado sin ayudantía sí puede abrir/cerrar recepción y convocatoria
   await assertSucceeds(updateDoc(doc(db('encargado1'), 'operativos/opAbierto'), { recepcion_abierta: false, convocatoria_abierta: true, actualizado_en: serverTimestamp() }));
   // Administrador sí cancela
@@ -2538,9 +2585,9 @@ test('B6-5) Brigadista no falsifica auditoría, nombre/cuenta en auto-registro n
   await assertFails(setDoc(doc(f, 'operativos/opAbierto/prerregistros/activo1'), pre({ usuario_cuenta: '99999999' })));
   await assertSucceeds(setDoc(doc(f, 'operativos/opAbierto/prerregistros/activo1'), pre({})));
   // Auto-registro QR con nombre o cuenta falsificados
-  await assertFails(setDoc(doc(f, 'asistencias_personal/asisFalsa1'), asistenciaPropiaQr('asisFalsa1', 'activo1', { usuario_nombre: 'Falso Nombre' })));
-  await assertFails(setDoc(doc(f, 'asistencias_personal/asisFalsa2'), asistenciaPropiaQr('asisFalsa2', 'activo1', { usuario_cuenta: '99999999' })));
-  await assertSucceeds(setDoc(doc(f, 'asistencias_personal/asisPropiaOk'), asistenciaPropiaQr('asisPropiaOk', 'activo1')));
+  await assertFails(crearEntradaConCandado(f, asistenciaPropiaQr('asisFalsa1', 'activo1', { usuario_nombre: 'Falso Nombre' })));
+  await assertFails(crearEntradaConCandado(f, asistenciaPropiaQr('asisFalsa2', 'activo1', { usuario_cuenta: '99999999' })));
+  await assertSucceeds(crearEntradaConCandado(f, asistenciaPropiaQr('asisPropiaOk', 'activo1')));
   // Material Propio: asistencia ajena rechazada, propia permitida
   const propio = (asistenciaId) => ({
     ...equipoSeed('eqPropioB6', asistenciaId, 'opAbierto', 'activo1', {
@@ -2564,4 +2611,209 @@ test('B6-6) Encargado sin ayudantía (Opción B) no cambia ayudantia ni ayudanti
   await assertFails(updateDoc(doc(db('jefeSocorros'), 'usuarios/brigSocorros'), { ayudantia: 'Tesla', ayudantia_slot: 'Tesla', actualizado_en: serverTimestamp() }));
   // Administrador sí puede
   await assertSucceeds(updateDoc(doc(db('admin1'), 'usuarios/brigAlfa1'), { ayudantia: 'Socorros', ayudantia_slot: 'Socorros', actualizado_en: serverTimestamp() }));
+});
+
+// ============================================================================
+// BONCHE 7: CANDADO DETERMINISTA ANTI-DUPLICADOS, PRUEBA DE PRESENCIA QR,
+// DESBLOQUEO DE ENCARGADO SIN AYUDANTÍA Y COHERENCIA DE ROL POR AYUDANTÍA
+// ============================================================================
+
+test('B7-1) Candado determinista presentes/{uid}: bloquea entradas sin candado y duplicadas; tras cerrar salida y borrar candado permite segundo turno', async () => {
+  const fBrig = db('activo1');
+  const fEnc = db('encargado1');
+
+  // 1. Crear asistencia sin candado presentes/{uid} -> rechazado
+  await assertFails(setDoc(
+    doc(fBrig, 'asistencias_personal/asisSinCandado'),
+    asistenciaPropiaQr('asisSinCandado', 'activo1'),
+  ));
+
+  // 2. Primera entrada con candado atómico -> permitida
+  await assertSucceeds(crearEntradaConCandado(fBrig, asistenciaPropiaQr('asisTurno1', 'activo1')));
+
+  // 3. Intento concurrente/duplicado para mismo uid en mismo operativo (VÍA 1 y VÍA 2) -> rechazado
+  await assertFails(crearEntradaConCandado(fBrig, asistenciaPropiaQr('asisTurnoDup1', 'activo1')));
+  await assertFails(crearEntradaConCandado(fEnc, asistenciaPropiaQr('asisTurnoDup2', 'activo1', {
+    metodo_entrada: 'QR_Credencial',
+    registrado_por_uid: 'encargado1',
+  })));
+
+  // 4. Cerrar salida sin eliminar el candado presentes/activo1 -> rechazado
+  await assertFails(updateDoc(doc(fBrig, 'asistencias_personal/asisTurno1'), {
+    hora_salida: serverTimestamp(),
+    horas_totales: 1,
+    estado_operativo: 'Retirado',
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // 5. Cerrar salida eliminando atómicamente presentes/activo1 -> permitido
+  await assertSucceeds(cerrarSalidaConCandadoTest(fBrig, 'opAbierto', 'activo1', 'asisTurno1'));
+
+  // 6. Una vez liberado el candado, un segundo turno del mismo brigadista SÍ se permite
+  await assertSucceeds(crearEntradaConCandado(fBrig, asistenciaPropiaQr('asisTurno2', 'activo1')));
+});
+
+test('B7-2) Prueba de presencia QR (Plan Spark): Brigadista bloqueado de secretos/*; rechazado sin prueba_qr o token inválido; aprobado con vigente, nonce_anterior y estático', async () => {
+  const fBrig = db('activo1');
+  const fEnc = db('encargado1');
+
+  // 1. Brigadista jamás lee secretos QR; Encargado/Admin sí leen y rotan secretos
+  await assertFails(getDoc(doc(fBrig, 'operativos/opAbierto/secretos/estatico')));
+  await assertFails(getDoc(doc(fBrig, 'operativos/opAbierto/secretos/vigente')));
+  await assertFails(getDoc(doc(fBrig, 'operativos/opAbierto/secretos/totp')));
+  await assertSucceeds(getDoc(doc(fEnc, 'operativos/opAbierto/secretos/estatico')));
+  await assertSucceeds(getDoc(doc(fEnc, 'operativos/opAbierto/secretos/vigente')));
+
+  // 2. Modo dinámico: sin prueba_qr o con nonce inválido -> rechazado
+  const sinPrueba = asistenciaPropiaQr('asisSinPrueba', 'activo1');
+  delete sinPrueba.prueba_qr;
+  await assertFails(crearEntradaConCandado(fBrig, sinPrueba));
+  await assertFails(crearEntradaConCandado(fBrig, asistenciaPropiaQr('asisBadNonce', 'activo1', {
+    prueba_qr: 'INVALID9',
+  })));
+
+  // 3. Modo dinámico: aprobado con nonce vigente y aprobado con nonce_anterior (ventana de gracia)
+  await assertSucceeds(crearEntradaConCandado(fBrig, asistenciaPropiaQr('asisVigOk', 'activo1', {
+    prueba_qr: NONCE_VIGENTE_OP,
+  })));
+  await assertSucceeds(cerrarSalidaConCandadoTest(fBrig, 'opAbierto', 'activo1', 'asisVigOk'));
+
+  await assertSucceeds(crearEntradaConCandado(fBrig, asistenciaPropiaQr('asisGraciaOk', 'activo1', {
+    prueba_qr: NONCE_ANTERIOR_OP,
+  })));
+  await assertSucceeds(cerrarSalidaConCandadoTest(fBrig, 'opAbierto', 'activo1', 'asisGraciaOk'));
+
+  // 4. Modo dinámico expirado (> 120s sin rotación) -> rechazado
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await updateDoc(doc(ctx.firestore(), 'operativos/opAbierto/secretos/vigente'), {
+      actualizado_en: Timestamp.fromMillis(Date.now() - 180_000),
+    });
+  });
+  await assertFails(crearEntradaConCandado(fBrig, asistenciaPropiaQr('asisExpFail', 'activo1', {
+    prueba_qr: NONCE_VIGENTE_OP,
+  })));
+
+  // 5. Modo estático: rechaza token incorrecto o método dinámico; aprueba secretos/estatico.token
+  await assertSucceeds(updateDoc(doc(fEnc, 'operativos/opAbierto'), {
+    modo_qr: 'estatico',
+    actualizado_en: serverTimestamp(),
+  }));
+  await assertFails(crearEntradaConCandado(fBrig, asistenciaPropiaQr('asisEstBad', 'activo1', {
+    metodo_entrada: 'QR_Operativo_Estatico',
+    prueba_qr: 'TOKEN-FALSO-123',
+  })));
+  await assertSucceeds(crearEntradaConCandado(fBrig, asistenciaPropiaQr('asisEstOk', 'activo1', {
+    metodo_entrada: 'QR_Operativo_Estatico',
+    prueba_qr: TOKEN_ESTATICO_OP,
+  })));
+});
+
+test('B7-3) Encargado sin ayudantía (Alfa/Omega/SIERRA) lee perfiles_operativos y registra VÍA 2 de brigadista ajeno sin permission-denied, sin leer usuarios/{uid}', async () => {
+  const fEncAlfa = db('encAlfa1');
+
+  // 1. Sigue estrictamente bloqueado de leer la Ficha de Emergencia / usuarios/{uid} de brigOmega1
+  await assertFails(getDoc(doc(fEncAlfa, 'usuarios/brigOmega1')));
+
+  // 2. SÍ lee perfiles_operativos/brigOmega1 y lista perfiles_operativos activos
+  const snapPerfil = await assertSucceeds(getDoc(doc(fEncAlfa, 'perfiles_operativos/brigOmega1')));
+  if (snapPerfil.data()?.qr_codigo_unico !== 'qr-omega-1') {
+    throw new Error('Se esperaba leer qr_codigo_unico desde perfiles_operativos.');
+  }
+  await assertSucceeds(getDocs(query(
+    collection(fEncAlfa, 'perfiles_operativos'),
+    where('estatus', 'in', ['Activo', 'Inactivo']),
+  )));
+
+  // 3. Registra entrada VÍA 2 (QR_Credencial + candado presentes/brigOmega1) para brigOmega1 sin bloqueo
+  await assertSucceeds(crearEntradaConCandado(fEncAlfa, {
+    id: 'asisVia2Ajeno',
+    operativo_id: 'opAbierto',
+    operativo_nombre: 'Operativo opAbierto',
+    usuario_uid: 'brigOmega1',
+    usuario_nombre: 'Ana Pérez',
+    usuario_cuenta: '20201234',
+    grupo_operativo: 'Omega',
+    ayudantia_slot: 'Ninguna',
+    rol_en_turno: 'Sin definir',
+    estado_operativo: 'En servicio',
+    signos_vitales: null,
+    metodo_entrada: 'QR_Credencial',
+    hora_entrada: serverTimestamp(),
+    hora_salida: null,
+    horas_totales: null,
+    salida_cerrada_manual: false,
+    equipos_bupc_pendientes: 0,
+    registrado_por_uid: 'encAlfa1',
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  }));
+});
+
+test('B7-4) Cambio de ayudantía entre prerregistro y escaneo QR: recalcula rol si rol_editado_manual == false y respeta rol_en_turno si rol_editado_manual == true', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await updateDoc(doc(ctx.firestore(), 'operativos/opAbierto'), {
+      convocatoria_abierta: true,
+    });
+  });
+
+  // Caso A (rol_editado_manual == false): brigSocorros se prerregistra en Socorros ('Atención'),
+  // luego Admin lo reasigna a Logística -> al escanear QR DEBE recalcular a 'Abastecedores'.
+  await assertSucceeds(setDoc(
+    doc(db('brigSocorros'), 'operativos/opAbierto/prerregistros/brigSocorros'),
+    prerregistroBase('brigSocorros', 'brigSocorros', 'Autoregistro', {
+      etapa: 'Alfa',
+      subgrupo: 'Alfa 1',
+      ayudantia: 'Socorros',
+      ayudantia_slot: 'Socorros',
+      rol_en_turno: 'Atención',
+      rol_editado_manual: false,
+      actualizado_en: serverTimestamp(),
+    }),
+  ));
+  await assertSucceeds(updateDoc(doc(db('admin1'), 'usuarios/brigSocorros'), {
+    ayudantia: 'Logística',
+    ayudantia_slot: 'Logística',
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // Rol viejo ('Atención') rechazado; rol recalculado ('Abastecedores') aprobado
+  await assertFails(crearEntradaConCandado(db('brigSocorros'), asistenciaPropiaQr('asisCambioViejo', 'brigSocorros', {
+    grupo_operativo: 'Alfa',
+    ayudantia_slot: 'Logística',
+    rol_en_turno: 'Atención',
+  })));
+  await assertSucceeds(crearEntradaConCandado(db('brigSocorros'), asistenciaPropiaQr('asisCambioRecalc', 'brigSocorros', {
+    grupo_operativo: 'Alfa',
+    ayudantia_slot: 'Logística',
+    rol_en_turno: 'Abastecedores',
+  })));
+
+  // Caso B (rol_editado_manual == true): brigLogistica tiene rol editado manualmente a 'Radios',
+  // luego Admin lo reasigna a Capacitación -> al escanear QR DEBE conservar 'Radios'.
+  await assertSucceeds(setDoc(
+    doc(db('admin1'), 'operativos/opAbierto/prerregistros/brigLogistica'),
+    prerregistroBase('brigLogistica', 'admin1', 'Manual_Encargado', {
+      etapa: 'Grupo Operativo',
+      subgrupo: '',
+      ayudantia: 'Logística',
+      ayudantia_slot: 'Logística',
+      rol_en_turno: 'Radios',
+      rol_editado_manual: true,
+      actualizado_en: serverTimestamp(),
+    }),
+  ));
+  await assertSucceeds(updateDoc(doc(db('admin1'), 'usuarios/brigLogistica'), {
+    ayudantia: 'Capacitación',
+    ayudantia_slot: 'Capacitación',
+    actualizado_en: serverTimestamp(),
+  }));
+
+  await assertFails(crearEntradaConCandado(db('brigLogistica'), asistenciaPropiaQr('asisManualIgnorado', 'brigLogistica', {
+    ayudantia_slot: 'Capacitación',
+    rol_en_turno: 'Búsqueda y Rescate',
+  })));
+  await assertSucceeds(crearEntradaConCandado(db('brigLogistica'), asistenciaPropiaQr('asisManualConservado', 'brigLogistica', {
+    ayudantia_slot: 'Capacitación',
+    rol_en_turno: 'Radios',
+  })));
 });

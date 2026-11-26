@@ -21,8 +21,32 @@ import {
   normalizarOperativo,
   type AyudantiaActiva,
 } from '../lib/permisos'
-import type { Operativo, PrerregistroOperativo, RolEnTurno, Usuario } from '../types'
+import type {
+  Operativo,
+  PerfilOperativoMinimo,
+  PrerregistroOperativo,
+  RolEnTurno,
+  Usuario,
+} from '../types'
+import { normalizarNombrePropio } from '../lib/nombres'
 import { nombreCompleto } from './authService'
+
+export type IntegrantePrerregistro =
+  | Usuario
+  | Pick<
+      PerfilOperativoMinimo,
+      'uid' | 'nombre_completo' | 'numero_cuenta' | 'etapa' | 'subgrupo' | 'ayudantia' | 'ayudantia_slot' | 'grupo_operativo'
+    >
+
+function nombreIntegrante(integrante: IntegrantePrerregistro): string {
+  if ('nombre_completo' in integrante && integrante.nombre_completo) {
+    return normalizarNombrePropio(integrante.nombre_completo)
+  }
+  if ('nombres' in integrante) {
+    return nombreCompleto(integrante)
+  }
+  return 'Integrante'
+}
 
 function prerregistrosRef(operativoId: string) {
   return collection(db, 'operativos', operativoId, 'prerregistros')
@@ -72,7 +96,7 @@ export async function obtenerMiPrerregistro(
 }
 
 function construirPayloadPrerregistro(
-  integrante: Usuario,
+  integrante: IntegrantePrerregistro,
   registradoPorUid: string,
   origen: 'Autoregistro' | 'Manual_Encargado',
   rolPersonalizado?: RolEnTurno,
@@ -80,10 +104,11 @@ function construirPayloadPrerregistro(
   const ay = ayudantiaEfectiva(integrante)
   const rolAuto = rolOperativoPorAyudantia(ay)
   const rolFinal = rolPersonalizado ?? rolAuto
+  const cuentaValida = (integrante.numero_cuenta || '0').trim().slice(0, 12) || '0'
   return {
     usuario_uid: integrante.uid,
-    usuario_nombre: nombreCompleto(integrante),
-    usuario_cuenta: integrante.numero_cuenta,
+    usuario_nombre: nombreIntegrante(integrante),
+    usuario_cuenta: cuentaValida,
     etapa: etapaEfectiva(integrante),
     subgrupo: (integrante.subgrupo ?? '').trim(),
     ayudantia: ay,
@@ -198,7 +223,7 @@ export async function cancelarMiPrerregistro(
 export async function registrarPrerregistroManual(
   operativoId: string,
   encargado: Usuario,
-  integrante: Usuario,
+  integrante: IntegrantePrerregistro,
 ): Promise<void> {
   const ayJefe = ayudantiaJefatura(encargado)
   if (ayJefe && ayudantiaEfectiva(integrante) !== ayJefe) {
@@ -219,7 +244,7 @@ export async function registrarPrerregistroManual(
       )
     }
     if (preSnap.exists()) {
-      throw new Error(`${nombreCompleto(integrante)} ya se encuentra prerregistrado.`)
+      throw new Error(`${nombreIntegrante(integrante)} ya se encuentra prerregistrado.`)
     }
     const conteoActual = op.prerregistros_count ?? 0
     tx.set(preRef, construirPayloadPrerregistro(integrante, encargado.uid, 'Manual_Encargado'))
