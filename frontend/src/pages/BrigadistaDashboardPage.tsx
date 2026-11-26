@@ -3,6 +3,7 @@ import {
   Calendar,
   CheckCircle2,
   ChevronRight,
+  Clock,
   Lock,
   MapPin,
   Megaphone,
@@ -12,12 +13,14 @@ import {
   UserCheck,
   UserMinus,
   UserPlus,
+  X,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { BupcLogo } from '../components/BupcLogo'
 import { CandadoDuroModal } from '../components/CandadoDuroModal'
 import { QrScannerModal } from '../components/QrScannerModal'
 import { ReportarEquipoModal } from '../components/ReportarEquipoModal'
+import { rolOperativoPorAyudantia } from '../constants/catalogos'
 import { etiquetaAyudantia } from '../lib/permisos'
 import {
   escucharMisAsistencias,
@@ -86,6 +89,7 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
     Record<string, PrerregistroOperativo | null>
   >({})
   const [ocupadoConvocatoriaId, setOcupadoConvocatoriaId] = useState<string | null>(null)
+  const [operativoDetalleId, setOperativoDetalleId] = useState<string | null>(null)
 
   useEffect(() => {
     const cancelar = escucharMisAsistencias(
@@ -141,10 +145,19 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
     }
   }, [idsConvocatorias, perfil.uid])
 
-  const operativosConAsistenciaPropia = useMemo(
-    () => new Set(asistencias.map((a) => a.operativo_id)),
-    [asistencias],
-  )
+  const asistenciaPorOperativo = useMemo(() => {
+    const mapa = new Map<string, AsistenciaPersonal>()
+    for (const a of asistencias) {
+      if (!mapa.has(a.operativo_id)) {
+        mapa.set(a.operativo_id, a)
+      }
+    }
+    return mapa
+  }, [asistencias])
+
+  const operativoDetalle = operativoDetalleId
+    ? (convocatoriasAbiertas.find((op) => op.id === operativoDetalleId) ?? null)
+    : null
 
   async function manejarApuntarme(op: Operativo) {
     setOcupadoConvocatoriaId(op.id)
@@ -164,6 +177,9 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
             etapa: perfil.etapa,
             subgrupo: perfil.subgrupo,
             ayudantia: perfil.ayudantia,
+            ayudantia_slot: perfil.ayudantia,
+            rol_en_turno: rolOperativoPorAyudantia(perfil.ayudantia),
+            rol_editado_manual: false,
             origen: 'Autoregistro',
             registrado_por_uid: perfil.uid,
           } as PrerregistroOperativo),
@@ -178,7 +194,7 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
   }
 
   async function manejarCancelarPrerregistro(op: Operativo) {
-    if (operativosConAsistenciaPropia.has(op.id)) return
+    if (asistenciaPorOperativo.has(op.id)) return
     setOcupadoConvocatoriaId(op.id)
     setError(null)
     setAviso(null)
@@ -321,7 +337,19 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
         </div>
       )}
 
-      {/* CTA principal Naranja Protección Civil (#EA580C) */}
+      {/* Encabezado de sección: Mi Operativo */}
+      <div className="flex flex-col gap-0.5">
+        <h2 className="text-lg font-bold text-tinta dark:text-noche-tinta">
+          {turnoAbierto ? 'Operativo Activo' : 'Mi Operativo'}
+        </h2>
+        <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
+          {turnoAbierto
+            ? 'Consulta tu participación actual, tu rol asignado y registra tu salida con QR.'
+            : 'Consulta tus convocatorias disponibles, tu participación y escanea el QR para ingresar.'}
+        </p>
+      </div>
+
+      {/* CTA principal Naranja Protección Civil (#EA580C): acción directa de escaneo */}
       <button
         type="button"
         onClick={() => {
@@ -332,7 +360,11 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
         className="btn-naranja min-h-14 w-full text-sm"
       >
         <QrCode size={22} strokeWidth={2} className="shrink-0" />
-        <span>Escanear QR para Registrar Entrada / Salida</span>
+        <span>
+          {turnoAbierto
+            ? 'Escanear QR para Registrar Salida'
+            : 'Escanear QR para Registrar Entrada'}
+        </span>
       </button>
 
       {/* Próximos operativos con convocatoria abierta (autoregistro previo) */}
@@ -355,8 +387,10 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
 
           <div className="flex flex-col gap-2.5">
             {convocatoriasAbiertas.map((op) => {
-              const yaAsistio = operativosConAsistenciaPropia.has(op.id)
-              const prerregistrado = Boolean(misPrerregistros[op.id])
+              const asistenciaPropia = asistenciaPorOperativo.get(op.id) ?? null
+              const miPre = misPrerregistros[op.id] ?? null
+              const yaAsistio = Boolean(asistenciaPropia)
+              const prerregistrado = Boolean(miPre)
               const apuntados = op.prerregistros_count ?? 0
               const cupo = op.cupo_sugerido ?? null
               const cupoLleno = cupo !== null && apuntados >= cupo
@@ -365,13 +399,30 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
               return (
                 <div
                   key={op.id}
-                  className="flex flex-col gap-2 rounded-lg border border-borde bg-superficie-suave p-3 dark:border-noche-borde dark:bg-noche-campo"
+                  className="flex flex-col gap-2.5 rounded-lg border border-borde bg-superficie-suave p-3 transition-colors hover:border-udec dark:border-noche-borde dark:bg-noche-campo dark:hover:border-activo-claro"
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <h4 className="truncate text-xs font-bold text-tinta dark:text-noche-tinta">
-                        {op.nombre}
-                      </h4>
+                  <button
+                    type="button"
+                    onClick={() => setOperativoDetalleId(op.id)}
+                    className="flex w-full cursor-pointer items-start justify-between gap-2 text-left"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <h4 className="truncate text-xs font-bold text-tinta dark:text-noche-tinta">
+                          {op.nombre}
+                        </h4>
+                        {cupo !== null && (
+                          <span
+                            className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold tabular-nums ${
+                              cupoLleno
+                                ? 'bg-ambar-suave text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto'
+                                : 'bg-salvia text-udec-oscuro dark:bg-noche-tarjeta dark:text-activo-claro'
+                            }`}
+                          >
+                            {apuntados}/{cupo}
+                          </span>
+                        )}
+                      </div>
                       <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
                         <span className="inline-flex items-center gap-1 tabular-nums">
                           <Calendar size={11} strokeWidth={2} />
@@ -383,68 +434,68 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
                         </span>
                       </div>
                     </div>
-                    {cupo !== null && (
-                      <span
-                        className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold tabular-nums ${
-                          cupoLleno
-                            ? 'bg-ambar-suave text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto'
-                            : 'bg-salvia text-udec-oscuro dark:bg-noche-tarjeta dark:text-activo-claro'
-                        }`}
-                      >
-                        {apuntados}/{cupo}
-                      </span>
-                    )}
-                  </div>
+                    <span className="inline-flex shrink-0 items-center gap-0.5 text-[11px] font-semibold text-udec dark:text-activo-claro">
+                      <span>Detalle</span>
+                      <ChevronRight size={14} strokeWidth={2} />
+                    </span>
+                  </button>
 
-                  {yaAsistio ? (
-                    <div className="flex items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-borde/70 pt-2 dark:border-noche-borde/70">
+                    {yaAsistio ? (
                       <span className="inline-flex items-center gap-1.5 rounded-full bg-activo-suave px-2.5 py-1 text-[11px] font-bold text-activo dark:bg-noche-tarjeta dark:text-activo-claro">
                         <UserCheck size={13} strokeWidth={2} />
                         <span>Asistencia confirmada con QR</span>
                       </span>
-                    </div>
-                  ) : prerregistrado ? (
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-salvia px-2.5 py-1 text-[11px] font-bold text-udec-oscuro dark:bg-noche-tarjeta dark:text-activo-claro">
-                        <CheckCircle2 size={13} strokeWidth={2} />
-                        <span>Prerregistrado · Confirma con QR al llegar</span>
-                      </span>
-                      <button
-                        type="button"
-                        disabled={ocupado}
-                        onClick={() => void manejarCancelarPrerregistro(op)}
-                        className="inline-flex min-h-8 cursor-pointer items-center gap-1 rounded-lg border border-borde-fuerte bg-tarjeta px-2.5 text-[11px] font-semibold text-tinta-suave hover:border-alerta hover:text-alerta disabled:opacity-50 dark:border-noche-borde dark:bg-noche-tarjeta dark:text-noche-tinta-suave dark:hover:text-noche-rojo-texto"
-                      >
-                        <UserMinus size={12} strokeWidth={2} />
-                        <span>{ocupado ? 'Cancelando...' : 'Cancelar registro'}</span>
-                      </button>
-                    </div>
-                  ) : cupoLleno ? (
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[11px] font-semibold text-ambar-texto dark:text-noche-ambar-texto">
-                        Cupo sugerido completo ({apuntados}/{cupo})
-                      </span>
-                      <button
-                        type="button"
-                        disabled
-                        className="btn-salvia min-h-8 px-3 text-[11px] opacity-55"
-                      >
-                        Cupo lleno
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex justify-end">
-                      <button
-                        type="button"
-                        disabled={ocupado}
-                        onClick={() => void manejarApuntarme(op)}
-                        className="btn-verde min-h-8 px-3.5 text-xs"
-                      >
-                        <UserPlus size={14} strokeWidth={2} />
-                        <span>{ocupado ? 'Apuntando...' : 'Apuntarme'}</span>
-                      </button>
-                    </div>
-                  )}
+                    ) : prerregistrado ? (
+                      <>
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-salvia px-2.5 py-1 text-[11px] font-bold text-udec-oscuro dark:bg-noche-tarjeta dark:text-activo-claro">
+                          <CheckCircle2 size={13} strokeWidth={2} />
+                          <span>Prerregistrado</span>
+                        </span>
+                        <button
+                          type="button"
+                          disabled={ocupado}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            void manejarCancelarPrerregistro(op)
+                          }}
+                          className="inline-flex min-h-8 cursor-pointer items-center gap-1 rounded-lg border border-borde-fuerte bg-tarjeta px-2.5 text-[11px] font-semibold text-tinta-suave hover:border-alerta hover:text-alerta disabled:opacity-50 dark:border-noche-borde dark:bg-noche-tarjeta dark:text-noche-tinta-suave dark:hover:text-noche-rojo-texto"
+                        >
+                          <UserMinus size={12} strokeWidth={2} />
+                          <span>{ocupado ? 'Cancelando...' : 'Cancelar registro'}</span>
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-ambar-suave px-2.5 py-1 text-[11px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
+                          <Clock size={12} strokeWidth={2} />
+                          <span>Aún no inscrito</span>
+                        </span>
+                        {cupoLleno ? (
+                          <button
+                            type="button"
+                            disabled
+                            className="btn-salvia min-h-8 px-3 text-[11px] opacity-55"
+                          >
+                            Cupo lleno
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={ocupado}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              void manejarApuntarme(op)
+                            }}
+                            className="btn-verde min-h-8 px-3.5 text-xs"
+                          >
+                            <UserPlus size={14} strokeWidth={2} />
+                            <span>{ocupado ? 'Apuntando...' : 'Apuntarme'}</span>
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
                 </div>
               )
             })}
@@ -452,7 +503,7 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
         </section>
       )}
 
-      {/* Tarjeta "Último registro confirmado" */}
+      {/* Tarjeta "Operativo en curso" / "Último operativo registrado" */}
       {cargando ? (
         <div className="tarjeta flex flex-col gap-3 p-4">
           <div className="h-5 w-40 animate-pulse rounded bg-esqueleto dark:bg-noche-borde" />
@@ -464,7 +515,9 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
           <header className="flex items-center justify-between gap-2 border-b border-borde pb-3 dark:border-noche-borde">
             <div>
               <p className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
-                Último registro confirmado
+                {ultimoRegistro.hora_salida === null
+                  ? 'Operativo en curso'
+                  : 'Último operativo registrado'}
               </p>
               <h3 className="text-base font-bold text-tinta dark:text-noche-tinta">
                 {ultimoRegistro.operativo_nombre}
@@ -612,6 +665,214 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
           </span>
         </div>
       </article>
+
+      {/* Modal detalle de operativo con convocatoria */}
+      {operativoDetalle && (() => {
+        const asistenciaDet = asistenciaPorOperativo.get(operativoDetalle.id) ?? null
+        const preDet = misPrerregistros[operativoDetalle.id] ?? null
+        const apuntadosDet = operativoDetalle.prerregistros_count ?? 0
+        const cupoDet = operativoDetalle.cupo_sugerido ?? null
+        const cupoLlenoDet = cupoDet !== null && apuntadosDet >= cupoDet
+        const ocupadoDet = ocupadoConvocatoriaId === operativoDetalle.id
+        const rolAsignadoDet =
+          asistenciaDet?.rol_en_turno ??
+          preDet?.rol_en_turno ??
+          rolOperativoPorAyudantia(perfil.ayudantia)
+
+        return (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Detalle del operativo ${operativoDetalle.nombre}`}
+            className="fixed inset-0 z-50 flex items-end justify-center bg-black/75 sm:items-center sm:p-4"
+          >
+            <article className="tarjeta flex max-h-[88dvh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl sm:rounded-xl">
+              <header className="flex items-start justify-between gap-2 border-b-3 border-naranja bg-udec px-4 py-3 text-white">
+                <div className="min-w-0">
+                  <span className="block text-[11px] font-semibold text-white/80">
+                    {operativoDetalle.categoria}
+                  </span>
+                  <h3 className="truncate text-sm font-bold">{operativoDetalle.nombre}</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setOperativoDetalleId(null)}
+                  aria-label="Cerrar detalle del operativo"
+                  className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/25"
+                >
+                  <X size={17} strokeWidth={2} />
+                </button>
+              </header>
+
+              <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
+                {/* Estado actual del brigadista en este operativo */}
+                <div
+                  className={`flex flex-col gap-1.5 rounded-lg border p-3 ${
+                    asistenciaDet
+                      ? 'border-activo bg-activo-suave dark:border-activo-claro/40 dark:bg-noche-campo'
+                      : preDet
+                        ? 'border-udec/40 bg-salvia dark:border-activo-claro/40 dark:bg-noche-campo'
+                        : 'border-ambar bg-ambar-suave dark:border-noche-ambar dark:bg-noche-ambar/40'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                      Tu estado en este operativo
+                    </span>
+                    <span
+                      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
+                        asistenciaDet
+                          ? 'bg-tarjeta text-activo dark:bg-noche-tarjeta dark:text-activo-claro'
+                          : preDet
+                            ? 'bg-tarjeta text-udec-oscuro dark:bg-noche-tarjeta dark:text-activo-claro'
+                            : 'bg-tarjeta text-ambar-texto dark:bg-noche-tarjeta dark:text-noche-ambar-texto'
+                      }`}
+                    >
+                      {asistenciaDet ? (
+                        <>
+                          <UserCheck size={12} strokeWidth={2} />
+                          <span>Asistencia confirmada con QR</span>
+                        </>
+                      ) : preDet ? (
+                        <>
+                          <CheckCircle2 size={12} strokeWidth={2} />
+                          <span>Prerregistrado</span>
+                        </>
+                      ) : (
+                        <>
+                          <Clock size={12} strokeWidth={2} />
+                          <span>Aún no inscrito</span>
+                        </>
+                      )}
+                    </span>
+                  </div>
+                  <p className="text-xs text-tinta dark:text-noche-tinta">
+                    {asistenciaDet
+                      ? 'Tu asistencia ya quedó registrada en este operativo.'
+                      : preDet
+                        ? 'Ya quedaste apuntado en la lista previa. Al llegar, escanea el código QR del Puesto de Mando para confirmar tu asistencia.'
+                        : 'Todavía no te has apuntado a este operativo. Puedes prerregistrarte ahora para asegurar tu lugar.'}
+                  </p>
+                  {(asistenciaDet || preDet) && (
+                    <p className="text-[11px] font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                      Rol asignado: <strong className="text-tinta dark:text-noche-tinta">{rolAsignadoDet}</strong>
+                    </p>
+                  )}
+                </div>
+
+                {/* Datos generales del operativo */}
+                <dl className="flex flex-col gap-2 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <dt className="font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                      Sede
+                    </dt>
+                    <dd className="text-right font-bold text-tinta dark:text-noche-tinta">
+                      {operativoDetalle.sede}
+                    </dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 border-t border-borde pt-2 dark:border-noche-borde">
+                    <dt className="font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                      Inicio
+                    </dt>
+                    <dd className="text-right font-bold tabular-nums text-tinta dark:text-noche-tinta">
+                      {operativoDetalle.fecha_inicio.replace('T', ' ')}
+                    </dd>
+                  </div>
+                  {operativoDetalle.fecha_fin && (
+                    <div className="flex items-center justify-between gap-2 border-t border-borde pt-2 dark:border-noche-borde">
+                      <dt className="font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                        Cierre programado
+                      </dt>
+                      <dd className="text-right font-bold tabular-nums text-tinta dark:text-noche-tinta">
+                        {operativoDetalle.fecha_fin.replace('T', ' ')}
+                      </dd>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between gap-2 border-t border-borde pt-2 dark:border-noche-borde">
+                    <dt className="font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                      Apuntados
+                    </dt>
+                    <dd className="text-right font-bold tabular-nums text-tinta dark:text-noche-tinta">
+                      {apuntadosDet}
+                      {cupoDet !== null ? ` / ${cupoDet}` : ' (sin límite)'}
+                    </dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 border-t border-borde pt-2 dark:border-noche-borde">
+                    <dt className="font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                      Recepción con QR
+                    </dt>
+                    <dd className="text-right font-bold text-tinta dark:text-noche-tinta">
+                      {operativoDetalle.recepcion_abierta ? 'Abierta' : 'Cerrada por ahora'}
+                    </dd>
+                  </div>
+                </dl>
+
+                {operativoDetalle.descripcion && (
+                  <div className="rounded-lg bg-superficie-suave p-3 text-xs dark:bg-noche-campo">
+                    <span className="block text-[11px] font-bold text-tinta-suave dark:text-noche-tinta-suave">
+                      Indicaciones operativas
+                    </span>
+                    <p className="mt-1 whitespace-pre-line text-tinta dark:text-noche-tinta">
+                      {operativoDetalle.descripcion}
+                    </p>
+                  </div>
+                )}
+
+                {/* Acciones desde el detalle */}
+                <div className="flex flex-wrap items-center justify-end gap-2 border-t border-borde pt-3 dark:border-noche-borde">
+                  <button
+                    type="button"
+                    onClick={() => setOperativoDetalleId(null)}
+                    className="btn-salvia min-h-9 px-3 text-xs"
+                  >
+                    Cerrar
+                  </button>
+
+                  {!asistenciaDet && preDet && (
+                    <button
+                      type="button"
+                      disabled={ocupadoDet}
+                      onClick={() => void manejarCancelarPrerregistro(operativoDetalle)}
+                      className="inline-flex min-h-9 cursor-pointer items-center gap-1 rounded-lg border border-borde-fuerte bg-tarjeta px-3 text-xs font-semibold text-tinta-suave hover:border-alerta hover:text-alerta disabled:opacity-50 dark:border-noche-borde dark:bg-noche-tarjeta dark:text-noche-tinta-suave dark:hover:text-noche-rojo-texto"
+                    >
+                      <UserMinus size={14} strokeWidth={2} />
+                      <span>{ocupadoDet ? 'Cancelando...' : 'Cancelar registro'}</span>
+                    </button>
+                  )}
+
+                  {!asistenciaDet && !preDet && !cupoLlenoDet && (
+                    <button
+                      type="button"
+                      disabled={ocupadoDet}
+                      onClick={() => void manejarApuntarme(operativoDetalle)}
+                      className="btn-verde min-h-9 px-4 text-xs"
+                    >
+                      <UserPlus size={14} strokeWidth={2} />
+                      <span>{ocupadoDet ? 'Apuntando...' : 'Apuntarme'}</span>
+                    </button>
+                  )}
+
+                  {operativoDetalle.recepcion_abierta && !asistenciaDet && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOperativoDetalleId(null)
+                        setError(null)
+                        setAviso(null)
+                        setAbriendoEscaner(true)
+                      }}
+                      className="btn-naranja min-h-9 px-3.5 text-xs"
+                    >
+                      <QrCode size={14} strokeWidth={2} />
+                      <span>Escanear QR</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            </article>
+          </div>
+        )
+      })()}
 
       {/* Modales */}
       {abriendoEscaner && (

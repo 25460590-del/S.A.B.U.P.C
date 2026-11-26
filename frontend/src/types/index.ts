@@ -146,9 +146,16 @@ export interface PrerregistroOperativo {
   etapa: EtapaBrigadista
   subgrupo: string
   ayudantia: AyudantiaSlot
+  /** Espejo normalizado de `ayudantia` para consistencia de alcance Jefe de Ayudantía. */
+  ayudantia_slot?: AyudantiaSlot
+  /** Rol operativo preasignado por ayudantía o ajustado manualmente durante la convocatoria. */
+  rol_en_turno?: RolEnTurno
+  /** Marca si el rol fue editado manualmente por Administración/Jefe/Encargado. */
+  rol_editado_manual?: boolean
   origen: OrigenPrerregistro
   registrado_por_uid: string
   fecha_registro: Timestamp
+  actualizado_en?: Timestamp
 }
 
 export interface SecretoTotpOperativo {
@@ -160,14 +167,23 @@ export interface SecretoTotpOperativo {
 
 // ── Colección `asistencias_personal/{id}` (con Candado Duro de Salida) ───────
 
-export type RolEnTurno =
+export type RolOperativoCanonico =
+  | 'Búsqueda y Rescate'
+  | 'Radios'
+  | 'Encargados'
+  | 'Abastecedores'
+  | 'Atención'
+  | 'Sin definir'
+
+export type RolEnTurnoLegado =
   | 'Primeros Auxilios'
   | 'Radiocomunicación'
-  | 'Búsqueda y Rescate'
   | 'Evacuación'
   | 'Logística'
   | 'Encargado'
   | 'Sin asignar'
+
+export type RolEnTurno = RolOperativoCanonico | RolEnTurnoLegado
 
 export type EstadoOperativo = 'En servicio' | 'En descanso' | 'Reserva' | 'Retirado'
 
@@ -232,6 +248,7 @@ export interface EquipoTurno {
   operativo_nombre?: string
   usuario_uid: string
   usuario_nombre: string
+  ayudantia_slot?: AyudantiaSlot
   nombre_articulo: string
   codigo_inventario: string
   cantidad?: number
@@ -370,6 +387,7 @@ export type TipoEventoAuditoria =
   | 'BAJA_USUARIO'
   | 'CAMBIO_ROL'
   | 'ACTUALIZACION_PERSONAL'
+  | 'CORRECCION_IDENTIDAD'
   | 'ASIGNACION_RADIO'
   | 'CREACION_OPERATIVO'
   | 'CAMBIO_RECEPCION_OPERATIVO'
@@ -398,5 +416,7 @@ export interface AuditoriaEvento {
   objetivo_uid: string
   objetivo_nombre: string
   detalle: string
+  valor_anterior?: string | null
+  valor_nuevo?: string | null
   creado_en: Timestamp
 }

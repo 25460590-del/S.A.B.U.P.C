@@ -1,5 +1,5 @@
 import type { User } from 'firebase/auth'
-import { AlertCircle, ArrowLeft, Eye, EyeOff } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Eye, EyeOff, Info, LogIn } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import { BarraEstado } from '../components/BarraEstado'
 import { BupcLogo } from '../components/BupcLogo'
@@ -16,15 +16,23 @@ import {
   normalizarParentesco,
 } from '../lib/nombres'
 import {
-  completarRegistroGoogle,
+  completarRegistroAutenticado,
+  corregirDatosPendiente,
   mensajeDeError,
   registrarBrigadista,
 } from '../services/authService'
-import type { NivelAcademico, Sexo, TipoSangre } from '../types'
+import type { NivelAcademico, Sexo, TipoSangre, Usuario } from '../types'
 
 interface RegistroPageProps {
+  /** Cuenta existente en Firebase Auth sin documento en `usuarios/{uid}` (Google o huérfana). */
+  usuarioAutenticado?: User
+  /** Alias retrocompatible de `usuarioAutenticado`. */
   usuarioGoogle?: User
-  alVolverALogin: () => void
+  /** Expediente en estado `Pendiente` para permitir corrección antes de ser aprobado. */
+  perfilPendiente?: Usuario
+  alVolverALogin: (correoSugerido?: string) => void
+  alGuardarCorreccion?: () => void
+  alCancelarCorreccion?: () => void
 }
 
 type Paso = 1 | 2 | 3
@@ -35,40 +43,103 @@ const SUBTITULOS: Record<Paso, string> = {
   3: 'Paso 3 de 3 · Ficha de Emergencia',
 }
 
-export function RegistroPage({ usuarioGoogle, alVolverALogin }: RegistroPageProps) {
-  const esGoogle = Boolean(usuarioGoogle)
+function partirNombreAuth(displayName?: string | null): {
+  nombres: string
+  paterno: string
+  materno: string
+} {
+  if (!displayName) return { nombres: '', paterno: '', materno: '' }
+  const partes = displayName.trim().split(/\s+/).filter(Boolean)
+  if (partes.length === 0) return { nombres: '', paterno: '', materno: '' }
+  if (partes.length === 1) return { nombres: partes[0], paterno: '', materno: '' }
+  if (partes.length === 2) return { nombres: partes[0], paterno: partes[1], materno: '' }
+  return {
+    nombres: partes.slice(0, partes.length - 2).join(' '),
+    paterno: partes[partes.length - 2],
+    materno: partes[partes.length - 1],
+  }
+}
+
+export function RegistroPage({
+  usuarioAutenticado,
+  usuarioGoogle,
+  perfilPendiente,
+  alVolverALogin,
+  alGuardarCorreccion,
+  alCancelarCorreccion,
+}: RegistroPageProps) {
+  const cuentaAuth = usuarioAutenticado ?? usuarioGoogle
+  const esCorreccionPendiente = Boolean(perfilPendiente)
+  const sinContrasena = Boolean(cuentaAuth) || esCorreccionPendiente
+  const nombreDesdeAuth = partirNombreAuth(cuentaAuth?.displayName)
+
+  const carreraInicialEsCatalogo = perfilPendiente
+    ? CARRERAS_SUPERIOR.includes(perfilPendiente.escuela_carrera)
+    : true
+
   const [paso, setPaso] = useState<Paso>(1)
   const [enviando, setEnviando] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [correoYaEnUso, setCorreoYaEnUso] = useState(false)
   const [mostrarPass, setMostrarPass] = useState(false)
 
   // Paso 1: Cuenta + Personal y Contacto
-  const [correo, setCorreo] = useState(usuarioGoogle?.email ?? '')
+  const [correo, setCorreo] = useState(perfilPendiente?.correo ?? cuentaAuth?.email ?? '')
   const [contrasena, setContrasena] = useState('')
   const [confirmarContrasena, setConfirmarContrasena] = useState('')
-  const [nombres, setNombres] = useState(usuarioGoogle?.displayName?.split(' ')[0] ?? '')
-  const [apellidoPaterno, setApellidoPaterno] = useState('')
-  const [apellidoMaterno, setApellidoMaterno] = useState('')
-  const [fechaNacimiento, setFechaNacimiento] = useState('')
-  const [sexo, setSexo] = useState<Sexo>('Mujer')
-  const [telefonoFijo, setTelefonoFijo] = useState('')
-  const [celular, setCelular] = useState('')
-  const [celularConWhatsapp, setCelularConWhatsapp] = useState(true)
+  const [nombres, setNombres] = useState(perfilPendiente?.nombres ?? nombreDesdeAuth.nombres)
+  const [apellidoPaterno, setApellidoPaterno] = useState(
+    perfilPendiente?.apellido_paterno ?? nombreDesdeAuth.paterno,
+  )
+  const [apellidoMaterno, setApellidoMaterno] = useState(
+    perfilPendiente?.apellido_materno ?? nombreDesdeAuth.materno,
+  )
+  const [fechaNacimiento, setFechaNacimiento] = useState(perfilPendiente?.fecha_nacimiento ?? '')
+  const [sexo, setSexo] = useState<Sexo>(perfilPendiente?.sexo ?? 'Mujer')
+  const [telefonoFijo, setTelefonoFijo] = useState(perfilPendiente?.telefono_fijo ?? '')
+  const [celular, setCelular] = useState(perfilPendiente?.celular ?? '')
+  const [celularConWhatsapp, setCelularConWhatsapp] = useState(
+    perfilPendiente?.celular_con_whatsapp ?? true,
+  )
 
   // Paso 2: Académico
-  const [nivelAcademico, setNivelAcademico] = useState<NivelAcademico>('Superior')
-  const [carreraSeleccionada, setCarreraSeleccionada] = useState(CARRERAS_SUPERIOR[0])
-  const [otraCarrera, setOtraCarrera] = useState('')
-  const [escuelaLibre, setEscuelaLibre] = useState('')
-  const [numeroCuenta, setNumeroCuenta] = useState('')
+  const [nivelAcademico, setNivelAcademico] = useState<NivelAcademico>(
+    perfilPendiente?.nivel_academico ?? 'Superior',
+  )
+  const [carreraSeleccionada, setCarreraSeleccionada] = useState(
+    perfilPendiente && perfilPendiente.nivel_academico === 'Superior'
+      ? carreraInicialEsCatalogo
+        ? perfilPendiente.escuela_carrera
+        : OPCION_OTRA_CARRERA
+      : CARRERAS_SUPERIOR[0],
+  )
+  const [otraCarrera, setOtraCarrera] = useState(
+    perfilPendiente && perfilPendiente.nivel_academico === 'Superior' && !carreraInicialEsCatalogo
+      ? perfilPendiente.escuela_carrera
+      : '',
+  )
+  const [escuelaLibre, setEscuelaLibre] = useState(
+    perfilPendiente && perfilPendiente.nivel_academico !== 'Superior'
+      ? perfilPendiente.escuela_carrera
+      : '',
+  )
+  const [numeroCuenta, setNumeroCuenta] = useState(perfilPendiente?.numero_cuenta ?? '')
 
   // Paso 3: Ficha de Emergencia
-  const [tipoSangre, setTipoSangre] = useState<TipoSangre>('O+')
-  const [alergias, setAlergias] = useState('')
-  const [padecimientos, setPadecimientos] = useState('')
-  const [contactoEmergenciaNombre, setContactoEmergenciaNombre] = useState('')
-  const [contactoEmergenciaParentesco, setContactoEmergenciaParentesco] = useState('')
-  const [contactoEmergenciaTelefono, setContactoEmergenciaTelefono] = useState('')
+  const [tipoSangre, setTipoSangre] = useState<TipoSangre>(perfilPendiente?.tipo_sangre ?? 'O+')
+  const [alergias, setAlergias] = useState(perfilPendiente?.alergias ?? '')
+  const [padecimientos, setPadecimientos] = useState(
+    perfilPendiente?.padecimientos_medicamentos ?? '',
+  )
+  const [contactoEmergenciaNombre, setContactoEmergenciaNombre] = useState(
+    perfilPendiente?.contacto_emergencia_nombre ?? '',
+  )
+  const [contactoEmergenciaParentesco, setContactoEmergenciaParentesco] = useState(
+    perfilPendiente?.contacto_emergencia_parentesco ?? '',
+  )
+  const [contactoEmergenciaTelefono, setContactoEmergenciaTelefono] = useState(
+    perfilPendiente?.contacto_emergencia_telefono ?? '',
+  )
 
   function obtenerEscuelaCarrera(): string {
     if (nivelAcademico === 'Superior') {
@@ -80,7 +151,7 @@ export function RegistroPage({ usuarioGoogle, alVolverALogin }: RegistroPageProp
   }
 
   function validarPaso1(): string | null {
-    if (!esGoogle) {
+    if (!sinContrasena) {
       if (!correo.trim() || !correo.includes('@')) return 'Ingresa un correo electrónico válido.'
       if (contrasena.length < 6) return 'La contraseña debe tener al menos 6 caracteres.'
       if (contrasena !== confirmarContrasena) return 'Las contraseñas no coinciden.'
@@ -90,7 +161,9 @@ export function RegistroPage({ usuarioGoogle, alVolverALogin }: RegistroPageProp
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fechaNacimiento)) {
       return 'Selecciona tu fecha de nacimiento.'
     }
-    if (!celular.trim()) return 'Ingresa tu número de celular.'
+    if (!celular.trim() || !esTelefonoValido(celular)) {
+      return 'Ingresa un número de celular válido de al menos 10 dígitos.'
+    }
     return null
   }
 
@@ -137,6 +210,7 @@ export function RegistroPage({ usuarioGoogle, alVolverALogin }: RegistroPageProp
   async function manejarEnvio(e: FormEvent) {
     e.preventDefault()
     setError(null)
+    setCorreoYaEnUso(false)
     const msg = validarPaso1() ?? validarPaso2() ?? validarPaso3()
     if (msg) {
       setError(msg)
@@ -171,8 +245,11 @@ export function RegistroPage({ usuarioGoogle, alVolverALogin }: RegistroPageProp
         },
       }
 
-      if (usuarioGoogle) {
-        await completarRegistroGoogle(usuarioGoogle, payloadComun)
+      if (perfilPendiente) {
+        await corregirDatosPendiente(perfilPendiente.uid, payloadComun)
+        alGuardarCorreccion?.()
+      } else if (cuentaAuth) {
+        await completarRegistroAutenticado(cuentaAuth, payloadComun)
       } else {
         await registrarBrigadista({
           correo: correo.trim(),
@@ -181,7 +258,12 @@ export function RegistroPage({ usuarioGoogle, alVolverALogin }: RegistroPageProp
         })
       }
     } catch (err) {
-      setError(mensajeDeError(err))
+      const codigo = (err as { code?: string })?.code ?? ''
+      if (codigo === 'auth/email-already-in-use') {
+        setCorreoYaEnUso(true)
+      } else {
+        setError(err instanceof Error && !codigo ? err.message : mensajeDeError(err))
+      }
     } finally {
       setEnviando(false)
     }
@@ -189,21 +271,35 @@ export function RegistroPage({ usuarioGoogle, alVolverALogin }: RegistroPageProp
 
   return (
     <div className="mx-auto flex min-h-screen max-w-md flex-col bg-fondo dark:bg-noche">
-      <BarraEstado etiquetaDerecha="Alta de Brigadista" />
+      <BarraEstado
+        etiquetaDerecha={
+          esCorreccionPendiente ? 'Corrección de Solicitud' : 'Alta de Brigadista'
+        }
+      />
 
       {/* Encabezado Verde UdeC */}
       <header className="flex items-center justify-between gap-3 border-b-3 border-naranja bg-udec px-4 py-4 text-white">
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={alVolverALogin}
-            aria-label="Volver a inicio de sesión"
+            onClick={() =>
+              esCorreccionPendiente && alCancelarCorreccion
+                ? alCancelarCorreccion()
+                : alVolverALogin()
+            }
+            aria-label={
+              esCorreccionPendiente
+                ? 'Cancelar corrección y volver'
+                : 'Volver a inicio de sesión'
+            }
             className="inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/25"
           >
             <ArrowLeft size={20} strokeWidth={2} />
           </button>
           <div>
-            <h1 className="text-base font-bold">Registro de Brigadista</h1>
+            <h1 className="text-base font-bold">
+              {esCorreccionPendiente ? 'Corregir Datos de Registro' : 'Registro de Brigadista'}
+            </h1>
             <p className="text-xs font-medium text-white/85">{SUBTITULOS[paso]}</p>
           </div>
         </div>
@@ -250,6 +346,52 @@ export function RegistroPage({ usuarioGoogle, alVolverALogin }: RegistroPageProp
       </section>
 
       <main className="flex flex-1 flex-col gap-4 p-4">
+        {cuentaAuth && !esCorreccionPendiente && (
+          <div
+            role="status"
+            className="flex items-start gap-2.5 rounded-lg border border-udec/35 bg-salvia p-3 text-xs font-semibold text-udec-oscuro dark:border-activo-claro/35 dark:bg-noche-campo dark:text-noche-tinta"
+          >
+            <Info size={17} strokeWidth={2} className="mt-0.5 shrink-0 text-udec dark:text-activo-claro" />
+            <span>
+              Tu sesión ya está activa con <strong>{cuentaAuth.email}</strong>, pero aún no existe
+              tu expediente operativo. Completa tus datos para enviarlo a revisión.
+            </span>
+          </div>
+        )}
+
+        {correoYaEnUso && (
+          <div
+            role="alert"
+            className="flex flex-col gap-3 rounded-xl border-2 border-ambar bg-ambar-suave p-4 text-sm text-tinta dark:bg-noche-ambar dark:text-noche-tinta"
+          >
+            <div className="flex items-start gap-2">
+              <AlertCircle
+                size={19}
+                strokeWidth={2}
+                className="mt-0.5 shrink-0 text-ambar-texto dark:text-noche-ambar-texto"
+              />
+              <div>
+                <p className="font-bold text-ambar-texto dark:text-noche-ambar-texto">
+                  Este correo electrónico ya está registrado
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-tinta dark:text-noche-tinta">
+                  Si ya intentaste registrarte antes o tu registro quedó pendiente, inicia sesión
+                  con <strong>{correo.trim()}</strong> para continuar tu expediente o corregir tus
+                  datos enviados.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => alVolverALogin(correo.trim())}
+              className="btn-verde min-h-10 w-full text-xs"
+            >
+              <LogIn size={16} strokeWidth={2} />
+              <span>Iniciar sesión con este correo</span>
+            </button>
+          </div>
+        )}
+
         {error && (
           <div
             role="alert"
@@ -271,7 +413,7 @@ export function RegistroPage({ usuarioGoogle, alVolverALogin }: RegistroPageProp
               <div className="flex flex-col gap-3">
                 <div className="flex flex-col gap-1">
                   <label htmlFor="reg-correo" className="etiqueta">
-                    Correo electrónico {esGoogle ? '(verificado con Google)' : ''}
+                    Correo electrónico {sinContrasena ? '(vinculado a tu cuenta)' : ''}
                   </label>
                   <input
                     id="reg-correo"
@@ -279,14 +421,17 @@ export function RegistroPage({ usuarioGoogle, alVolverALogin }: RegistroPageProp
                     autoComplete="email"
                     placeholder="nombre@ucol.mx"
                     value={correo}
-                    onChange={(e) => setCorreo(e.target.value)}
-                    readOnly={esGoogle}
-                    className={`campo ${esGoogle ? 'cursor-not-allowed opacity-80' : ''}`}
+                    onChange={(e) => {
+                      setCorreo(e.target.value)
+                      if (correoYaEnUso) setCorreoYaEnUso(false)
+                    }}
+                    readOnly={sinContrasena}
+                    className={`campo ${sinContrasena ? 'cursor-not-allowed opacity-80' : ''}`}
                     required
                   />
                 </div>
 
-                {!esGoogle && (
+                {!sinContrasena && (
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div className="flex flex-col gap-1">
                       <label htmlFor="reg-pass" className="etiqueta">
@@ -712,7 +857,11 @@ export function RegistroPage({ usuarioGoogle, alVolverALogin }: RegistroPageProp
                   Anterior
                 </button>
                 <button type="submit" disabled={enviando} className="btn-naranja">
-                  {enviando ? 'Enviando...' : 'Enviar Solicitud'}
+                  {enviando
+                    ? 'Guardando...'
+                    : esCorreccionPendiente
+                      ? 'Guardar Correcciones'
+                      : 'Enviar Solicitud'}
                 </button>
               </div>
             </article>

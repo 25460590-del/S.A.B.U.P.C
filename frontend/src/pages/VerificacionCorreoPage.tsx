@@ -1,4 +1,12 @@
-import { AlertCircle, CheckCircle2, LogOut, MailCheck, RefreshCw, Send } from 'lucide-react'
+import {
+  AlertCircle,
+  CheckCircle2,
+  LogOut,
+  MailCheck,
+  Pencil,
+  RefreshCw,
+  Send,
+} from 'lucide-react'
 import type { User } from 'firebase/auth'
 import { useState } from 'react'
 import { BarraEstado } from '../components/BarraEstado'
@@ -9,19 +17,38 @@ import {
   reenviarVerificacionCorreo,
   verificarEstadoCorreo,
 } from '../services/authService'
+import type { Usuario } from '../types'
+import { RegistroPage } from './RegistroPage'
 
 interface VerificacionCorreoPageProps {
   usuarioAuth: User
+  perfil?: Usuario
   alConfirmarVerificacion: () => void
 }
 
 export function VerificacionCorreoPage({
   usuarioAuth,
+  perfil,
   alConfirmarVerificacion,
 }: VerificacionCorreoPageProps) {
   const [ocupado, setOcupado] = useState(false)
+  const [editandoDatos, setEditandoDatos] = useState(false)
   const [aviso, setAviso] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  if (editandoDatos && perfil && perfil.estatus === 'Pendiente') {
+    return (
+      <RegistroPage
+        perfilPendiente={perfil}
+        alVolverALogin={() => setEditandoDatos(false)}
+        alCancelarCorreccion={() => setEditandoDatos(false)}
+        alGuardarCorreccion={() => {
+          setEditandoDatos(false)
+          setAviso('Tus datos de registro fueron corregidos correctamente.')
+        }}
+      />
+    )
+  }
 
   async function manejarYaVerifique() {
     setOcupado(true)
@@ -126,6 +153,22 @@ export function VerificacionCorreoPage({
               <Send size={16} strokeWidth={2} />
               <span>Reenviar enlace</span>
             </button>
+
+            {perfil && perfil.estatus === 'Pendiente' && (
+              <button
+                type="button"
+                disabled={ocupado}
+                onClick={() => {
+                  setAviso(null)
+                  setError(null)
+                  setEditandoDatos(true)
+                }}
+                className="btn w-full border border-udec bg-tarjeta text-udec-oscuro hover:bg-salvia dark:border-activo-claro dark:bg-noche-campo dark:text-activo-claro"
+              >
+                <Pencil size={16} strokeWidth={2} />
+                <span>Corregir datos de registro</span>
+              </button>
+            )}
 
             <button
               type="button"

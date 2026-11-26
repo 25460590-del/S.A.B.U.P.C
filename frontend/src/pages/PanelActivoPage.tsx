@@ -1,5 +1,6 @@
 import {
   AlertCircle,
+  CalendarCheck,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -10,12 +11,14 @@ import {
   History,
   IdCard,
   KeyRound,
+  Lock,
   LogOut,
   Megaphone,
   Menu,
   Moon,
   Package,
-  QrCode,
+  Pencil,
+  Phone,
   Radio,
   Save,
   Shield,
@@ -32,24 +35,26 @@ import { GestionTeslaPanel } from '../components/GestionTeslaPanel'
 import { IncidenciasPersonalPanel } from '../components/IncidenciasPersonalPanel'
 import { MiMaterialPanel } from '../components/MiMaterialPanel'
 import { ResguardoGlobalPanel } from '../components/ResguardoGlobalPanel'
+import { TIPOS_SANGRE } from '../constants/catalogos'
 import { useTema } from '../context/TemaContext'
 import { esTelefonoValido, normalizarNombrePropio } from '../lib/nombres'
 import {
+  ayudantiaJefatura,
   esAdmin,
   esEncargado,
-  esEncargadoAP,
   esEncargadoTesla,
   etiquetaAyudantia,
   puedeUsarRadio,
 } from '../lib/permisos'
 import {
   actualizarFichaEmergenciaPropia,
+  actualizarTelefonoPropio,
   cerrarSesion,
   mensajeDeError,
   nombreCompleto,
 } from '../services/authService'
 import { escucharFotoPerfil } from '../services/fotosService'
-import type { FotoPerfil, Usuario } from '../types'
+import type { FotoPerfil, TipoSangre, Usuario } from '../types'
 import { AdminConsolePage } from './AdminConsolePage'
 import { BrigadistaDashboardPage } from './BrigadistaDashboardPage'
 import { CredencialDigitalPage } from './CredencialDigitalPage'
@@ -92,7 +97,7 @@ interface GrupoMenu {
 
 const TITULOS_DESTINO: Record<DestinoNavegacion, string> = {
   credencial: 'Mi Credencial QR',
-  escaner: 'Escáner QR',
+  escaner: 'Mi Operativo',
   material: 'Mi Material',
   'mi-historial': 'Mi Historial',
   operativos: 'Operativos',
@@ -108,6 +113,7 @@ const TITULOS_DESTINO: Record<DestinoNavegacion, string> = {
 
 function FichaEmergenciaPerfilCard({ perfil }: { perfil: Usuario }) {
   const [editando, setEditando] = useState(false)
+  const [tipoSangre, setTipoSangre] = useState<TipoSangre>(perfil.tipo_sangre)
   const [alergias, setAlergias] = useState(perfil.alergias || '')
   const [padecimientos, setPadecimientos] = useState(perfil.padecimientos_medicamentos || '')
   const [contactoNombre, setContactoNombre] = useState(
@@ -122,6 +128,7 @@ function FichaEmergenciaPerfilCard({ perfil }: { perfil: Usuario }) {
   const [aviso, setAviso] = useState<string | null>(null)
 
   function abrirEdicion() {
+    setTipoSangre(perfil.tipo_sangre)
     setAlergias(perfil.alergias || '')
     setPadecimientos(perfil.padecimientos_medicamentos || '')
     setContactoNombre(normalizarNombrePropio(perfil.contacto_emergencia_nombre))
@@ -152,6 +159,7 @@ function FichaEmergenciaPerfilCard({ perfil }: { perfil: Usuario }) {
     setGuardando(true)
     try {
       await actualizarFichaEmergenciaPropia(perfil.uid, {
+        tipo_sangre: tipoSangre,
         alergias,
         padecimientos_medicamentos: padecimientos,
         contacto_emergencia_nombre: contactoNombre,
@@ -209,6 +217,24 @@ function FichaEmergenciaPerfilCard({ perfil }: { perfil: Usuario }) {
 
       {editando ? (
         <form onSubmit={manejarGuardar} className="flex flex-col gap-3" noValidate>
+          <div className="flex flex-col gap-1">
+            <label htmlFor="perf-sangre" className="etiqueta">
+              Tipo de sangre
+            </label>
+            <select
+              id="perf-sangre"
+              value={tipoSangre}
+              onChange={(e) => setTipoSangre(e.target.value as TipoSangre)}
+              className="campo text-sm font-bold tabular-nums"
+            >
+              {TIPOS_SANGRE.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <div className="flex flex-col gap-1">
             <label htmlFor="perf-emerg-nom" className="etiqueta">
               Nombre del contacto de emergencia
@@ -365,6 +391,181 @@ function FichaEmergenciaPerfilCard({ perfil }: { perfil: Usuario }) {
   )
 }
 
+function TelefonoPropioPerfilCard({ perfil }: { perfil: Usuario }) {
+  const [editando, setEditando] = useState(false)
+  const [celular, setCelular] = useState(perfil.celular)
+  const [conWhatsapp, setConWhatsapp] = useState(perfil.celular_con_whatsapp)
+  const [telefonoFijo, setTelefonoFijo] = useState(perfil.telefono_fijo || '')
+  const [guardando, setGuardando] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [aviso, setAviso] = useState<string | null>(null)
+
+  function abrirEdicion() {
+    setCelular(perfil.celular)
+    setConWhatsapp(perfil.celular_con_whatsapp)
+    setTelefonoFijo(perfil.telefono_fijo || '')
+    setError(null)
+    setAviso(null)
+    setEditando(true)
+  }
+
+  async function manejarGuardar(e: FormEvent) {
+    e.preventDefault()
+    setError(null)
+    setAviso(null)
+    if (!esTelefonoValido(celular)) {
+      setError('Ingresa un número de celular válido de al menos 10 dígitos.')
+      return
+    }
+    if (telefonoFijo.trim() && !esTelefonoValido(telefonoFijo)) {
+      setError('El teléfono fijo debe tener al menos 10 dígitos o dejarse vacío.')
+      return
+    }
+
+    setGuardando(true)
+    try {
+      await actualizarTelefonoPropio(perfil.uid, {
+        celular,
+        celular_con_whatsapp: conWhatsapp,
+        telefono_fijo: telefonoFijo,
+      })
+      setAviso('Teléfono propio actualizado correctamente.')
+      setEditando(false)
+    } catch (err) {
+      setError(mensajeDeError(err))
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  return (
+    <article className="tarjeta mx-auto flex w-full max-w-md flex-col gap-3.5 p-5">
+      <div className="flex items-center justify-between gap-2 border-b border-borde pb-3 dark:border-noche-borde">
+        <div className="flex items-center gap-2">
+          <Phone size={17} strokeWidth={2} className="text-udec dark:text-activo-claro" />
+          <h3 className="text-base font-bold text-tinta dark:text-noche-tinta">
+            Teléfono de Contacto
+          </h3>
+        </div>
+        {!editando && (
+          <button
+            type="button"
+            onClick={abrirEdicion}
+            className="btn-salvia min-h-8 px-3 text-xs"
+          >
+            <Pencil size={13} strokeWidth={2} />
+            <span>Editar</span>
+          </button>
+        )}
+      </div>
+
+      {error && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-2.5 text-xs font-semibold text-red-900 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+        >
+          <AlertCircle size={15} strokeWidth={2} className="mt-0.5 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {aviso && (
+        <div
+          role="status"
+          className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-2.5 text-xs font-semibold text-emerald-900 dark:bg-noche-campo dark:text-activo-claro"
+        >
+          <CheckCircle2 size={15} strokeWidth={2} className="mt-0.5 shrink-0" />
+          <span>{aviso}</span>
+        </div>
+      )}
+
+      {editando ? (
+        <form onSubmit={manejarGuardar} className="flex flex-col gap-3" noValidate>
+          <div className="flex flex-col gap-1">
+            <label htmlFor="perf-cel" className="etiqueta">
+              Celular
+            </label>
+            <input
+              id="perf-cel"
+              type="tel"
+              maxLength={20}
+              placeholder="10 dígitos"
+              value={celular}
+              onChange={(e) => setCelular(e.target.value)}
+              className="campo text-sm tabular-nums"
+              required
+            />
+          </div>
+
+          <label className="flex min-h-10 cursor-pointer items-center gap-2.5 rounded-lg border border-borde bg-salvia px-3 dark:border-noche-borde dark:bg-noche-campo">
+            <input
+              type="checkbox"
+              checked={conWhatsapp}
+              onChange={(e) => setConWhatsapp(e.target.checked)}
+              className="h-4 w-4 rounded accent-udec"
+            />
+            <span className="text-xs font-semibold text-udec-oscuro dark:text-noche-tinta">
+              Este celular tiene WhatsApp activo
+            </span>
+          </label>
+
+          <div className="flex flex-col gap-1">
+            <label htmlFor="perf-fijo" className="etiqueta">
+              Teléfono fijo (opcional)
+            </label>
+            <input
+              id="perf-fijo"
+              type="tel"
+              maxLength={20}
+              placeholder="Opcional"
+              value={telefonoFijo}
+              onChange={(e) => setTelefonoFijo(e.target.value)}
+              className="campo text-sm tabular-nums"
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-1">
+            <button
+              type="button"
+              disabled={guardando}
+              onClick={() => setEditando(false)}
+              className="btn-salvia min-h-9 px-3 text-xs"
+            >
+              Cancelar
+            </button>
+            <button type="submit" disabled={guardando} className="btn-verde min-h-9 px-4 text-xs">
+              <Save size={14} strokeWidth={2} />
+              <span>{guardando ? 'Guardando...' : 'Guardar'}</span>
+            </button>
+          </div>
+        </form>
+      ) : (
+        <dl className="flex flex-col gap-2 text-sm">
+          <div className="flex items-center justify-between gap-2">
+            <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+              Celular
+            </dt>
+            <dd className="font-bold tabular-nums text-tinta dark:text-noche-tinta">
+              {perfil.celular}
+              {perfil.celular_con_whatsapp ? ' (WhatsApp)' : ''}
+            </dd>
+          </div>
+          {perfil.telefono_fijo && (
+            <div className="flex items-center justify-between gap-2 border-t border-borde pt-2 dark:border-noche-borde">
+              <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                Teléfono fijo
+              </dt>
+              <dd className="font-semibold tabular-nums text-tinta dark:text-noche-tinta">
+                {perfil.telefono_fijo}
+              </dd>
+            </div>
+          )}
+        </dl>
+      )}
+    </article>
+  )
+}
+
 /**
  * Shell operativo unificado y responsive (PC + Móvil) con RBAC estrictamente aditivo:
  * Brigadista ⊂ Encargado ⊂ Administrador.
@@ -374,17 +575,20 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
 
   const soyAdmin = esAdmin(perfil)
   const soyEncargado = esEncargado(perfil)
-  const soyAP = esEncargadoAP(perfil)
+  const ayJefe = ayudantiaJefatura(perfil)
+  const soyJefeAyudantia = Boolean(ayJefe)
   const soyTesla = esEncargadoTesla(perfil)
   const puedoRadio = puedeUsarRadio(perfil)
   const tengoGruposACargo = (perfil.grupos_a_cargo?.length ?? 0) > 0
-  const puedoPersonal = soyAdmin || soyAP || (soyEncargado && tengoGruposACargo)
+  const puedoPersonal = soyAdmin || soyJefeAyudantia || (soyEncargado && tengoGruposACargo)
 
   const destinoInicial: DestinoNavegacion = soyAdmin
     ? 'personal'
-    : soyEncargado
-      ? 'operativos'
-      : 'escaner'
+    : soyJefeAyudantia
+      ? 'personal'
+      : soyEncargado
+        ? 'operativos'
+        : 'escaner'
 
   const [destino, setDestino] = useState<DestinoNavegacion>(destinoInicial)
   const [drawerAbierto, setDrawerAbierto] = useState(false)
@@ -393,7 +597,7 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
   const [gruposAbiertos, setGruposAbiertos] = useState<Record<GrupoId, boolean>>({
     mi_espacio: true,
     operacion: soyEncargado || puedoRadio,
-    gestion: soyAdmin || soyAP || soyTesla,
+    gestion: soyAdmin || soyJefeAyudantia || soyTesla || tengoGruposACargo,
   })
 
   useEffect(() => {
@@ -423,7 +627,7 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
       titulo: 'Mi Espacio',
       items: [
         { id: 'credencial', etiqueta: 'Mi Credencial QR', icono: <IdCard size={17} strokeWidth={2} /> },
-        { id: 'escaner', etiqueta: 'Escáner QR', icono: <QrCode size={17} strokeWidth={2} /> },
+        { id: 'escaner', etiqueta: 'Mi Operativo', icono: <CalendarCheck size={17} strokeWidth={2} /> },
         { id: 'material', etiqueta: 'Mi Material', icono: <Package size={17} strokeWidth={2} /> },
         { id: 'mi-historial', etiqueta: 'Mi Historial', icono: <History size={17} strokeWidth={2} /> },
       ],
@@ -452,8 +656,12 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
   if (puedoPersonal) {
     itemsGestion.push({
       id: 'personal',
-      etiqueta: soyAdmin || soyAP ? 'Admin. de Personal' : 'Mi Personal',
-      icono: soyAdmin || soyAP ? <UserCheck size={17} strokeWidth={2} /> : <Users size={17} strokeWidth={2} />,
+      etiqueta: soyAdmin
+        ? 'Admin. de Personal'
+        : ayJefe
+          ? `Mi Ayudantía (${ayJefe})`
+          : 'Mi Personal',
+      icono: soyAdmin ? <UserCheck size={17} strokeWidth={2} /> : <Users size={17} strokeWidth={2} />,
     })
   }
   if (soyTesla) {
@@ -572,8 +780,9 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
                   aria-hidden="true"
                 />
                 <span className="truncate">
-                  {perfil.rol_sistema}
-                  {perfil.ayudantia !== 'Ninguna' ? ` · ${perfil.ayudantia}` : ''}
+                  {ayJefe
+                    ? `Jefe · ${ayJefe}`
+                    : `${perfil.rol_sistema}${perfil.ayudantia !== 'Ninguna' ? ` · ${perfil.ayudantia}` : ''}`}
                 </span>
               </span>
             </div>
@@ -784,7 +993,7 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
                       Rol del sistema
                     </dt>
                     <dd className="font-semibold text-tinta dark:text-noche-tinta">
-                      {perfil.rol_sistema}
+                      {ayJefe ? `Encargado · Jefe de ${ayJefe}` : perfil.rol_sistema}
                     </dd>
                   </div>
                   <div className="flex items-center justify-between gap-2 border-t border-borde pt-2.5 dark:border-noche-borde">
@@ -819,15 +1028,25 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
                   </div>
                 </dl>
 
+                <div className="flex items-start gap-2 rounded-lg border border-borde bg-superficie-suave p-3 text-[11px] leading-snug text-tinta-suave dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta-suave">
+                  <Lock size={14} strokeWidth={2} className="mt-0.5 shrink-0 text-udec dark:text-activo-claro" />
+                  <span>
+                    Tu nombre completo, número de cuenta y correo están protegidos. Si hay algún
+                    error en tu nombre o número de cuenta, solicita el ajuste a Administración.
+                  </span>
+                </div>
+
                 <button
                   type="button"
                   onClick={() => void cerrarSesion()}
-                  className="btn-salvia mt-2 w-full"
+                  className="btn-salvia mt-1 w-full"
                 >
                   <LogOut size={18} strokeWidth={2} />
                   <span>Cerrar Sesión</span>
                 </button>
               </article>
+
+              <TelefonoPropioPerfilCard perfil={perfil} />
 
               <FichaEmergenciaPerfilCard perfil={perfil} />
             </div>
@@ -851,8 +1070,8 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
               : 'text-tinta-suave dark:text-noche-tinta-suave'
           }`}
         >
-          <QrCode size={19} strokeWidth={2} />
-          <span>Escáner</span>
+          <CalendarCheck size={19} strokeWidth={2} />
+          <span>Mi Operativo</span>
         </button>
 
         {soyEncargado ? (

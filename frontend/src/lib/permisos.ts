@@ -159,18 +159,74 @@ export function esEncargado(usuario?: Usuario | null): boolean {
   )
 }
 
-/** Aditivo: `Administrador` o `Encargado` activo de Administración de Personal. */
+export type AyudantiaActiva = Exclude<AyudantiaSlot, 'Ninguna'>
+
+export function esAyudantiaActivaSlot(
+  ayudantia?: AyudantiaSlot | string | null,
+): ayudantia is AyudantiaActiva {
+  return (
+    ayudantia === 'Capacitación' ||
+    ayudantia === 'Administración de Personal' ||
+    ayudantia === 'Tesla' ||
+    ayudantia === 'Socorros' ||
+    ayudantia === 'Logística'
+  )
+}
+
+/**
+ * Evalúa sobre valores crudos/formulario si la combinación corresponde a un Jefe de Ayudantía:
+ * rol `Encargado` + etapa `Grupo Operativo` + una de las 5 ayudantías activas.
+ */
+export function esConfiguracionJefeAyudantia(
+  rol: Usuario['rol_sistema'],
+  etapa: EtapaBrigadista,
+  ayudantia: AyudantiaSlot,
+): boolean {
+  return rol === 'Encargado' && etapa === 'Grupo Operativo' && esAyudantiaActivaSlot(ayudantia)
+}
+
+/**
+ * Un usuario activo actúa automáticamente como Jefe de Ayudantía cuando tiene rol `Encargado`
+ * (no `Administrador`, quien conserva acceso global) y pertenece a `Grupo Operativo` con ayudantía asignada.
+ */
+export function esJefeAyudantia(usuario?: Usuario | null): boolean {
+  if (!esUsuarioActivo(usuario)) return false
+  return esConfiguracionJefeAyudantia(
+    usuario.rol_sistema,
+    etapaEfectiva(usuario),
+    ayudantiaEfectiva(usuario),
+  )
+}
+
+/** Devuelve la ayudantía bajo mando si el usuario actúa como Jefe de Ayudantía, o `null` si tiene otro alcance. */
+export function ayudantiaJefatura(usuario?: Usuario | null): AyudantiaActiva | null {
+  if (!usuario || !esJefeAyudantia(usuario)) return null
+  const ay = ayudantiaEfectiva(usuario)
+  return esAyudantiaActivaSlot(ay) ? ay : null
+}
+
+/** ¿El perfil objetivo pertenece a la misma ayudantía que el Jefe de Ayudantía? */
+export function perteneceAMismaAyudantia(
+  jefe?: Usuario | null,
+  objetivo?: Pick<Usuario, 'ayudantia_slot'> & { ayudantia?: AyudantiaSlot } | null,
+): boolean {
+  const ay = ayudantiaJefatura(jefe)
+  if (!ay || !objetivo) return false
+  return ayudantiaEfectiva(objetivo) === ay
+}
+
+/** Aditivo: `Administrador` o Jefe de Ayudantía activo de Administración de Personal. */
 export function esEncargadoAP(usuario?: Usuario | null): boolean {
   if (!esUsuarioActivo(usuario)) return false
   if (usuario.rol_sistema === 'Administrador') return true
-  return usuario.rol_sistema === 'Encargado' && ayudantiaEfectiva(usuario) === 'Administración de Personal'
+  return ayudantiaJefatura(usuario) === 'Administración de Personal'
 }
 
-/** Aditivo: `Administrador` o `Encargado` activo de Tesla. */
+/** Aditivo: `Administrador` o Jefe de Ayudantía activo de Tesla. */
 export function esEncargadoTesla(usuario?: Usuario | null): boolean {
   if (!esUsuarioActivo(usuario)) return false
   if (usuario.rol_sistema === 'Administrador') return true
-  return usuario.rol_sistema === 'Encargado' && ayudantiaEfectiva(usuario) === 'Tesla'
+  return ayudantiaJefatura(usuario) === 'Tesla'
 }
 
 /**
@@ -184,7 +240,7 @@ export function puedeUsarRadio(usuario?: Usuario | null): boolean {
 
 /**
  * En campo (Operativos y Material BUPC), cualquier Encargado o Administrador activo
- * puede registrar asistencias, entregar/devolver material y levantar actas a cualquier brigadista.
+ * puede operar; si es Jefe de Ayudantía, su alcance se acota estrictamente a su ayudantía.
  */
 export function puedeOperarEnCampo(usuario?: Usuario | null): boolean {
   return esEncargado(usuario)
@@ -192,18 +248,16 @@ export function puedeOperarEnCampo(usuario?: Usuario | null): boolean {
 
 /**
  * Dominio exclusivo de TESLA + cero autoasignación de radio:
- * - Administrador activo puede editar `clave_radio` y `autorizado_radio`.
- * - Encargado Tesla activo puede editarlos ÚNICAMENTE en cuentas ajenas (`uid !== actor.uid`).
- * - AP, otros Encargados y Brigadistas nunca pueden editarlos.
+ * - Administrador activo puede editar `clave_radio` y `autorizado_radio` globalmente.
+ * - Jefe de Ayudantía Tesla activo puede editarlos ÚNICAMENTE en cuentas ajenas de su misma ayudantía (`Tesla`).
+ * - Otros Jefes de Ayudantía, Encargados y Brigadistas nunca pueden editarlos.
  */
 export function puedeAsignarRadio(actor?: Usuario | null, objetivo?: Usuario | null): boolean {
   if (!esUsuarioActivo(actor) || !objetivo) return false
   if (actor.rol_sistema === 'Administrador') return true
-  return (
-    actor.rol_sistema === 'Encargado' &&
-    ayudantiaEfectiva(actor) === 'Tesla' &&
-    actor.uid !== objetivo.uid
-  )
+  if (actor.uid === objetivo.uid) return false
+  if (objetivo.rol_sistema === 'Administrador') return false
+  return ayudantiaJefatura(actor) === 'Tesla' && ayudantiaEfectiva(objetivo) === 'Tesla'
 }
 
 export function perteneceAGruposACargo(actor: Usuario, objetivo: Usuario): boolean {
@@ -221,10 +275,11 @@ export function perteneceAGruposACargo(actor: Usuario, objetivo: Usuario): boole
 }
 
 /**
- * Gestión de personal (Opción B):
- * - Administrador: gestiona a cualquier cuenta.
- * - Encargado AP: gestiona a cualquier `Brigadista` (no a Encargados ni Administradores).
- * - Encargado normal: gestiona solo a `Brigadistas` dentro de sus `grupos_a_cargo`.
+ * Gestión operativa de personal:
+ * - Administrador: gestiona cualquier cuenta globalmente.
+ * - Jefe de Ayudantía (`Encargado` + `Grupo Operativo` + ayudantía activa): gestiona a `Brigadistas`
+ *   que pertenecen exclusivamente a su misma ayudantía.
+ * - Encargado sin ayudantía (Opción B): gestiona solo a `Brigadistas` dentro de sus `grupos_a_cargo`.
  */
 export function puedeGestionarBrigadista(actor?: Usuario | null, objetivo?: Usuario | null): boolean {
   if (!esUsuarioActivo(actor) || !objetivo) return false
@@ -232,7 +287,10 @@ export function puedeGestionarBrigadista(actor?: Usuario | null, objetivo?: Usua
   if (actor.rol_sistema !== 'Encargado') return false
   if (actor.uid === objetivo.uid) return false
   if (objetivo.rol_sistema !== 'Brigadista') return false
-  if (ayudantiaEfectiva(actor) === 'Administración de Personal') return true
+  const ayJefe = ayudantiaJefatura(actor)
+  if (ayJefe) {
+    return ayudantiaEfectiva(objetivo) === ayJefe
+  }
   return perteneceAGruposACargo(actor, objetivo)
 }
 
@@ -244,7 +302,8 @@ export function puedeCambiarEstatusBrigadista(
   if (actor.rol_sistema === 'Administrador') return true
   return (
     actor.rol_sistema === 'Encargado' &&
-    ayudantiaEfectiva(actor) === 'Administración de Personal' &&
+    ayudantiaJefatura(actor) === 'Administración de Personal' &&
+    ayudantiaEfectiva(objetivo) === 'Administración de Personal' &&
     actor.uid !== objetivo.uid &&
     objetivo.rol_sistema === 'Brigadista'
   )

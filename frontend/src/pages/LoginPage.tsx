@@ -10,11 +10,12 @@ import {
 } from '../services/authService'
 
 interface LoginPageProps {
+  correoInicial?: string
   alIrARegistro: () => void
 }
 
-export function LoginPage({ alIrARegistro }: LoginPageProps) {
-  const [correo, setCorreo] = useState('')
+export function LoginPage({ correoInicial = '', alIrARegistro }: LoginPageProps) {
+  const [correo, setCorreo] = useState(correoInicial)
   const [contrasena, setContrasena] = useState('')
   const [mostrarContrasena, setMostrarContrasena] = useState(false)
   const [cargando, setCargando] = useState(false)

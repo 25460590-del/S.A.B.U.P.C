@@ -7,22 +7,81 @@ import type {
   GravedadIncidencia,
   GrupoOperativo,
   NivelAcademico,
+  PrerregistroOperativo,
   RolEnTurno,
+  RolOperativoCanonico,
   RolSistema,
   Sexo,
   TipoIncidenciaPersonal,
   TipoSangre,
 } from '../types'
 
-export const ROLES_EN_TURNO: RolEnTurno[] = [
-  'Sin asignar',
-  'Primeros Auxilios',
-  'Radiocomunicación',
+export const ROLES_EN_TURNO: RolOperativoCanonico[] = [
+  'Sin definir',
+  'Atención',
+  'Radios',
   'Búsqueda y Rescate',
-  'Evacuación',
-  'Logística',
-  'Encargado',
+  'Abastecedores',
+  'Encargados',
 ]
+
+/**
+ * Mapeo oficial de ayudantía -> rol operativo inicial al integrarse a un operativo.
+ * Sin ayudantía (Alfa, Omega, SIERRA o sin ayudantía definida) -> 'Sin definir'.
+ */
+export const ROL_OPERATIVO_POR_AYUDANTIA: Readonly<Record<AyudantiaSlot, RolOperativoCanonico>> = {
+  Capacitación: 'Búsqueda y Rescate',
+  Tesla: 'Radios',
+  'Administración de Personal': 'Encargados',
+  Logística: 'Abastecedores',
+  Socorros: 'Atención',
+  Ninguna: 'Sin definir',
+}
+
+/**
+ * Devuelve el rol operativo automático correspondiente a la ayudantía del participante.
+ */
+export function rolOperativoPorAyudantia(
+  ayudantia?: AyudantiaSlot | string | null,
+): RolOperativoCanonico {
+  if (
+    ayudantia === 'Capacitación' ||
+    ayudantia === 'Tesla' ||
+    ayudantia === 'Administración de Personal' ||
+    ayudantia === 'Logística' ||
+    ayudantia === 'Socorros'
+  ) {
+    return ROL_OPERATIVO_POR_AYUDANTIA[ayudantia]
+  }
+  return 'Sin definir'
+}
+
+/**
+ * Resuelve el rol inicial al confirmar entrada a un operativo:
+ * - Si el participante ya tiene un rol registrado en su prerregistro (incluyendo ediciones
+ *   manuales durante la convocatoria), lo conserva intacto.
+ * - De lo contrario, asigna automáticamente el rol según su ayudantía.
+ */
+export function resolverRolInicialOperativo(
+  ayudantia?: AyudantiaSlot | string | null,
+  prerregistro?: Pick<PrerregistroOperativo, 'rol_en_turno' | 'rol_editado_manual'> | null,
+): RolEnTurno {
+  if (prerregistro?.rol_en_turno) {
+    return prerregistro.rol_en_turno
+  }
+  return rolOperativoPorAyudantia(ayudantia)
+}
+
+/**
+ * Opciones para selectores de rol en turno: siempre muestra el catálogo oficial vigente
+ * y preserva un valor histórico si un registro legado lo contiene.
+ */
+export function opcionesRolEnTurno(rolActual?: RolEnTurno | null): RolEnTurno[] {
+  if (!rolActual || (ROLES_EN_TURNO as readonly string[]).includes(rolActual)) {
+    return ROLES_EN_TURNO
+  }
+  return [...ROLES_EN_TURNO, rolActual]
+}
 
 export const ESTADOS_OPERATIVOS: EstadoOperativo[] = [
   'En servicio',

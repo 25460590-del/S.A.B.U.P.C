@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx'
 import { CATEGORIAS_OPERATIVO } from '../constants/catalogos'
 import { db } from '../lib/firebase'
 import { normalizarNombrePropio } from '../lib/nombres'
+import type { AyudantiaActiva } from '../lib/permisos'
 import type {
   AsistenciaPersonal,
   CategoriaOperativo,
@@ -204,9 +205,18 @@ export async function generarConstanciaHorasPdf(
 
 export async function obtenerDatosExpedienteOperativo(
   operativoId: string,
+  ayudantiaFiltro?: AyudantiaActiva | null,
 ): Promise<DatosExpedienteOperativo> {
+  const consultaAsis = ayudantiaFiltro
+    ? query(
+        collection(db, 'asistencias_personal'),
+        where('operativo_id', '==', operativoId),
+        where('ayudantia_slot', '==', ayudantiaFiltro),
+      )
+    : query(collection(db, 'asistencias_personal'), where('operativo_id', '==', operativoId))
+
   const [asisSnap, eqSnap, radioSnap] = await Promise.all([
-    getDocs(query(collection(db, 'asistencias_personal'), where('operativo_id', '==', operativoId))),
+    getDocs(consultaAsis),
     getDocs(query(collection(db, 'equipos_turno'), where('operativo_id', '==', operativoId))),
     getDocs(
       query(collection(db, 'bitacora_radio_registros'), where('operativo_id', '==', operativoId)),
@@ -217,8 +227,13 @@ export async function obtenerDatosExpedienteOperativo(
     .map((d) => d.data() as AsistenciaPersonal)
     .sort((a, b) => (a.hora_entrada?.toMillis() ?? 0) - (b.hora_entrada?.toMillis() ?? 0))
 
+  const idsAsistenciaPermitidos = ayudantiaFiltro
+    ? new Set(asistencias.map((a) => a.id))
+    : null
+
   const equipos = eqSnap.docs
     .map((d) => d.data() as EquipoTurno)
+    .filter((eq) => !idsAsistenciaPermitidos || idsAsistenciaPermitidos.has(eq.asistencia_id))
     .sort((a, b) => (a.creado_en?.toMillis() ?? 0) - (b.creado_en?.toMillis() ?? 0))
 
   const registrosRadio = radioSnap

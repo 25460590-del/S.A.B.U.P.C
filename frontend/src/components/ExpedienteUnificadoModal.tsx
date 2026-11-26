@@ -7,9 +7,11 @@ import {
   Eye,
   FileWarning,
   Mail,
+  Package,
   Phone,
   Radio,
   Save,
+  ShieldCheck,
   User as UserIcon,
   X,
 } from 'lucide-react'
@@ -17,9 +19,10 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { AYUDANTIAS_ACTIVAS, ETAPAS_BRIGADISTA, ROLES } from '../constants/catalogos'
 import { normalizarNombrePropio } from '../lib/nombres'
 import {
+  ayudantiaJefatura,
   esAdmin,
   esAyudantiaValidaParaEtapa,
-  esEncargadoAP,
+  esConfiguracionJefeAyudantia,
   faltaAyudantiaOperativo,
   puedeCambiarEstatusBrigadista,
   puedeGestionarBrigadista,
@@ -33,6 +36,7 @@ import {
 } from '../services/authService'
 import {
   escucharActasMaterialDeUsuario,
+  escucharMaterialPropioDeUsuario,
   obtenerEvidenciaEquipo,
 } from '../services/equiposService'
 import { escucharFotoPerfil } from '../services/fotosService'
@@ -80,7 +84,7 @@ export function ExpedienteUnificadoModal({
   alCerrar,
 }: ExpedienteUnificadoModalProps) {
   const soyAdmin = esAdmin(actor)
-  const soyAP = esEncargadoAP(actor)
+  const ayJefe = ayudantiaJefatura(actor)
   const puedoEditar = puedeGestionarBrigadista(actor, usuario)
   const puedoEstatus = puedeCambiarEstatusBrigadista(actor, usuario)
 
@@ -90,6 +94,7 @@ export function ExpedienteUnificadoModal({
   const [fotoBase64, setFotoBase64] = useState<string | null>(null)
 
   // Datos cargados bajo demanda por pestaña
+  const [materialPropio, setMaterialPropio] = useState<EquipoTurno[]>([])
   const [asistencias, setAsistencias] = useState<AsistenciaPersonal[]>([])
   const [cargandoAsis, setCargandoAsis] = useState(false)
   const [incidenciasPers, setIncidenciasPers] = useState<IncidenciaPersonal[]>([])
@@ -101,6 +106,10 @@ export function ExpedienteUnificadoModal({
   const [cargandoEvidenciaId, setCargandoEvidenciaId] = useState<string | null>(null)
 
   // Estado del formulario de edición post-incorporación
+  const [nombres, setNombres] = useState<string>(usuario.nombres)
+  const [apellidoPaterno, setApellidoPaterno] = useState<string>(usuario.apellido_paterno)
+  const [apellidoMaterno, setApellidoMaterno] = useState<string>(usuario.apellido_materno || '')
+  const [numeroCuenta, setNumeroCuenta] = useState<string>(usuario.numero_cuenta)
   const [etapa, setEtapa] = useState<EtapaBrigadista>(usuario.etapa)
   const [subgrupo, setSubgrupo] = useState<string>(usuario.subgrupo || '')
   const [ayudantia, setAyudantia] = useState<AyudantiaSlot>(usuario.ayudantia)
@@ -125,6 +134,16 @@ export function ExpedienteUnificadoModal({
   }, [usuario.uid, usuario.tiene_foto])
 
   useEffect(() => {
+    if (pestana !== 'perfil') return
+    const cancelar = escucharMaterialPropioDeUsuario(
+      usuario.uid,
+      setMaterialPropio,
+      () => undefined,
+    )
+    return cancelar
+  }, [pestana, usuario.uid])
+
+  useEffect(() => {
     if (pestana !== 'asistencias') return
     const cancelar = escucharMisAsistencias(
       usuario.uid,
@@ -145,21 +164,21 @@ export function ExpedienteUnificadoModal({
     const manejarErr = (err: Parameters<typeof mensajeDeError>[0]) =>
       setError(mensajeDeError(err))
     const cMat = escucharActasMaterialDeUsuario(usuario.uid, setActasMaterial, manejarErr)
-    const cPers =
-      soyAdmin || soyAP
-        ? escucharIncidenciasPorUsuario(usuario.uid, setIncidenciasPers, manejarErr)
-        : escucharIncidenciasPersonalSegunRol(
-            actor,
-            (lista) => setIncidenciasPers(lista.filter((i) => i.usuario_uid === usuario.uid)),
-            manejarErr,
-          )
+    const cPers = soyAdmin
+      ? escucharIncidenciasPorUsuario(usuario.uid, setIncidenciasPers, manejarErr)
+      : escucharIncidenciasPersonalSegunRol(
+          actor,
+          (lista) => setIncidenciasPers(lista.filter((i) => i.usuario_uid === usuario.uid)),
+          manejarErr,
+        )
     return () => {
       cMat()
       cPers()
     }
-  }, [pestana, usuario.uid, soyAdmin, soyAP, actor])
+  }, [pestana, usuario.uid, soyAdmin, actor])
 
   const esOperativo = etapa === 'Grupo Operativo'
+  const esJefeConfigurado = esConfiguracionJefeAyudantia(rol, etapa, ayudantia)
   const opcionesSubgrupo = subgruposDeEtapa(subgruposActivos, etapa, usuario.subgrupo)
   const cuentaLegadaSinAyudantia = faltaAyudantiaOperativo(usuario)
   const ayudantiaInvalidaOperativo = !esAyudantiaValidaParaEtapa(etapa, ayudantia)
@@ -230,6 +249,10 @@ export function ExpedienteUnificadoModal({
     setAviso(null)
     try {
       await guardarEdicionExpediente(actor, usuario, {
+        nombres: soyAdmin ? nombres : undefined,
+        apellido_paterno: soyAdmin ? apellidoPaterno : undefined,
+        apellido_materno: soyAdmin ? apellidoMaterno : undefined,
+        numero_cuenta: soyAdmin ? numeroCuenta : undefined,
         etapa,
         subgrupo: esOperativo ? '' : subgrupo,
         ayudantia,
@@ -435,8 +458,141 @@ export function ExpedienteUnificadoModal({
                 </p>
               </div>
 
+              {/* Bloque Material Propio registrado por el integrante */}
+              <div className="flex flex-col gap-2 rounded-xl border border-borde bg-superficie-suave p-3.5 text-xs dark:border-noche-borde dark:bg-noche-campo">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <Package size={14} strokeWidth={2} className="text-udec dark:text-activo-claro" />
+                    <h4 className="font-bold tracking-wider uppercase text-tinta dark:text-noche-tinta">
+                      Material Propio Registrado
+                    </h4>
+                  </div>
+                  <span className="rounded-full bg-salvia px-2.5 py-0.5 text-[11px] font-bold tabular-nums text-udec-oscuro dark:bg-noche-tarjeta dark:text-activo-claro">
+                    {materialPropio.length}
+                  </span>
+                </div>
+
+                {materialPropio.length === 0 ? (
+                  <p className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
+                    Sin material propio registrado por este integrante en operativos.
+                  </p>
+                ) : (
+                  <ul className="divide-y divide-borde dark:divide-noche-borde">
+                    {materialPropio.slice(0, 8).map((eq) => {
+                      const cant = eq.cantidad ?? 1
+                      return (
+                        <li
+                          key={eq.id}
+                          className="flex flex-wrap items-center justify-between gap-2 py-1.5 first:pt-0 last:pb-0"
+                        >
+                          <div className="min-w-0">
+                            <span className="font-bold text-tinta dark:text-noche-tinta">
+                              {cant > 1 ? `${cant}× ` : ''}
+                              {eq.nombre_articulo}
+                              {eq.codigo_inventario ? ` (${eq.codigo_inventario})` : ''}
+                            </span>
+                            {eq.operativo_nombre && (
+                              <span className="ml-1.5 text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
+                                · {eq.operativo_nombre}
+                              </span>
+                            )}
+                            {eq.falla_reportada && (
+                              <span className="block text-[11px] font-semibold text-alerta dark:text-noche-rojo-texto">
+                                Observación: {eq.falla_reportada}
+                              </span>
+                            )}
+                          </div>
+                          <span className="shrink-0 text-[11px] tabular-nums text-tinta-suave dark:text-noche-tinta-suave">
+                            {formatearFecha(eq.creado_en?.toMillis())}
+                          </span>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+              </div>
+
               {/* Formulario de edición post-incorporación */}
               <form onSubmit={manejarGuardar} className="flex flex-col gap-3.5">
+                {soyAdmin && (
+                  <div className="flex flex-col gap-3 rounded-xl border border-borde bg-superficie-suave p-3.5 dark:border-noche-borde dark:bg-noche-campo">
+                    <div>
+                      <h4 className="text-xs font-bold tracking-wider uppercase text-tinta dark:text-noche-tinta">
+                        Identidad oficial (Exclusivo Administración)
+                      </h4>
+                      <p className="mt-0.5 text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
+                        Se normaliza a Tipo Título, sincroniza el perfil operativo y registra valor
+                        anterior y nuevo en auditoría.
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                      <div className="flex flex-col gap-1">
+                        <label htmlFor="exp-nombres" className="etiqueta">
+                          Nombre(s)
+                        </label>
+                        <input
+                          id="exp-nombres"
+                          type="text"
+                          maxLength={80}
+                          disabled={guardando}
+                          value={nombres}
+                          onChange={(e) => setNombres(e.target.value)}
+                          className="campo min-h-10 text-xs"
+                          required
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-1">
+                        <label htmlFor="exp-cuenta" className="etiqueta">
+                          No. de cuenta UdeC
+                        </label>
+                        <input
+                          id="exp-cuenta"
+                          type="text"
+                          maxLength={12}
+                          disabled={guardando}
+                          value={numeroCuenta}
+                          onChange={(e) => setNumeroCuenta(e.target.value)}
+                          className="campo min-h-10 text-xs font-bold tabular-nums"
+                          required
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-1">
+                        <label htmlFor="exp-paterno" className="etiqueta">
+                          Apellido paterno
+                        </label>
+                        <input
+                          id="exp-paterno"
+                          type="text"
+                          maxLength={60}
+                          disabled={guardando}
+                          value={apellidoPaterno}
+                          onChange={(e) => setApellidoPaterno(e.target.value)}
+                          className="campo min-h-10 text-xs"
+                          required
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-1">
+                        <label htmlFor="exp-materno" className="etiqueta">
+                          Apellido materno
+                        </label>
+                        <input
+                          id="exp-materno"
+                          type="text"
+                          maxLength={60}
+                          disabled={guardando}
+                          value={apellidoMaterno}
+                          onChange={(e) => setApellidoMaterno(e.target.value)}
+                          className="campo min-h-10 text-xs"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex items-center justify-between gap-2">
                   <h4 className="text-xs font-bold tracking-wider uppercase text-tinta-suave dark:text-noche-tinta-suave">
                     Adscripción operativa y permisos
@@ -510,7 +666,7 @@ export function ExpedienteUnificadoModal({
                     <select
                       id="exp-ayudantia"
                       value={ayudantia}
-                      disabled={!puedoEditar || guardando}
+                      disabled={!puedoEditar || guardando || Boolean(ayJefe)}
                       onChange={(e) => setAyudantia(e.target.value as AyudantiaSlot)}
                       className={`campo min-h-10 text-xs ${
                         ayudantiaInvalidaOperativo
@@ -540,6 +696,11 @@ export function ExpedienteUnificadoModal({
                         </>
                       )}
                     </select>
+                    {ayJefe && (
+                      <span className="text-[11px] font-medium text-tinta-suave dark:text-noche-tinta-suave">
+                        Adscrito a tu ayudantía ({ayJefe}).
+                      </span>
+                    )}
                   </div>
 
                   <div className="flex flex-col gap-1">
@@ -579,6 +740,12 @@ export function ExpedienteUnificadoModal({
                         </option>
                       ))}
                     </select>
+                    {soyAdmin && !esJefeConfigurado && (
+                      <span className="text-[11px] leading-snug text-tinta-suave dark:text-noche-tinta-suave">
+                        Asignar <strong>Encargado</strong> en <strong>Grupo Operativo</strong> con
+                        ayudantía le otorga mando automático sobre su ayudantía.
+                      </span>
+                    )}
                   </div>
 
                   <div className="flex flex-col gap-1">
@@ -611,8 +778,34 @@ export function ExpedienteUnificadoModal({
                   </div>
                 </div>
 
-                {/* Selector múltiple de grupos_a_cargo (para Encargado / Admin, editable solo por Admin) */}
-                {(rol === 'Encargado' || gruposACargo.length > 0) && (
+                {/* Indicador explícito de activación automática de Jefe de Ayudantía */}
+                {esJefeConfigurado && (
+                  <div
+                    role="status"
+                    className="flex items-start gap-2.5 rounded-xl border border-udec/35 bg-salvia p-3 text-xs text-udec-oscuro dark:border-activo-claro/35 dark:bg-noche-campo dark:text-noche-tinta"
+                  >
+                    <ShieldCheck
+                      size={17}
+                      strokeWidth={2}
+                      className="mt-0.5 shrink-0 text-udec dark:text-activo-claro"
+                    />
+                    <div>
+                      <p className="font-bold text-udec-oscuro dark:text-activo-claro">
+                        Jefe de Ayudantía activo · Mando sobre {ayudantia}
+                      </p>
+                      <p className="mt-0.5 text-[11px] leading-snug text-tinta-suave dark:text-noche-tinta-suave">
+                        Al tener nivel <strong>Encargado</strong> y pertenecer a{' '}
+                        <strong>Grupo Operativo</strong> con la ayudantía <strong>{ayudantia}</strong>,
+                        ve y gestiona exclusivamente a los integrantes de {ayudantia} (Ficha de
+                        Emergencia, material propio, datos operativos, pase de lista y roles en
+                        operativos).
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Selector múltiple de grupos_a_cargo (solo para Encargados de etapa formativa sin jefatura de ayudantía) */}
+                {!esJefeConfigurado && (rol === 'Encargado' || gruposACargo.length > 0) && (
                   <div className="flex flex-col gap-2 rounded-xl border border-borde bg-superficie-suave p-3 dark:border-noche-borde dark:bg-noche-campo">
                     <span className="text-xs font-bold text-tinta dark:text-noche-tinta">
                       Grupos o ayudantías a cargo

@@ -31,6 +31,14 @@
         { "fieldPath": "usuario_uid", "order": "ASCENDING" },
         { "fieldPath": "operativo_id", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "asistencias_personal",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "operativo_id", "order": "ASCENDING" },
+        { "fieldPath": "ayudantia_slot", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

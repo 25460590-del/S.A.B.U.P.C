@@ -13,7 +13,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import * as XLSX from 'xlsx'
 import { GRAVEDADES_INCIDENCIA, TIPOS_INCIDENCIA_PERSONAL } from '../constants/catalogos'
 import { normalizarNombrePropio } from '../lib/nombres'
-import { esAdmin, esEncargadoAP, puedeGestionarBrigadista } from '../lib/permisos'
+import { ayudantiaJefatura, esAdmin, puedeGestionarBrigadista } from '../lib/permisos'
 import {
   escucharDirectorioSegunRol,
   mensajeDeError,
@@ -36,6 +36,7 @@ import type {
   TipoIncidenciaPersonal,
   Usuario,
 } from '../types'
+import { IndicadorAlcanceAyudantia } from './IndicadorAlcanceAyudantia'
 
 interface IncidenciasPersonalPanelProps {
   actor: Usuario
@@ -79,7 +80,8 @@ function fechaHoyIso(): string {
  * - Filtros en cliente + exportación CSV local (SheetJS).
  */
 export function IncidenciasPersonalPanel({ actor }: IncidenciasPersonalPanelProps) {
-  const soyAdminOAP = esAdmin(actor) || esEncargadoAP(actor)
+  const soyAdmin = esAdmin(actor)
+  const ayJefe = ayudantiaJefatura(actor)
 
   const [usuarios, setUsuarios] = useState<Usuario[]>([])
   const [operativos, setOperativos] = useState<Operativo[]>([])
@@ -137,9 +139,10 @@ export function IncidenciasPersonalPanel({ actor }: IncidenciasPersonalPanelProp
       usuarios.filter(
         (u) =>
           u.estatus === 'Activo' &&
-          (soyAdminOAP || puedeGestionarBrigadista(actor, u) || operativoId !== ''),
+          (soyAdmin ||
+            (ayJefe ? puedeGestionarBrigadista(actor, u) : puedeGestionarBrigadista(actor, u) || operativoId !== '')),
       ),
-    [usuarios, soyAdminOAP, actor, operativoId],
+    [usuarios, soyAdmin, ayJefe, actor, operativoId],
   )
 
   const unificadas = useMemo<IncidenciaUnificada[]>(() => {
@@ -147,6 +150,7 @@ export function IncidenciasPersonalPanel({ actor }: IncidenciasPersonalPanelProp
 
     for (const inc of incidenciasPers) {
       const u = mapaUsuarios.get(inc.usuario_uid)
+      if (ayJefe && !u) continue
       const ms = inc.creado_en?.toMillis() ?? 0
       items.push({
         clave: `p_${inc.id}`,
@@ -170,9 +174,11 @@ export function IncidenciasPersonalPanel({ actor }: IncidenciasPersonalPanelProp
     for (const eq of actasMaterial) {
       if (!eq.acta_incidencia) continue
       const u = mapaUsuarios.get(eq.usuario_uid)
-      // Si es Encargado normal, solo mostrar actas vinculadas a sus brigadistas o registradas por él
+      if (ayJefe && !u) continue
+      // Si es Encargado sin ayudantía, solo mostrar actas vinculadas a sus brigadistas o registradas por él
       if (
-        !soyAdminOAP &&
+        !soyAdmin &&
+        !ayJefe &&
         eq.acta_incidencia.registrado_por_uid !== actor.uid &&
         !mapaUsuarios.has(eq.usuario_uid)
       ) {
@@ -199,7 +205,7 @@ export function IncidenciasPersonalPanel({ actor }: IncidenciasPersonalPanelProp
 
     items.sort((a, b) => b.fechaMs - a.fechaMs)
     return items
-  }, [incidenciasPers, actasMaterial, mapaUsuarios, mapaOperativos, soyAdminOAP, actor.uid])
+  }, [incidenciasPers, actasMaterial, mapaUsuarios, mapaOperativos, soyAdmin, ayJefe, actor.uid])
 
   const subgruposDisponibles = useMemo(
     () =>
@@ -317,10 +323,12 @@ export function IncidenciasPersonalPanel({ actor }: IncidenciasPersonalPanelProp
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-bold text-tinta dark:text-noche-tinta">
-            Concentrador de Incidencias
+            {ayJefe ? `Incidencias · ${ayJefe}` : 'Concentrador de Incidencias'}
           </h2>
           <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-            Actas de material BUPC e incidencias de personal.
+            {ayJefe
+              ? `Actas de material e incidencias de personal de la ayudantía ${ayJefe}.`
+              : 'Actas de material BUPC e incidencias de personal.'}
           </p>
         </div>
 
@@ -344,6 +352,13 @@ export function IncidenciasPersonalPanel({ actor }: IncidenciasPersonalPanelProp
           </button>
         </div>
       </div>
+
+      {ayJefe && (
+        <IndicadorAlcanceAyudantia
+          ayudantia={ayJefe}
+          descripcion={`Solo puedes consultar y registrar incidencias para integrantes de ${ayJefe}.`}
+        />
+      )}
 
       {error && (
         <div

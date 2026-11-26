@@ -14,7 +14,8 @@ import {
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { CATEGORIAS_OPERATIVO } from '../constants/catalogos'
-import { puedeUsarRadio } from '../lib/permisos'
+import { IndicadorAlcanceAyudantia } from '../components/IndicadorAlcanceAyudantia'
+import { ayudantiaJefatura, puedeUsarRadio } from '../lib/permisos'
 import { escucharMisAsistencias } from '../services/asistenciasService'
 import { mensajeDeError } from '../services/authService'
 import { escucharOperativos } from '../services/operativosService'
@@ -330,6 +331,7 @@ export function HistorialDualPage({
 }: HistorialDualPageProps) {
   const esGestor =
     usuario.rol_sistema === 'Encargado' || usuario.rol_sistema === 'Administrador'
+  const ayJefe = ayudantiaJefatura(usuario)
   const puedoVerRadio = puedeUsarRadio(usuario)
 
   const [pestana, setPestana] = useState<'personal' | 'archivo'>(
@@ -409,7 +411,7 @@ export function HistorialDualPage({
     setError(null)
     setAviso(null)
     try {
-      const datos = await obtenerDatosExpedienteOperativo(op.id)
+      const datos = await obtenerDatosExpedienteOperativo(op.id, ayJefe)
       if (formato === 'excel') {
         exportarExpedienteExcel(op, datos)
         setAviso(`Archivo Excel (.xlsx) generado para "${op.nombre}".`)
@@ -646,6 +648,12 @@ export function HistorialDualPage({
       {/* PESTAÑA 2: ARCHIVO OPERATIVO GLOBAL (Encargado / Administrador) */}
       {pestana === 'archivo' && esGestor && (
         <section className="flex flex-col gap-4">
+          {ayJefe && (
+            <IndicadorAlcanceAyudantia
+              ayudantia={ayJefe}
+              descripcion={`Las exportaciones Excel y PDF del archivo operativo incluyen exclusivamente a integrantes de ${ayJefe}.`}
+            />
+          )}
           {/* Filtros */}
           <article className="tarjeta grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
             <div className="flex flex-col gap-1">

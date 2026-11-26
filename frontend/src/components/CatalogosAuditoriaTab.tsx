@@ -706,6 +706,14 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
                   <p className="text-xs font-semibold text-tinta dark:text-noche-tinta">
                     {ev.detalle}
                   </p>
+                  {(ev.valor_anterior || ev.valor_nuevo) && (
+                    <p className="rounded bg-superficie-suave px-2 py-1 text-[11px] font-medium text-tinta dark:bg-noche-campo dark:text-noche-tinta">
+                      <span className="text-tinta-suave dark:text-noche-tinta-suave">Anterior:</span>{' '}
+                      <strong>{ev.valor_anterior ?? '—'}</strong> ·{' '}
+                      <span className="text-tinta-suave dark:text-noche-tinta-suave">Nuevo:</span>{' '}
+                      <strong>{ev.valor_nuevo ?? '—'}</strong>
+                    </p>
+                  )}
                   <p className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
                     Por: {ev.actor_nombre} · Objetivo: {ev.objetivo_nombre}
                   </p>

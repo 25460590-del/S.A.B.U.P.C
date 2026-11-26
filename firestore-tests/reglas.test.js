@@ -109,6 +109,41 @@ beforeEach(async () => {
     await setDoc(doc(f, 'usuarios/encAlfa1'), usuarioBase('encAlfa1', { estatus: 'Activo', rol_sistema: 'Encargado', grupos_a_cargo: ['Alfa 1'] }));
     await setDoc(doc(f, 'usuarios/encAP'), usuarioBase('encAP', { estatus: 'Activo', rol_sistema: 'Encargado', ayudantia: 'Administración de Personal', ayudantia_slot: 'Administración de Personal' }));
     await setDoc(doc(f, 'usuarios/encTesla'), usuarioBase('encTesla', { estatus: 'Activo', rol_sistema: 'Encargado', ayudantia: 'Tesla', ayudantia_slot: 'Tesla' }));
+    await setDoc(doc(f, 'usuarios/jefeSocorros'), usuarioBase('jefeSocorros', { estatus: 'Activo', rol_sistema: 'Encargado', etapa: 'Grupo Operativo', ayudantia: 'Socorros', ayudantia_slot: 'Socorros' }));
+    await setDoc(doc(f, 'usuarios/jefeLogistica'), usuarioBase('jefeLogistica', { estatus: 'Activo', rol_sistema: 'Encargado', etapa: 'Grupo Operativo', ayudantia: 'Logística', ayudantia_slot: 'Logística' }));
+    await setDoc(doc(f, 'usuarios/jefeCapacitacion'), usuarioBase('jefeCapacitacion', { estatus: 'Activo', rol_sistema: 'Encargado', etapa: 'Grupo Operativo', ayudantia: 'Capacitación', ayudantia_slot: 'Capacitación' }));
+    await setDoc(doc(f, 'usuarios/brigSocorros'), usuarioBase('brigSocorros', {
+      estatus: 'Activo',
+      etapa: 'Alfa',
+      grupo_operativo: 'Alfa',
+      subgrupo: 'Alfa 1',
+      ayudantia: 'Socorros',
+      ayudantia_slot: 'Socorros',
+      alergias: 'Látex',
+      contacto_emergencia_nombre: 'Rosa Díaz',
+      contacto_emergencia_parentesco: 'Madre',
+      contacto_emergencia_telefono: '3121112233',
+    }));
+    await setDoc(doc(f, 'usuarios/brigLogistica'), usuarioBase('brigLogistica', {
+      estatus: 'Activo',
+      etapa: 'Grupo Operativo',
+      ayudantia: 'Logística',
+      ayudantia_slot: 'Logística',
+    }));
+    await setDoc(doc(f, 'usuarios/brigTesla'), usuarioBase('brigTesla', {
+      estatus: 'Activo',
+      etapa: 'Grupo Operativo',
+      ayudantia: 'Tesla',
+      ayudantia_slot: 'Tesla',
+    }));
+    await setDoc(doc(f, 'usuarios/brigAP'), usuarioBase('brigAP', {
+      estatus: 'Activo',
+      etapa: 'Omega',
+      grupo_operativo: 'Omega',
+      subgrupo: 'Omega 1',
+      ayudantia: 'Administración de Personal',
+      ayudantia_slot: 'Administración de Personal',
+    }));
     await setDoc(doc(f, 'usuarios/pendiente1'), usuarioBase('pendiente1'));
     await setDoc(doc(f, 'auditoria_eventos/e1'), { ...eventoValido('admin1'), creado_en: Timestamp.now() });
 
@@ -295,7 +330,8 @@ test('dueño Activo cambia creado_en', () => assertFails(updateDoc(doc(db('activ
 test('dueño Activo cadena enorme', () => assertFails(updateDoc(doc(db('activo1'), 'usuarios/activo1'), { padecimientos_medicamentos: 'x'.repeat(501), actualizado_en: serverTimestamp() })));
 test('dueño Activo tipo inválido', () => assertFails(updateDoc(doc(db('activo1'), 'usuarios/activo1'), { celular_con_whatsapp: 'si', actualizado_en: serverTimestamp() })));
 test('dueño Activo agrega campo extra', () => assertFails(updateDoc(doc(db('activo1'), 'usuarios/activo1'), { extra: 'x', actualizado_en: serverTimestamp() })));
-test('dueño Pendiente no actualiza', () => assertFails(updateDoc(doc(db('pendiente1'), 'usuarios/pendiente1'), { celular: '3120000000', actualizado_en: serverTimestamp() })));
+test('dueño Pendiente corrige celular antes de aprobación', () => assertSucceeds(updateDoc(doc(db('pendiente1'), 'usuarios/pendiente1'), { celular: '3120000000', actualizado_en: serverTimestamp() })));
+test('dueño Pendiente no cambia correo ni tiene_foto', () => assertFails(updateDoc(doc(db('pendiente1'), 'usuarios/pendiente1'), { correo: 'otro@ucol.mx', tiene_foto: true, actualizado_en: serverTimestamp() })));
 test('dueño Pendiente no se auto-aprueba', () => assertFails(updateDoc(doc(db('pendiente1'), 'usuarios/pendiente1'), { estatus: 'Activo', actualizado_en: serverTimestamp() })));
 test('Brigadista Activo no edita a otro', () => assertFails(updateDoc(doc(db('activo1'), 'usuarios/pendiente1'), { estatus: 'Activo', actualizado_en: serverTimestamp() })));
 test('Encargado no edita privilegios de otro', () => assertFails(updateDoc(doc(db('encargado1'), 'usuarios/activo1'), { grupo_operativo: 'Alfa', actualizado_en: serverTimestamp() })));
@@ -314,7 +350,7 @@ test('Admin aprueba en lote con auditoría', async () => {
 });
 test('Admin asigna slot con acentos', () => assertSucceeds(updateDoc(doc(db('admin1'), 'usuarios/activo1'), { ayudantia_slot: 'Administración de Personal', actualizado_en: serverTimestamp() })));
 test('Admin asigna Logística', () => assertSucceeds(updateDoc(doc(db('admin1'), 'usuarios/activo1'), { ayudantia_slot: 'Logística', actualizado_en: serverTimestamp() })));
-test('Admin no edita datos personales ajenos', () => assertFails(updateDoc(doc(db('admin1'), 'usuarios/activo1'), { nombres: 'Otro', actualizado_en: serverTimestamp() })));
+test('Admin no edita datos médicos ni teléfono ajenos', () => assertFails(updateDoc(doc(db('admin1'), 'usuarios/activo1'), { celular: '3129998877', alergias: 'Penicilina', actualizado_en: serverTimestamp() })));
 test('Admin no cambia correo', () => assertFails(updateDoc(doc(db('admin1'), 'usuarios/activo1'), { correo: 'z@z.com', actualizado_en: serverTimestamp() })));
 test('Admin enum inválido', () => assertFails(updateDoc(doc(db('admin1'), 'usuarios/activo1'), { rol_sistema: 'SuperAdmin', actualizado_en: serverTimestamp() })));
 test('Admin clave de radio demasiado larga', () => assertFails(updateDoc(doc(db('admin1'), 'usuarios/activo1'), { clave_personal_radio: 'x'.repeat(11), actualizado_en: serverTimestamp() })));
@@ -371,15 +407,24 @@ test('Brigadista con autorizado_radio=true accede a Radio', () => assertSucceeds
   getDocs(collection(db('brigRadio'), 'canales_radio')),
 ));
 
-// ---------------- Dominio exclusivo de TESLA + cero autoasignación ----------------
-test('Encargado Tesla asigna clave_radio y autorizado_radio a otro usuario', () => assertSucceeds(
-  updateDoc(doc(db('encTesla'), 'usuarios/activo1'), {
+// ---------------- Dominio exclusivo de TESLA + aislamiento por ayudantía ----------------
+test('Encargado Tesla asigna clave_radio y autorizado_radio a integrante de su misma ayudantía Tesla', () => assertSucceeds(
+  updateDoc(doc(db('encTesla'), 'usuarios/brigTesla'), {
     clave_radio: 'TESLA-205',
     clave_personal_radio: 'TESLA-205',
     autorizado_radio: true,
     actualizado_en: serverTimestamp(),
   }),
 ));
+test('Encargado Tesla NO puede asignar clave_radio ni leer perfiles fuera de Tesla', async () => {
+  await assertFails(getDoc(doc(db('encTesla'), 'usuarios/brigSocorros')));
+  await assertFails(updateDoc(doc(db('encTesla'), 'usuarios/activo1'), {
+    clave_radio: 'TESLA-205',
+    clave_personal_radio: 'TESLA-205',
+    autorizado_radio: true,
+    actualizado_en: serverTimestamp(),
+  }));
+});
 test('Encargado Tesla NO puede autoasignarse clave_radio ni autorizado_radio', () => assertFails(
   updateDoc(doc(db('encTesla'), 'usuarios/encTesla'), {
     clave_radio: 'TESLA-001',
@@ -388,37 +433,49 @@ test('Encargado Tesla NO puede autoasignarse clave_radio ni autorizado_radio', (
   }),
 ));
 test('Encargado Tesla NO puede cambiar estatus ni rol de otro usuario', () => assertFails(
-  updateDoc(doc(db('encTesla'), 'usuarios/activo1'), {
+  updateDoc(doc(db('encTesla'), 'usuarios/brigTesla'), {
     estatus: 'Inactivo',
     actualizado_en: serverTimestamp(),
   }),
 ));
-test('Encargado Tesla puede listar perfiles para asignar claves', () => assertSucceeds(
-  getDocs(collection(db('encTesla'), 'usuarios')),
-));
+test('Encargado Tesla lista perfiles únicamente con filtro exacto por su ayudantía Tesla', async () => {
+  await assertSucceeds(getDocs(query(collection(db('encTesla'), 'usuarios'), where('ayudantia', '==', 'Tesla'))));
+  await assertFails(getDocs(collection(db('encTesla'), 'usuarios')));
+  await assertFails(getDocs(query(collection(db('encTesla'), 'usuarios'), where('ayudantia', '==', 'Socorros'))));
+});
 
-// ---------------- Encargado Administración de Personal (AP) ----------------
-test('Encargado AP aprueba ingreso y asigna etapa/subgrupo/ayudantía a Brigadista', () => assertSucceeds(
-  updateDoc(doc(db('encAP'), 'usuarios/pendiente1'), {
+// ---------------- Jefe de Ayudantía Administración de Personal (acotado a su ayudantía) ----------------
+test('Encargado AP gestiona etapa/subgrupo/estatus de Brigadista dentro de Administración de Personal', () => assertSucceeds(
+  updateDoc(doc(db('encAP'), 'usuarios/brigAP'), {
     estatus: 'Activo',
-    etapa: 'Alfa',
-    grupo_operativo: 'Alfa',
-    subgrupo: 'Alfa 2',
-    ayudantia: 'Socorros',
-    ayudantia_slot: 'Socorros',
+    etapa: 'Grupo Operativo',
+    grupo_operativo: 'Ninguno',
+    subgrupo: '',
+    ayudantia: 'Administración de Personal',
+    ayudantia_slot: 'Administración de Personal',
     qr_codigo_unico: 'qr-ap-1',
     actualizado_en: serverTimestamp(),
   }),
 ));
+test('Encargado AP NO puede leer ni editar integrantes de otras ayudantías ni pendientes sin ayudantía', async () => {
+  await assertFails(getDoc(doc(db('encAP'), 'usuarios/brigSocorros')));
+  await assertFails(getDoc(doc(db('encAP'), 'usuarios/pendiente1')));
+  await assertFails(getDocs(collection(db('encAP'), 'usuarios')));
+  await assertSucceeds(getDocs(query(collection(db('encAP'), 'usuarios'), where('ayudantia', '==', 'Administración de Personal'))));
+  await assertFails(updateDoc(doc(db('encAP'), 'usuarios/brigSocorros'), {
+    subgrupo: 'Alfa 2',
+    actualizado_en: serverTimestamp(),
+  }));
+});
 test('Encargado AP NO puede editar clave_radio ni autorizado_radio', () => assertFails(
-  updateDoc(doc(db('encAP'), 'usuarios/activo1'), {
+  updateDoc(doc(db('encAP'), 'usuarios/brigAP'), {
     clave_radio: 'LINCE',
     autorizado_radio: true,
     actualizado_en: serverTimestamp(),
   }),
 ));
 test('Encargado AP NO puede promover rol_sistema ni editar grupos_a_cargo', () => assertFails(
-  updateDoc(doc(db('encAP'), 'usuarios/activo1'), {
+  updateDoc(doc(db('encAP'), 'usuarios/brigAP'), {
     rol_sistema: 'Encargado',
     grupos_a_cargo: ['Alfa 1'],
     actualizado_en: serverTimestamp(),
@@ -656,7 +713,7 @@ test('Flujo real Brigadista QR: entrada, lecturas posteriores En servicio y sali
     usuario_cuenta: '20201234',
     grupo_operativo: 'Ninguno',
     ayudantia_slot: 'Ninguna',
-    rol_en_turno: 'Sin asignar',
+    rol_en_turno: 'Sin definir',
     estado_operativo: 'En servicio',
     signos_vitales: null,
     metodo_entrada: 'QR_Operativo_TOTP',
@@ -858,7 +915,7 @@ test('contacto_emergencia_parentesco: alta y actualización por dueño Activo, b
 // PRUEBAS: ETAPA SIERRA, AYUDANTÍA OBLIGATORIA EN GRUPO OPERATIVO Y PROMOCIÓN EN LOTE
 // ============================================================================
 
-test('Etapa SIERRA: asignación válida con y sin ayudantía por Admin y Encargado AP', async () => {
+test('Etapa SIERRA: asignación válida con y sin ayudantía por Admin y Jefe de Ayudantía en su alcance', async () => {
   await assertSucceeds(updateDoc(doc(db('admin1'), 'usuarios/brigAlfa1'), {
     etapa: 'SIERRA',
     grupo_operativo: 'Ninguno',
@@ -868,14 +925,12 @@ test('Etapa SIERRA: asignación válida con y sin ayudantía por Admin y Encarga
     actualizado_en: serverTimestamp(),
   }));
 
-  await assertSucceeds(updateDoc(doc(db('encAP'), 'usuarios/pendiente1'), {
-    estatus: 'Activo',
+  await assertSucceeds(updateDoc(doc(db('jefeSocorros'), 'usuarios/brigSocorros'), {
     etapa: 'SIERRA',
     grupo_operativo: 'Ninguno',
     subgrupo: 'Sierra 1',
     ayudantia: 'Socorros',
     ayudantia_slot: 'Socorros',
-    qr_codigo_unico: 'qr-sierra-1',
     actualizado_en: serverTimestamp(),
   }));
 
@@ -903,7 +958,7 @@ test('Promoción directa SIERRA -> Grupo Operativo en lote con ayudantía y even
     actualizado_en: serverTimestamp(),
   }));
 
-  const f = db('encAP');
+  const f = db('admin1');
   const b = writeBatch(f);
   b.update(doc(f, 'usuarios/brigAlfa1'), {
     etapa: 'Grupo Operativo',
@@ -921,7 +976,7 @@ test('Promoción directa SIERRA -> Grupo Operativo en lote con ayudantía y even
     ayudantia_slot: 'Logística',
     actualizado_en: serverTimestamp(),
   });
-  b.set(doc(collection(f, 'auditoria_eventos')), eventoValido('encAP', {
+  b.set(doc(collection(f, 'auditoria_eventos')), eventoValido('admin1', {
     tipo: 'PROMOCION_LOTE',
     objetivo_uid: 'Sierra 1',
     objetivo_nombre: 'Sierra 1 → Grupo Operativo',
@@ -941,8 +996,8 @@ test('Grupo Operativo: rechaza asignar sin ayudantía o conservando subgrupo for
     actualizado_en: serverTimestamp(),
   }));
 
-  // Encargado AP intenta promover a Grupo Operativo sin ayudantía
-  await assertFails(updateDoc(doc(db('encAP'), 'usuarios/brigAlfa1'), {
+  // Jefe de Ayudantía intenta quitar la ayudantía al promover a Grupo Operativo
+  await assertFails(updateDoc(doc(db('jefeSocorros'), 'usuarios/brigSocorros'), {
     etapa: 'Grupo Operativo',
     grupo_operativo: 'Ninguno',
     subgrupo: '',
@@ -1179,7 +1234,7 @@ test('Brigadista SIN prerregistro puede escanear QR y registrar asistencia norma
     usuario_cuenta: '20201234',
     grupo_operativo: 'Ninguno',
     ayudantia_slot: 'Ninguna',
-    rol_en_turno: 'Sin asignar',
+    rol_en_turno: 'Sin definir',
     estado_operativo: 'En servicio',
     signos_vitales: null,
     metodo_entrada: 'QR_Operativo_TOTP',
@@ -1192,4 +1247,1121 @@ test('Brigadista SIN prerregistro puede escanear QR y registrar asistencia norma
     creado_en: serverTimestamp(),
     actualizado_en: serverTimestamp(),
   }));
+});
+
+// ============================================================================
+// PRUEBAS: JEFE DE AYUDANTÍA (ACTIVACIÓN AUTOMÁTICA, AISLAMIENTO ESTRICTO,
+// OPERATIVOS / PASE DE LISTA / ROLES / MATERIAL PROPIO Y NO REGRESIÓN)
+// ============================================================================
+
+test('Jefe de Ayudantía: activación automática sin grupos_a_cargo, consulta Ficha de Emergencia y edita info operativa de su ayudantía', async () => {
+  const f = db('jefeSocorros');
+
+  // 1. Consulta puntual (incluye Ficha de Emergencia) y listado filtrado por ayudantía exacta
+  const snap = await assertSucceeds(getDoc(doc(f, 'usuarios/brigSocorros')));
+  if (snap.data()?.alergias !== 'Látex') {
+    throw new Error('Se esperaba poder consultar la Ficha de Emergencia del integrante de su ayudantía.');
+  }
+  await assertSucceeds(getDocs(query(collection(f, 'usuarios'), where('ayudantia', '==', 'Socorros'))));
+
+  // 2. Edita información operativa (etapa, subgrupo) de un brigadista de su misma ayudantía
+  await assertSucceeds(updateDoc(doc(f, 'usuarios/brigSocorros'), {
+    etapa: 'Omega',
+    grupo_operativo: 'Omega',
+    subgrupo: 'Omega 1',
+    ayudantia: 'Socorros',
+    ayudantia_slot: 'Socorros',
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // 3. Registra incidencia administrativa de personal para integrante de su ayudantía
+  await assertSucceeds(setDoc(doc(f, 'incidencias_personal/incSocorrosOk'), {
+    id: 'incSocorrosOk',
+    usuario_uid: 'brigSocorros',
+    usuario_nombre: 'Ana Pérez',
+    operativo_id: null,
+    tipo: 'Reconocimiento',
+    gravedad: 'Baja',
+    descripcion: 'Desempeño destacado en guardia de Socorros',
+    creado_por_uid: 'jefeSocorros',
+    creado_por_nombre: 'Jefe Socorros',
+    creado_en: serverTimestamp(),
+  }));
+});
+
+test('Jefe de Ayudantía: bloqueo estricto al intentar leer o editar perfiles e incidencias de otras ayudantías', async () => {
+  // Incluso si tuviera entradas residuales en grupos_a_cargo, sigue aislado estrictamente a su ayudantía
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await updateDoc(doc(ctx.firestore(), 'usuarios/jefeSocorros'), {
+      grupos_a_cargo: ['Logística', 'Alfa 1'],
+    });
+  });
+
+  const f = db('jefeSocorros');
+
+  // Bloqueo de lectura puntual hacia otras ayudantías o sin ayudantía
+  await assertFails(getDoc(doc(f, 'usuarios/brigLogistica')));
+  await assertFails(getDoc(doc(f, 'usuarios/brigTesla')));
+  await assertFails(getDoc(doc(f, 'usuarios/brigAlfa1')));
+  await assertFails(getDoc(doc(f, 'usuarios/pendiente1')));
+  await assertFails(getDoc(doc(f, 'perfiles_operativos/brigOmega1')));
+
+  // Bloqueo de listados sin filtro o filtrando otra ayudantía
+  await assertFails(getDocs(collection(f, 'usuarios')));
+  await assertFails(getDocs(query(collection(f, 'usuarios'), where('ayudantia', '==', 'Logística'))));
+  await assertFails(getDocs(query(collection(f, 'usuarios'), where('estatus', '==', 'Activo'))));
+
+  // Bloqueo de edición sobre otra ayudantía
+  await assertFails(updateDoc(doc(f, 'usuarios/brigLogistica'), {
+    etapa: 'Grupo Operativo',
+    grupo_operativo: 'Ninguno',
+    subgrupo: '',
+    ayudantia: 'Logística',
+    ayudantia_slot: 'Logística',
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // Bloqueo al intentar transferir a un integrante propio hacia otra ayudantía o escalar su rol
+  await assertFails(updateDoc(doc(f, 'usuarios/brigSocorros'), {
+    ayudantia: 'Logística',
+    ayudantia_slot: 'Logística',
+    actualizado_en: serverTimestamp(),
+  }));
+  await assertFails(updateDoc(doc(f, 'usuarios/brigSocorros'), {
+    rol_sistema: 'Encargado',
+    actualizado_en: serverTimestamp(),
+  }));
+  await assertFails(updateDoc(doc(f, 'usuarios/brigSocorros'), {
+    nombres: 'Alterado',
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // Bloqueo al crear incidencia contra integrante de otra ayudantía
+  await assertFails(setDoc(doc(f, 'incidencias_personal/incCruzadaFail'), {
+    id: 'incCruzadaFail',
+    usuario_uid: 'brigLogistica',
+    usuario_nombre: 'Ana Pérez',
+    operativo_id: 'opAbierto',
+    tipo: 'Observación',
+    gravedad: 'Baja',
+    descripcion: 'Intento cruzado',
+    creado_por_uid: 'jefeSocorros',
+    creado_por_nombre: 'Jefe Socorros',
+    creado_en: serverTimestamp(),
+  }));
+
+  // Encargado en etapa formativa (Alfa) con ayudantía NO actúa como Jefe de Ayudantía
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), 'usuarios/encFormativoSocorros'), usuarioBase('encFormativoSocorros', {
+      estatus: 'Activo',
+      rol_sistema: 'Encargado',
+      etapa: 'Alfa',
+      grupo_operativo: 'Alfa',
+      subgrupo: 'Alfa 2',
+      ayudantia: 'Socorros',
+      ayudantia_slot: 'Socorros',
+    }));
+  });
+  await assertFails(getDoc(doc(db('encFormativoSocorros'), 'usuarios/brigSocorros')));
+});
+
+test('Jefe de Ayudantía en operativos: pasa/aprueba lista, asigna roles y consulta Material propio solo de su ayudantía', async () => {
+  const fJefe = db('jefeSocorros');
+  const fBrig = db('brigSocorros');
+
+  // 1. Prerregistro manual de integrante de su ayudantía permitido; otra ayudantía bloqueada
+  await assertSucceeds(setDoc(
+    doc(fJefe, 'operativos/opAbierto/prerregistros/brigSocorros'),
+    prerregistroBase('brigSocorros', 'jefeSocorros', 'Manual_Encargado', { ayudantia: 'Socorros' }),
+  ));
+  await assertFails(setDoc(
+    doc(fJefe, 'operativos/opAbierto/prerregistros/brigLogistica'),
+    prerregistroBase('brigLogistica', 'jefeSocorros', 'Manual_Encargado', {
+      etapa: 'Grupo Operativo',
+      subgrupo: '',
+      ayudantia: 'Logística',
+    }),
+  ));
+  await assertSucceeds(getDocs(query(
+    collection(fJefe, 'operativos/opAbierto/prerregistros'),
+    where('ayudantia', '==', 'Socorros'),
+  )));
+  await assertFails(getDocs(collection(fJefe, 'operativos/opAbierto/prerregistros')));
+
+  // 2. Pase/aprobación de lista para brigSocorros permitido; para brigLogistica bloqueado
+  await assertSucceeds(setDoc(doc(fJefe, 'asistencias_personal/asisSocorros1'), {
+    id: 'asisSocorros1',
+    operativo_id: 'opAbierto',
+    operativo_nombre: 'Operativo opAbierto',
+    usuario_uid: 'brigSocorros',
+    usuario_nombre: 'Ana Pérez',
+    usuario_cuenta: '20201234',
+    grupo_operativo: 'Alfa',
+    ayudantia_slot: 'Socorros',
+    rol_en_turno: 'Primeros Auxilios',
+    estado_operativo: 'En servicio',
+    signos_vitales: null,
+    metodo_entrada: 'Manual',
+    hora_entrada: serverTimestamp(),
+    hora_salida: null,
+    horas_totales: null,
+    salida_cerrada_manual: false,
+    equipos_bupc_pendientes: 0,
+    registrado_por_uid: 'jefeSocorros',
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  }));
+
+  await assertFails(setDoc(doc(fJefe, 'asistencias_personal/asisLogisticaFail'), {
+    id: 'asisLogisticaFail',
+    operativo_id: 'opAbierto',
+    operativo_nombre: 'Operativo opAbierto',
+    usuario_uid: 'brigLogistica',
+    usuario_nombre: 'Ana Pérez',
+    usuario_cuenta: '20201234',
+    grupo_operativo: 'Ninguno',
+    ayudantia_slot: 'Logística',
+    rol_en_turno: 'Logística',
+    estado_operativo: 'En servicio',
+    signos_vitales: null,
+    metodo_entrada: 'Manual',
+    hora_entrada: serverTimestamp(),
+    hora_salida: null,
+    horas_totales: null,
+    salida_cerrada_manual: false,
+    equipos_bupc_pendientes: 0,
+    registrado_por_uid: 'jefeSocorros',
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // 3. Listado de asistencias exige filtro por su ayudantía; asignar/ajustar rol en su ayudantía permitido y bloqueado en otra
+  await assertSucceeds(getDocs(query(
+    collection(fJefe, 'asistencias_personal'),
+    where('operativo_id', '==', 'opAbierto'),
+    where('ayudantia_slot', '==', 'Socorros'),
+  )));
+  await assertFails(getDocs(query(
+    collection(fJefe, 'asistencias_personal'),
+    where('operativo_id', '==', 'opAbierto'),
+  )));
+
+  await assertSucceeds(updateDoc(doc(fJefe, 'asistencias_personal/asisSocorros1'), {
+    rol_en_turno: 'Búsqueda y Rescate',
+    estado_operativo: 'Reserva',
+    actualizado_en: serverTimestamp(),
+  }));
+  // asisAbierto pertenece a brigOmega1 (ayudantia_slot: 'Ninguna') -> bloqueado para jefeSocorros
+  await assertFails(updateDoc(doc(fJefe, 'asistencias_personal/asisAbierto'), {
+    rol_en_turno: 'Evacuación',
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // 4. Brigadista de Socorros registra Material propio y Jefe de Socorros lo consulta;
+  //    Jefe de Socorros NO puede asignar equipo sobre asistencia de otra ayudantía
+  await assertSucceeds(setDoc(doc(fBrig, 'equipos_turno/eqPropioSocorros'), {
+    id: 'eqPropioSocorros',
+    asistencia_id: 'asisSocorros1',
+    operativo_id: 'opAbierto',
+    operativo_nombre: 'Operativo opAbierto',
+    usuario_uid: 'brigSocorros',
+    usuario_nombre: 'Ana Pérez',
+    nombre_articulo: 'Botiquín personal equipado',
+    codigo_inventario: '',
+    cantidad: 1,
+    origen_material: 'Propio',
+    estado_reporte: 'OK',
+    falla_reportada: '',
+    devuelto: false,
+    devuelto_en: null,
+    devuelto_por_uid: null,
+    acta_incidencia: null,
+    creado_por_uid: 'brigSocorros',
+    creado_por_nombre: 'Ana Pérez',
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  }));
+  await assertSucceeds(getDocs(query(
+    collection(fJefe, 'equipos_turno'),
+    where('usuario_uid', '==', 'brigSocorros'),
+  )));
+
+  await assertFails(setDoc(doc(fJefe, 'equipos_turno/eqCruzadoFail'), {
+    id: 'eqCruzadoFail',
+    asistencia_id: 'asisAbierto',
+    operativo_id: 'opAbierto',
+    usuario_uid: 'brigOmega1',
+    usuario_nombre: 'Ana Pérez',
+    nombre_articulo: 'Chaleco alta visibilidad',
+    codigo_inventario: '',
+    origen_material: 'BUPC_Asignado',
+    estado_reporte: 'OK',
+    falla_reportada: '',
+    devuelto: false,
+    devuelto_en: null,
+    devuelto_por_uid: null,
+    acta_incidencia: null,
+    creado_por_uid: 'jefeSocorros',
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  }));
+});
+
+test('No regresión Admin y Brigadista regular frente al aislamiento de Jefe de Ayudantía', async () => {
+  // Admin mantiene acceso global de lectura y edición sobre cualquier ayudantía
+  await assertSucceeds(getDocs(collection(db('admin1'), 'usuarios')));
+  await assertSucceeds(updateDoc(doc(db('admin1'), 'usuarios/brigLogistica'), {
+    rol_sistema: 'Encargado',
+    actualizado_en: serverTimestamp(),
+  }));
+  await assertSucceeds(getDocs(query(
+    collection(db('admin1'), 'asistencias_personal'),
+    where('operativo_id', '==', 'opAbierto'),
+  )));
+
+  // Brigadista regular mantiene acceso propio pero NO ve ni a compañeros de su misma ayudantía
+  await assertSucceeds(getDoc(doc(db('brigSocorros'), 'usuarios/brigSocorros')));
+  await assertFails(getDoc(doc(db('brigSocorros'), 'usuarios/jefeSocorros')));
+  await assertFails(getDocs(query(
+    collection(db('brigSocorros'), 'usuarios'),
+    where('ayudantia', '==', 'Socorros'),
+  )));
+});
+
+// ============================================================================
+// PRUEBAS: ASIGNACIÓN AUTOMÁTICA DE ROL OPERATIVO POR AYUDANTÍA,
+// EDICIÓN EN CONVOCATORIA, CONSERVACIÓN EN QR Y PERSISTENCIA DE ayudantia_slot
+// ============================================================================
+
+test('Mapeo automático de rol operativo por ayudantía (5 ayudantías + Sin definir) en prerregistro y QR', async () => {
+  const casos = [
+    { uid: 'brigCapMap', etapa: 'Grupo Operativo', subgrupo: '', ayudantia: 'Capacitación', rolEsperado: 'Búsqueda y Rescate', rolIncorrecto: 'Radios' },
+    { uid: 'brigTeslaMap', etapa: 'Grupo Operativo', subgrupo: '', ayudantia: 'Tesla', rolEsperado: 'Radios', rolIncorrecto: 'Atención' },
+    { uid: 'brigApMap', etapa: 'Grupo Operativo', subgrupo: '', ayudantia: 'Administración de Personal', rolEsperado: 'Encargados', rolIncorrecto: 'Abastecedores' },
+    { uid: 'brigLogMap', etapa: 'Grupo Operativo', subgrupo: '', ayudantia: 'Logística', rolEsperado: 'Abastecedores', rolIncorrecto: 'Encargados' },
+    { uid: 'brigSocMap', etapa: 'Grupo Operativo', subgrupo: '', ayudantia: 'Socorros', rolEsperado: 'Atención', rolIncorrecto: 'Búsqueda y Rescate' },
+    { uid: 'brigAlfaMap', etapa: 'Alfa', subgrupo: 'Alfa 1', ayudantia: 'Ninguna', rolEsperado: 'Sin definir', rolIncorrecto: 'Atención' },
+    { uid: 'brigOmegaMap', etapa: 'Omega', subgrupo: 'Omega 1', ayudantia: 'Ninguna', rolEsperado: 'Sin definir', rolIncorrecto: 'Radios' },
+    { uid: 'brigSierraMap', etapa: 'SIERRA', subgrupo: '', ayudantia: 'Ninguna', rolEsperado: 'Sin definir', rolIncorrecto: 'Abastecedores' },
+  ];
+
+  // Sembrar usuarios de prueba y abrir convocatoria en opAbierto
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const f = ctx.firestore();
+    await updateDoc(doc(f, 'operativos/opAbierto'), {
+      convocatoria_abierta: true,
+      cupo_sugerido: 50,
+    });
+    for (const c of casos) {
+      await setDoc(doc(f, `usuarios/${c.uid}`), usuarioBase(c.uid, {
+        estatus: 'Activo',
+        rol_sistema: 'Brigadista',
+        etapa: c.etapa,
+        grupo_operativo: c.etapa === 'Alfa' || c.etapa === 'Omega' ? c.etapa : 'Ninguno',
+        subgrupo: c.subgrupo,
+        ayudantia: c.ayudantia,
+        ayudantia_slot: c.ayudantia,
+      }));
+    }
+  });
+
+  for (const c of casos) {
+    const f = db(c.uid);
+
+    // 1. Prerregistro con rol distinto al mapeado -> rechazado
+    await assertFails(setDoc(
+      doc(f, `operativos/opAbierto/prerregistros/${c.uid}`),
+      prerregistroBase(c.uid, c.uid, 'Autoregistro', {
+        etapa: c.etapa,
+        subgrupo: c.subgrupo,
+        ayudantia: c.ayudantia,
+        ayudantia_slot: c.ayudantia,
+        rol_en_turno: c.rolIncorrecto,
+        rol_editado_manual: false,
+        actualizado_en: serverTimestamp(),
+      }),
+    ));
+
+    // 2. Prerregistro con rol mapeado exacto y ayudantia_slot persistido -> permitido
+    await assertSucceeds(setDoc(
+      doc(f, `operativos/opAbierto/prerregistros/${c.uid}`),
+      prerregistroBase(c.uid, c.uid, 'Autoregistro', {
+        etapa: c.etapa,
+        subgrupo: c.subgrupo,
+        ayudantia: c.ayudantia,
+        ayudantia_slot: c.ayudantia,
+        rol_en_turno: c.rolEsperado,
+        rol_editado_manual: false,
+        actualizado_en: serverTimestamp(),
+      }),
+    ));
+
+    // 3. Auto-registro QR con rol suplantado -> rechazado
+    await assertFails(setDoc(doc(f, `asistencias_personal/asisBad_${c.uid}`), {
+      id: `asisBad_${c.uid}`,
+      operativo_id: 'opAbierto',
+      operativo_nombre: 'Operativo opAbierto',
+      usuario_uid: c.uid,
+      usuario_nombre: 'Ana Pérez',
+      usuario_cuenta: '20201234',
+      grupo_operativo: c.etapa === 'Alfa' || c.etapa === 'Omega' ? c.etapa : 'Ninguno',
+      ayudantia_slot: c.ayudantia,
+      rol_en_turno: c.rolIncorrecto,
+      estado_operativo: 'En servicio',
+      signos_vitales: null,
+      metodo_entrada: 'QR_Operativo_TOTP',
+      hora_entrada: serverTimestamp(),
+      hora_salida: null,
+      horas_totales: null,
+      salida_cerrada_manual: false,
+      equipos_bupc_pendientes: 0,
+      registrado_por_uid: c.uid,
+      creado_en: serverTimestamp(),
+      actualizado_en: serverTimestamp(),
+    }));
+
+    // 4. Auto-registro QR con rol mapeado exacto y ayudantia_slot exacto -> permitido
+    await assertSucceeds(setDoc(doc(f, `asistencias_personal/asisOk_${c.uid}`), {
+      id: `asisOk_${c.uid}`,
+      operativo_id: 'opAbierto',
+      operativo_nombre: 'Operativo opAbierto',
+      usuario_uid: c.uid,
+      usuario_nombre: 'Ana Pérez',
+      usuario_cuenta: '20201234',
+      grupo_operativo: c.etapa === 'Alfa' || c.etapa === 'Omega' ? c.etapa : 'Ninguno',
+      ayudantia_slot: c.ayudantia,
+      rol_en_turno: c.rolEsperado,
+      estado_operativo: 'En servicio',
+      signos_vitales: null,
+      metodo_entrada: 'QR_Operativo_TOTP',
+      hora_entrada: serverTimestamp(),
+      hora_salida: null,
+      horas_totales: null,
+      salida_cerrada_manual: false,
+      equipos_bupc_pendientes: 0,
+      registrado_por_uid: c.uid,
+      creado_en: serverTimestamp(),
+      actualizado_en: serverTimestamp(),
+    }));
+  }
+});
+
+test('Conservación de rol editado manualmente en convocatoria al confirmar por QR y alcance de Jefe de Ayudantía', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await updateDoc(doc(ctx.firestore(), 'operativos/opAbierto'), {
+      convocatoria_abierta: true,
+    });
+  });
+
+  // 1. Brigadista de Socorros se prerregistra con su rol automático ("Atención") y ayudantia_slot: "Socorros"
+  await assertSucceeds(setDoc(
+    doc(db('brigSocorros'), 'operativos/opAbierto/prerregistros/brigSocorros'),
+    prerregistroBase('brigSocorros', 'brigSocorros', 'Autoregistro', {
+      etapa: 'Alfa',
+      subgrupo: 'Alfa 1',
+      ayudantia: 'Socorros',
+      ayudantia_slot: 'Socorros',
+      rol_en_turno: 'Atención',
+      rol_editado_manual: false,
+      actualizado_en: serverTimestamp(),
+    }),
+  ));
+
+  // 2. Brigadista NO puede editar su propio rol en el prerregistro
+  await assertFails(updateDoc(
+    doc(db('brigSocorros'), 'operativos/opAbierto/prerregistros/brigSocorros'),
+    {
+      rol_en_turno: 'Encargados',
+      rol_editado_manual: true,
+      actualizado_en: serverTimestamp(),
+    },
+  ));
+
+  // 3. Jefe de Socorros edita manualmente el rol del prerregistro a "Búsqueda y Rescate"
+  await assertSucceeds(updateDoc(
+    doc(db('jefeSocorros'), 'operativos/opAbierto/prerregistros/brigSocorros'),
+    {
+      rol_en_turno: 'Búsqueda y Rescate',
+      rol_editado_manual: true,
+      actualizado_en: serverTimestamp(),
+    },
+  ));
+
+  // 4. Al confirmar entrada por QR del operativo, brigSocorros DEBE conservar "Búsqueda y Rescate"
+  //    (intentar sobrescribir de vuelta a "Atención" es rechazado por las reglas)
+  await assertFails(setDoc(doc(db('brigSocorros'), 'asistencias_personal/asisSocOverwriteFail'), {
+    id: 'asisSocOverwriteFail',
+    operativo_id: 'opAbierto',
+    operativo_nombre: 'Operativo opAbierto',
+    usuario_uid: 'brigSocorros',
+    usuario_nombre: 'Ana Pérez',
+    usuario_cuenta: '20201234',
+    grupo_operativo: 'Alfa',
+    ayudantia_slot: 'Socorros',
+    rol_en_turno: 'Atención',
+    estado_operativo: 'En servicio',
+    signos_vitales: null,
+    metodo_entrada: 'QR_Operativo_TOTP',
+    hora_entrada: serverTimestamp(),
+    hora_salida: null,
+    horas_totales: null,
+    salida_cerrada_manual: false,
+    equipos_bupc_pendientes: 0,
+    registrado_por_uid: 'brigSocorros',
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  }));
+
+  await assertSucceeds(setDoc(doc(db('brigSocorros'), 'asistencias_personal/asisSocQrConservado'), {
+    id: 'asisSocQrConservado',
+    operativo_id: 'opAbierto',
+    operativo_nombre: 'Operativo opAbierto',
+    usuario_uid: 'brigSocorros',
+    usuario_nombre: 'Ana Pérez',
+    usuario_cuenta: '20201234',
+    grupo_operativo: 'Alfa',
+    ayudantia_slot: 'Socorros',
+    rol_en_turno: 'Búsqueda y Rescate',
+    estado_operativo: 'En servicio',
+    signos_vitales: null,
+    metodo_entrada: 'QR_Operativo_TOTP',
+    hora_entrada: serverTimestamp(),
+    hora_salida: null,
+    horas_totales: null,
+    salida_cerrada_manual: false,
+    equipos_bupc_pendientes: 0,
+    registrado_por_uid: 'brigSocorros',
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // 5. Jefe de Socorros NO puede editar prerregistro de otra ayudantía (Logística); Admin sí puede
+  await assertSucceeds(setDoc(
+    doc(db('admin1'), 'operativos/opAbierto/prerregistros/brigLogistica'),
+    prerregistroBase('brigLogistica', 'admin1', 'Manual_Encargado', {
+      etapa: 'Grupo Operativo',
+      subgrupo: '',
+      ayudantia: 'Logística',
+      ayudantia_slot: 'Logística',
+      rol_en_turno: 'Abastecedores',
+      rol_editado_manual: false,
+      actualizado_en: serverTimestamp(),
+    }),
+  ));
+  await assertFails(updateDoc(
+    doc(db('jefeSocorros'), 'operativos/opAbierto/prerregistros/brigLogistica'),
+    {
+      rol_en_turno: 'Radios',
+      rol_editado_manual: true,
+      actualizado_en: serverTimestamp(),
+    },
+  ));
+  await assertSucceeds(updateDoc(
+    doc(db('admin1'), 'operativos/opAbierto/prerregistros/brigLogistica'),
+    {
+      rol_en_turno: 'Radios',
+      rol_editado_manual: true,
+      actualizado_en: serverTimestamp(),
+    },
+  ));
+
+  // 6. Persistencia e integridad de ayudantia_slot en prerregistros, asistencias_personal y equipos_turno
+  const preSnap = await assertSucceeds(getDocs(query(
+    collection(db('jefeSocorros'), 'operativos/opAbierto/prerregistros'),
+    where('ayudantia_slot', '==', 'Socorros'),
+  )));
+  if (preSnap.docs.length !== 1 || preSnap.docs[0].data().rol_en_turno !== 'Búsqueda y Rescate') {
+    throw new Error('El prerregistro con ayudantia_slot="Socorros" debe preservar su rol editado y ser consultable por el Jefe.');
+  }
+
+  const asisSnap = await assertSucceeds(getDocs(query(
+    collection(db('jefeSocorros'), 'asistencias_personal'),
+    where('operativo_id', '==', 'opAbierto'),
+    where('ayudantia_slot', '==', 'Socorros'),
+  )));
+  if (asisSnap.docs.length !== 1 || asisSnap.docs[0].data().rol_en_turno !== 'Búsqueda y Rescate') {
+    throw new Error('La asistencia confirmada por QR debe conservar rol_en_turno y ayudantia_slot="Socorros".');
+  }
+
+  // Material asignado persiste ayudantia_slot y no permite alterarlo en update
+  await assertSucceeds(setDoc(doc(db('jefeSocorros'), 'equipos_turno/eqSocSlot'), {
+    id: 'eqSocSlot',
+    asistencia_id: 'asisSocQrConservado',
+    operativo_id: 'opAbierto',
+    operativo_nombre: 'Operativo opAbierto',
+    usuario_uid: 'brigSocorros',
+    usuario_nombre: 'Ana Pérez',
+    ayudantia_slot: 'Socorros',
+    nombre_articulo: 'Radio portátil',
+    codigo_inventario: 'RAD-07',
+    cantidad: 1,
+    origen_material: 'BUPC_Asignado',
+    estado_reporte: 'OK',
+    falla_reportada: '',
+    devuelto: false,
+    devuelto_en: null,
+    devuelto_por_uid: null,
+    acta_incidencia: null,
+    creado_por_uid: 'jefeSocorros',
+    creado_por_nombre: 'Jefe Socorros',
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  }));
+
+  await assertFails(updateDoc(doc(db('jefeSocorros'), 'equipos_turno/eqSocSlot'), {
+    ayudantia_slot: 'Logística',
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // Brigadista con "Sin definir" puede recibir rol fácilmente en campo por Encargado/Admin
+  await assertSucceeds(setDoc(doc(db('admin1'), 'asistencias_personal/asisSinDefCampo'), {
+    id: 'asisSinDefCampo',
+    operativo_id: 'opAbierto',
+    operativo_nombre: 'Operativo opAbierto',
+    usuario_uid: 'brigAlfa1',
+    usuario_nombre: 'Ana Pérez',
+    usuario_cuenta: '20201234',
+    grupo_operativo: 'Alfa',
+    ayudantia_slot: 'Ninguna',
+    rol_en_turno: 'Sin definir',
+    estado_operativo: 'En servicio',
+    signos_vitales: null,
+    metodo_entrada: 'QR_Credencial',
+    hora_entrada: serverTimestamp(),
+    hora_salida: null,
+    horas_totales: null,
+    salida_cerrada_manual: false,
+    equipos_bupc_pendientes: 0,
+    registrado_por_uid: 'admin1',
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  }));
+  await assertSucceeds(updateDoc(doc(db('admin1'), 'asistencias_personal/asisSinDefCampo'), {
+    rol_en_turno: 'Atención',
+    actualizado_en: serverTimestamp(),
+  }));
+});
+
+// ============================================================================
+// PRUEBAS: CONVOCATORIA CERRADA VS OPERATIVO FINALIZADO Y NO REGRESIÓN
+// PARA ENCARGADOS EN ALFA / OMEGA / SIERRA SIN AYUDANTÍA
+// ============================================================================
+
+test('Convocatoria cerrada bloquea autoregistro externo pero permite altas manuales, edición de roles y QR; Finalizado es solo lectura', async () => {
+  // 1. Cerrar convocatoria en opAbierto (manteniendo recepción abierta)
+  await assertSucceeds(updateDoc(doc(db('admin1'), 'operativos/opAbierto'), {
+    convocatoria_abierta: false,
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // 2. Nuevo prerregistro abierto (Autoregistro) por brigadista -> BLOQUEADO
+  await assertFails(setDoc(
+    doc(db('brigAlfa1'), 'operativos/opAbierto/prerregistros/brigAlfa1'),
+    prerregistroBase('brigAlfa1', 'brigAlfa1', 'Autoregistro', {
+      etapa: 'Alfa',
+      subgrupo: 'Alfa 1',
+      ayudantia: 'Ninguna',
+      ayudantia_slot: 'Ninguna',
+      rol_en_turno: 'Sin definir',
+      rol_editado_manual: false,
+      actualizado_en: serverTimestamp(),
+    }),
+  ));
+
+  // 3. Con convocatoria cerrada, Encargado/Admin SÍ puede dar alta manual en prerregistro,
+  //    editar rol en prerregistro, dar alta manual de asistencia y confirmar por QR
+  await assertSucceeds(setDoc(
+    doc(db('encargado1'), 'operativos/opAbierto/prerregistros/brigAlfa1'),
+    prerregistroBase('brigAlfa1', 'encargado1', 'Manual_Encargado', {
+      etapa: 'Alfa',
+      subgrupo: 'Alfa 1',
+      ayudantia: 'Ninguna',
+      ayudantia_slot: 'Ninguna',
+      rol_en_turno: 'Sin definir',
+      rol_editado_manual: false,
+      actualizado_en: serverTimestamp(),
+    }),
+  ));
+
+  await assertSucceeds(updateDoc(
+    doc(db('encargado1'), 'operativos/opAbierto/prerregistros/brigAlfa1'),
+    {
+      rol_en_turno: 'Abastecedores',
+      rol_editado_manual: true,
+      actualizado_en: serverTimestamp(),
+    },
+  ));
+
+  // Brigadista con convocatoria cerrada puede confirmar asistencia por QR respetando el rol editado
+  await assertSucceeds(setDoc(doc(db('brigAlfa1'), 'asistencias_personal/asisConvCerradaQr'), {
+    id: 'asisConvCerradaQr',
+    operativo_id: 'opAbierto',
+    operativo_nombre: 'Operativo opAbierto',
+    usuario_uid: 'brigAlfa1',
+    usuario_nombre: 'Ana Pérez',
+    usuario_cuenta: '20201234',
+    grupo_operativo: 'Alfa',
+    ayudantia_slot: 'Ninguna',
+    rol_en_turno: 'Abastecedores',
+    estado_operativo: 'En servicio',
+    signos_vitales: null,
+    metodo_entrada: 'QR_Operativo_TOTP',
+    hora_entrada: serverTimestamp(),
+    hora_salida: null,
+    horas_totales: null,
+    salida_cerrada_manual: false,
+    equipos_bupc_pendientes: 0,
+    registrado_por_uid: 'brigAlfa1',
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // Encargado puede editar rol en turno y dar alta manual de otro participante con convocatoria cerrada
+  await assertSucceeds(updateDoc(doc(db('encargado1'), 'asistencias_personal/asisConvCerradaQr'), {
+    rol_en_turno: 'Atención',
+    actualizado_en: serverTimestamp(),
+  }));
+
+  await assertSucceeds(setDoc(doc(db('encargado1'), 'asistencias_personal/asisConvCerradaManual'), {
+    id: 'asisConvCerradaManual',
+    operativo_id: 'opAbierto',
+    operativo_nombre: 'Operativo opAbierto',
+    usuario_uid: 'brigOmega1',
+    usuario_nombre: 'Ana Pérez',
+    usuario_cuenta: '20201234',
+    grupo_operativo: 'Omega',
+    ayudantia_slot: 'Ninguna',
+    rol_en_turno: 'Sin definir',
+    estado_operativo: 'En servicio',
+    signos_vitales: null,
+    metodo_entrada: 'Manual',
+    hora_entrada: serverTimestamp(),
+    hora_salida: null,
+    horas_totales: null,
+    salida_cerrada_manual: false,
+    equipos_bupc_pendientes: 0,
+    registrado_por_uid: 'encargado1',
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // 4. Operativo Finalizado: estrictamente solo lectura (no reabrir convocatoria, no editar, no altas),
+  //    pero mantiene lectura histórica para consulta y exportación CSV
+  await assertFails(updateDoc(doc(db('admin1'), 'operativos/opFinalizado'), {
+    convocatoria_abierta: true,
+    actualizado_en: serverTimestamp(),
+  }));
+  await assertFails(setDoc(doc(db('admin1'), 'asistencias_personal/asisFinFail'), {
+    id: 'asisFinFail',
+    operativo_id: 'opFinalizado',
+    operativo_nombre: 'Operativo opFinalizado',
+    usuario_uid: 'brigAlfa1',
+    usuario_nombre: 'Ana Pérez',
+    usuario_cuenta: '20201234',
+    grupo_operativo: 'Alfa',
+    ayudantia_slot: 'Ninguna',
+    rol_en_turno: 'Sin definir',
+    estado_operativo: 'En servicio',
+    signos_vitales: null,
+    metodo_entrada: 'Manual',
+    hora_entrada: serverTimestamp(),
+    hora_salida: null,
+    horas_totales: null,
+    salida_cerrada_manual: false,
+    equipos_bupc_pendientes: 0,
+    registrado_por_uid: 'admin1',
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  }));
+  await assertSucceeds(getDoc(doc(db('admin1'), 'operativos/opFinalizado')));
+  await assertSucceeds(getDocs(query(
+    collection(db('admin1'), 'asistencias_personal'),
+    where('operativo_id', '==', 'opFinalizado'),
+  )));
+});
+
+test('No regresión: Encargados en Alfa, Omega y SIERRA sin ayudantía operan convocatorias, altas y asistencias sin bloqueo', async () => {
+  const encargadosFormativos = [
+    { uid: 'encAlfaSinAy', etapa: 'Alfa', grupo: 'Alfa', subgrupo: 'Alfa 1', grupos: ['Alfa 1'] },
+    { uid: 'encOmegaSinAy', etapa: 'Omega', grupo: 'Omega', subgrupo: 'Omega 1', grupos: ['Omega 1'] },
+    { uid: 'encSierraSinAy', etapa: 'SIERRA', grupo: 'Ninguno', subgrupo: 'Sierra 1', grupos: ['SIERRA'] },
+  ];
+
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const f = ctx.firestore();
+    for (const e of encargadosFormativos) {
+      await setDoc(doc(f, `usuarios/${e.uid}`), usuarioBase(e.uid, {
+        estatus: 'Activo',
+        rol_sistema: 'Encargado',
+        etapa: e.etapa,
+        grupo_operativo: e.grupo,
+        subgrupo: e.subgrupo,
+        ayudantia: 'Ninguna',
+        ayudantia_slot: 'Ninguna',
+        grupos_a_cargo: e.grupos,
+      }));
+    }
+  });
+
+  for (const e of encargadosFormativos) {
+    const f = db(e.uid);
+    const preId = `target_${e.uid}`;
+    const asisId = `asis_${e.uid}`;
+
+    // 1. Abrir y cerrar convocatoria en operativo activo
+    await assertSucceeds(updateDoc(doc(f, 'operativos/opAbierto'), {
+      convocatoria_abierta: true,
+      actualizado_en: serverTimestamp(),
+    }));
+    await assertSucceeds(updateDoc(doc(f, 'operativos/opAbierto'), {
+      convocatoria_abierta: false,
+      actualizado_en: serverTimestamp(),
+    }));
+
+    // 2. Prerregistro manual + edición de rol + listado incluso con convocatoria cerrada
+    await assertSucceeds(setDoc(
+      doc(f, `operativos/opAbierto/prerregistros/${preId}`),
+      prerregistroBase(preId, e.uid, 'Manual_Encargado', {
+        etapa: e.etapa,
+        subgrupo: e.subgrupo,
+        ayudantia: 'Ninguna',
+        ayudantia_slot: 'Ninguna',
+        rol_en_turno: 'Sin definir',
+        rol_editado_manual: false,
+        actualizado_en: serverTimestamp(),
+      }),
+    ));
+    await assertSucceeds(updateDoc(
+      doc(f, `operativos/opAbierto/prerregistros/${preId}`),
+      {
+        rol_en_turno: 'Atención',
+        rol_editado_manual: true,
+        actualizado_en: serverTimestamp(),
+      },
+    ));
+    await assertSucceeds(getDocs(collection(f, 'operativos/opAbierto/prerregistros')));
+
+    // 3. Alta de asistencia, listado y edición de rol en campo
+    await assertSucceeds(setDoc(doc(f, `asistencias_personal/${asisId}`), {
+      id: asisId,
+      operativo_id: 'opAbierto',
+      operativo_nombre: 'Operativo opAbierto',
+      usuario_uid: preId,
+      usuario_nombre: 'Ana Pérez',
+      usuario_cuenta: '20201234',
+      grupo_operativo: e.grupo,
+      ayudantia_slot: 'Ninguna',
+      rol_en_turno: 'Atención',
+      estado_operativo: 'En servicio',
+      signos_vitales: null,
+      metodo_entrada: 'Manual',
+      hora_entrada: serverTimestamp(),
+      hora_salida: null,
+      horas_totales: null,
+      salida_cerrada_manual: false,
+      equipos_bupc_pendientes: 0,
+      registrado_por_uid: e.uid,
+      creado_en: serverTimestamp(),
+      actualizado_en: serverTimestamp(),
+    }));
+    await assertSucceeds(updateDoc(doc(f, `asistencias_personal/${asisId}`), {
+      rol_en_turno: 'Radios',
+      actualizado_en: serverTimestamp(),
+    }));
+    await assertSucceeds(getDocs(query(
+      collection(f, 'asistencias_personal'),
+      where('operativo_id', '==', 'opAbierto'),
+    )));
+
+    // 4. Operativo finalizado sigue bloqueado en escritura
+    await assertFails(updateDoc(doc(f, 'operativos/opFinalizado'), {
+      convocatoria_abierta: true,
+      actualizado_en: serverTimestamp(),
+    }));
+  }
+});
+
+// ============================================================================
+// PRUEBAS OBLIGATORIAS: PROTECCIÓN DE IDENTIDAD, CORRECCIÓN EN PENDIENTE,
+// RECUPERACIÓN DE CUENTAS HUÉRFANAS Y EDICIÓN DE PRERREGISTROS LEGACY
+// ============================================================================
+
+test('1) Usuario Activo edita Ficha de Emergencia y teléfono, pero es rechazado al cambiar nombre, número de cuenta o correo; Admin corrige identidad con auditoría', async () => {
+  const fActivo = db('activo1');
+
+  // Permitido: Ficha de Emergencia + teléfono propio + tiene_foto
+  await assertSucceeds(updateDoc(doc(fActivo, 'usuarios/activo1'), {
+    tipo_sangre: 'A-',
+    alergias: 'Penicilina',
+    padecimientos_medicamentos: 'Asma controlada con salbutamol',
+    contacto_emergencia_nombre: 'Carlos Pérez',
+    contacto_emergencia_parentesco: 'Padre',
+    contacto_emergencia_telefono: '3125550199',
+    celular: '3129876543',
+    celular_con_whatsapp: false,
+    telefono_fijo: '3123120000',
+    tiene_foto: true,
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // Bloqueado estrictamente para usuario Activo: nombre completo, número de cuenta, correo y datos académicos
+  await assertFails(updateDoc(doc(fActivo, 'usuarios/activo1'), {
+    nombres: 'Otro Nombre',
+    actualizado_en: serverTimestamp(),
+  }));
+  await assertFails(updateDoc(doc(fActivo, 'usuarios/activo1'), {
+    apellido_paterno: 'Otro Apellido',
+    actualizado_en: serverTimestamp(),
+  }));
+  await assertFails(updateDoc(doc(fActivo, 'usuarios/activo1'), {
+    apellido_materno: 'Materno Falso',
+    actualizado_en: serverTimestamp(),
+  }));
+  await assertFails(updateDoc(doc(fActivo, 'usuarios/activo1'), {
+    numero_cuenta: '99999999',
+    actualizado_en: serverTimestamp(),
+  }));
+  await assertFails(updateDoc(doc(fActivo, 'usuarios/activo1'), {
+    correo: 'evasion@ucol.mx',
+    actualizado_en: serverTimestamp(),
+  }));
+  // Usuario Activo tampoco puede sobrescribir directamente su proyección en perfiles_operativos
+  await assertFails(setDoc(doc(fActivo, 'perfiles_operativos/activo1'), {
+    uid: 'activo1',
+    nombre_completo: 'Identidad Falsa',
+    numero_cuenta: '99999999',
+    estatus: 'Activo',
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // Administración sí puede corregir identidad, propagando a perfiles_operativos y registrando CORRECCION_IDENTIDAD
+  const fAdmin = db('admin1');
+
+  // CORRECCION_IDENTIDAD sin valor_anterior / valor_nuevo es rechazado por firestore.rules
+  await assertFails(addDoc(collection(fAdmin, 'auditoria_eventos'), {
+    tipo: 'CORRECCION_IDENTIDAD',
+    actor_uid: 'admin1',
+    actor_nombre: 'Admin Uno',
+    objetivo_uid: 'activo1',
+    objetivo_nombre: 'Ana María Pérez Gómez',
+    detalle: 'Intento sin valores trazables',
+    creado_en: serverTimestamp(),
+  }));
+
+  const loteAdmin = writeBatch(fAdmin);
+  loteAdmin.update(doc(fAdmin, 'usuarios/activo1'), {
+    nombres: 'Ana María',
+    apellido_paterno: 'Pérez',
+    apellido_materno: 'Gómez',
+    numero_cuenta: '20205678',
+    actualizado_en: serverTimestamp(),
+  });
+  loteAdmin.set(doc(fAdmin, 'perfiles_operativos/activo1'), {
+    uid: 'activo1',
+    nombre_completo: 'Ana María Pérez Gómez',
+    numero_cuenta: '20205678',
+    estatus: 'Activo',
+    etapa: 'Alfa',
+    subgrupo: 'Alfa 1',
+    ayudantia: 'Ninguna',
+    grupo_operativo: 'Alfa',
+    ayudantia_slot: 'Ninguna',
+    qr_codigo_unico: 'qr-activo-1',
+    clave_radio: '',
+    actualizado_en: serverTimestamp(),
+  });
+  loteAdmin.set(doc(collection(fAdmin, 'auditoria_eventos')), {
+    tipo: 'CORRECCION_IDENTIDAD',
+    actor_uid: 'admin1',
+    actor_nombre: 'Admin Uno',
+    objetivo_uid: 'activo1',
+    objetivo_nombre: 'Ana María Pérez Gómez',
+    detalle: 'Nombre: Ana Pérez → Ana María Pérez Gómez · No. de cuenta: 20201234 → 20205678',
+    valor_anterior: 'Nombre: Ana Pérez | Cuenta: 20201234',
+    valor_nuevo: 'Nombre: Ana María Pérez Gómez | Cuenta: 20205678',
+    creado_en: serverTimestamp(),
+  });
+  await assertSucceeds(loteAdmin.commit());
+});
+
+test('2) Usuario Pendiente puede corregir sus datos enviados antes de aprobación (con validación de esquema y sin escalar privilegios)', async () => {
+  const fPend = db('pendiente1');
+
+  const loteCorreccion = writeBatch(fPend);
+  loteCorreccion.update(doc(fPend, 'usuarios/pendiente1'), {
+    nombres: 'Lucía Fernanda',
+    apellido_paterno: 'Ramírez',
+    apellido_materno: 'Soto',
+    fecha_nacimiento: '2002-08-19',
+    sexo: 'Mujer',
+    celular: '3124445566',
+    celular_con_whatsapp: true,
+    telefono_fijo: '',
+    nivel_academico: 'Superior',
+    escuela_carrera: 'Facultad de Enfermería',
+    numero_cuenta: '20219876',
+    tipo_sangre: 'B+',
+    alergias: 'Polen',
+    padecimientos_medicamentos: 'Ninguno',
+    contacto_emergencia_nombre: 'Jorge Ramírez',
+    contacto_emergencia_parentesco: 'Padre',
+    contacto_emergencia_telefono: '3121119999',
+    actualizado_en: serverTimestamp(),
+  });
+  loteCorreccion.set(doc(fPend, 'perfiles_operativos/pendiente1'), {
+    uid: 'pendiente1',
+    nombre_completo: 'Lucía Fernanda Ramírez Soto',
+    numero_cuenta: '20219876',
+    estatus: 'Pendiente',
+    etapa: 'Alfa',
+    subgrupo: '',
+    ayudantia: 'Ninguna',
+    grupo_operativo: 'Ninguno',
+    ayudantia_slot: 'Ninguna',
+    qr_codigo_unico: null,
+    clave_radio: '',
+    actualizado_en: serverTimestamp(),
+  });
+  await assertSucceeds(loteCorreccion.commit());
+
+  // Validación de esquema sigue activa (fecha inválida -> rechazado)
+  await assertFails(updateDoc(doc(fPend, 'usuarios/pendiente1'), {
+    fecha_nacimiento: '19-08-2002',
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // Bloqueo de auto-escalamiento en usuario Pendiente y en perfiles_operativos
+  await assertFails(updateDoc(doc(fPend, 'usuarios/pendiente1'), {
+    rol_sistema: 'Encargado',
+    actualizado_en: serverTimestamp(),
+  }));
+  await assertFails(setDoc(doc(fPend, 'perfiles_operativos/pendiente1'), {
+    uid: 'pendiente1',
+    nombre_completo: 'Lucía Fernanda Ramírez Soto',
+    numero_cuenta: '20219876',
+    estatus: 'Activo',
+    actualizado_en: serverTimestamp(),
+  }));
+});
+
+test('3) Cuenta autenticada huérfana (sin usuarios/{uid}) puede recrear su registro en estado Pendiente reutilizando su UID', async () => {
+  // Caso A: Ni usuarios/{uid} ni perfiles_operativos/{uid} existen
+  const fHuerfanaA = db('huerfanaSinDocs');
+  const loteA = writeBatch(fHuerfanaA);
+  loteA.set(doc(fHuerfanaA, 'usuarios/huerfanaSinDocs'), altaValida('huerfanaSinDocs', {
+    etapa: 'Alfa',
+    subgrupo: '',
+  }));
+  loteA.set(doc(fHuerfanaA, 'perfiles_operativos/huerfanaSinDocs'), {
+    uid: 'huerfanaSinDocs',
+    nombre_completo: 'Ana Pérez',
+    numero_cuenta: '20201234',
+    estatus: 'Pendiente',
+    etapa: 'Alfa',
+    subgrupo: '',
+    ayudantia: 'Ninguna',
+    grupo_operativo: 'Ninguno',
+    ayudantia_slot: 'Ninguna',
+    qr_codigo_unico: null,
+    clave_radio: '',
+    actualizado_en: serverTimestamp(),
+  });
+  await assertSucceeds(loteA.commit());
+
+  // Caso B: usuarios/{uid} fue borrado en consola pero quedó perfiles_operativos/{uid} residual
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), 'perfiles_operativos/huerfanaConResidual'), {
+      uid: 'huerfanaConResidual',
+      nombre_completo: 'Registro Residual',
+      numero_cuenta: '20190001',
+      estatus: 'Activo',
+      etapa: 'Grupo Operativo',
+      subgrupo: '',
+      ayudantia: 'Socorros',
+      grupo_operativo: 'Ninguno',
+      ayudantia_slot: 'Socorros',
+      qr_codigo_unico: 'qr-viejo',
+      clave_radio: '',
+      actualizado_en: Timestamp.now(),
+    });
+  });
+
+  const fHuerfanaB = db('huerfanaConResidual');
+  // No puede recrear perfiles_operativos en solitario sin crear usuarios/{uid} en Pendiente
+  await assertFails(setDoc(doc(fHuerfanaB, 'perfiles_operativos/huerfanaConResidual'), {
+    uid: 'huerfanaConResidual',
+    nombre_completo: 'Ana Pérez',
+    numero_cuenta: '20201234',
+    estatus: 'Pendiente',
+    actualizado_en: serverTimestamp(),
+  }));
+
+  const loteB = writeBatch(fHuerfanaB);
+  loteB.set(doc(fHuerfanaB, 'usuarios/huerfanaConResidual'), altaValida('huerfanaConResidual', {
+    etapa: 'Alfa',
+    subgrupo: '',
+  }));
+  loteB.set(doc(fHuerfanaB, 'perfiles_operativos/huerfanaConResidual'), {
+    uid: 'huerfanaConResidual',
+    nombre_completo: 'Ana Pérez',
+    numero_cuenta: '20201234',
+    estatus: 'Pendiente',
+    etapa: 'Alfa',
+    subgrupo: '',
+    ayudantia: 'Ninguna',
+    grupo_operativo: 'Ninguno',
+    ayudantia_slot: 'Ninguna',
+    qr_codigo_unico: null,
+    clave_radio: '',
+    actualizado_en: serverTimestamp(),
+  });
+  await assertSucceeds(loteB.commit());
+});
+
+test('4) Jefe de Ayudantía puede editar rol_en_turno en un prerregistro histórico con campos legacy incompatibles', async () => {
+  // Sembrar prerregistro histórico con valores legacy que antes fallaban esPrerregistroValido completo:
+  // etapa: 'Ninguno', sin subgrupo, sin ayudantia (solo ayudantia_slot), sin rol_en_turno y con campo extra histórico
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const f = ctx.firestore();
+    await setDoc(doc(f, 'operativos/opAbierto/prerregistros/brigSocorros'), {
+      usuario_uid: 'brigSocorros',
+      usuario_nombre: 'ANA PÉREZ',
+      usuario_cuenta: '20201234',
+      etapa: 'Ninguno',
+      ayudantia_slot: 'Socorros',
+      origen: 'Autoregistro',
+      campo_legacy_v1: 'valor_historico',
+      fecha_registro: Timestamp.now(),
+    });
+  });
+
+  // Jefe de otra ayudantía (Logística) sigue bloqueado
+  await assertFails(updateDoc(
+    doc(db('jefeLogistica'), 'operativos/opAbierto/prerregistros/brigSocorros'),
+    {
+      rol_en_turno: 'Búsqueda y Rescate',
+      rol_editado_manual: true,
+      actualizado_en: serverTimestamp(),
+    },
+  ));
+
+  // Jefe de Socorros tampoco puede alterar otros campos del documento en ese update
+  await assertFails(updateDoc(
+    doc(db('jefeSocorros'), 'operativos/opAbierto/prerregistros/brigSocorros'),
+    {
+      rol_en_turno: 'Búsqueda y Rescate',
+      usuario_nombre: 'Nombre Alterado',
+      actualizado_en: serverTimestamp(),
+    },
+  ));
+
+  // Jefe de Socorros SÍ puede actualizar rol_en_turno y rol_editado_manual sin bloqueo por campos legacy
+  await assertSucceeds(updateDoc(
+    doc(db('jefeSocorros'), 'operativos/opAbierto/prerregistros/brigSocorros'),
+    {
+      rol_en_turno: 'Búsqueda y Rescate',
+      rol_editado_manual: true,
+      actualizado_en: serverTimestamp(),
+    },
+  ));
 });

@@ -17,7 +17,6 @@ import {
   onSnapshot,
   query,
   serverTimestamp,
-  setDoc,
   updateDoc,
   where,
   writeBatch,
@@ -29,16 +28,16 @@ import { AYUDANTIAS, ETAPAS_BRIGADISTA } from '../constants/catalogos'
 import { normalizarNombrePropio, normalizarParentesco } from '../lib/nombres'
 import {
   ayudantiaEfectiva,
+  ayudantiaJefatura,
   esAdmin,
   esAyudantiaValidaParaEtapa,
-  esEncargadoAP,
-  esEncargadoTesla,
   etapaDesdeGrupo,
   etiquetaAyudantia,
   grupoDesdeEtapa,
   normalizarClaveRadio,
   normalizarUsuario,
   puedeAsignarRadio,
+  puedeCambiarEstatusBrigadista,
   puedeGestionarBrigadista,
 } from '../lib/permisos'
 import type {
@@ -52,11 +51,44 @@ import type {
   GrupoOperativo,
   RolSistema,
   TipoEventoAuditoria,
+  TipoSangre,
   Usuario,
 } from '../types'
 
 const usuariosRef = collection(db, 'usuarios')
+const perfilesOperativosRef = collection(db, 'perfiles_operativos')
 const auditoriaRef = collection(db, 'auditoria_eventos')
+
+function construirPayloadPerfilOperativo(u: {
+  uid: string
+  nombres: string
+  apellido_paterno: string
+  apellido_materno: string
+  numero_cuenta: string
+  estatus: EstatusUsuario
+  etapa: EtapaBrigadista
+  subgrupo: string
+  ayudantia: AyudantiaSlot
+  grupo_operativo: GrupoOperativo
+  ayudantia_slot: AyudantiaSlot
+  qr_codigo_unico: string | null
+  clave_radio: string
+}) {
+  return {
+    uid: u.uid,
+    nombre_completo: nombreCompleto(u),
+    numero_cuenta: (u.numero_cuenta || '0').trim(),
+    estatus: u.estatus,
+    etapa: u.etapa,
+    subgrupo: u.subgrupo || '',
+    ayudantia: u.ayudantia,
+    grupo_operativo: u.grupo_operativo,
+    ayudantia_slot: u.ayudantia_slot,
+    qr_codigo_unico: u.qr_codigo_unico ?? null,
+    clave_radio: u.clave_radio || '',
+    actualizado_en: serverTimestamp(),
+  }
+}
 
 export function nombreCompleto(
   u: Pick<Usuario, 'nombres' | 'apellido_paterno' | 'apellido_materno'>,
@@ -142,21 +174,27 @@ function normalizarFichaEmergenciaRegistro(m: DatosMedicos): DatosMedicos {
 }
 
 /**
- * Crea la cuenta en Authentication y el expediente `usuarios/{uid}` en estado
- * Pendiente. Si Firestore rechaza el expediente, se elimina la cuenta de Auth
- * para no dejar usuarios huérfanos.
+ * Crea la cuenta en Authentication y los documentos `usuarios/{uid}` y
+ * `perfiles_operativos/{uid}` en estado Pendiente. Si Firestore rechaza el lote,
+ * se elimina la cuenta de Auth para no dejar usuarios huérfanos.
  */
 export async function registrarBrigadista(datos: DatosRegistro): Promise<void> {
   const { user } = await createUserWithEmailAndPassword(auth, datos.correo.trim(), datos.contrasena)
   const personalNormalizado = normalizarDatosPersonalesRegistro(datos.personal)
+  const academicoNormalizado: DatosAcademicos = {
+    nivel_academico: datos.academico.nivel_academico,
+    escuela_carrera: datos.academico.escuela_carrera.trim(),
+    numero_cuenta: datos.academico.numero_cuenta.trim(),
+  }
   const fichaNormalizada = normalizarFichaEmergenciaRegistro(datos.medico)
 
   try {
-    await setDoc(doc(usuariosRef, user.uid), {
+    const lote = writeBatch(db)
+    lote.set(doc(usuariosRef, user.uid), {
       uid: user.uid,
       correo: user.email,
       ...personalNormalizado,
-      ...datos.academico,
+      ...academicoNormalizado,
       ...fichaNormalizada,
       // Valores iniciales forzados también por firestore.rules
       grupo_operativo: 'Ninguno',
@@ -175,6 +213,23 @@ export async function registrarBrigadista(datos: DatosRegistro): Promise<void> {
       creado_en: serverTimestamp(),
       actualizado_en: serverTimestamp(),
     })
+    lote.set(
+      doc(perfilesOperativosRef, user.uid),
+      construirPayloadPerfilOperativo({
+        uid: user.uid,
+        ...personalNormalizado,
+        numero_cuenta: academicoNormalizado.numero_cuenta,
+        estatus: 'Pendiente',
+        etapa: 'Alfa',
+        subgrupo: '',
+        ayudantia: 'Ninguna',
+        grupo_operativo: 'Ninguno',
+        ayudantia_slot: 'Ninguna',
+        qr_codigo_unico: null,
+        clave_radio: '',
+      }),
+    )
+    await lote.commit()
     await sendEmailVerification(user).catch(() => undefined)
   } catch (error) {
     await deleteUser(user).catch(() => signOut(auth))
@@ -189,23 +244,30 @@ export interface DatosRegistroSinContrasena {
 }
 
 /**
- * Completa el expediente `usuarios/{uid}` para un usuario ya autenticado con Google.
+ * Recrea o completa el expediente `usuarios/{uid}` y `perfiles_operativos/{uid}` en estado
+ * Pendiente para una cuenta ya autenticada en Firebase Auth (Google o cuenta huérfana correo/contraseña).
  */
-export async function completarRegistroGoogle(
+export async function completarRegistroAutenticado(
   user: User,
   datos: DatosRegistroSinContrasena,
 ): Promise<void> {
   if (!user.email) {
-    throw new Error('La cuenta de Google no proporcionó un correo electrónico válido.')
+    throw new Error('La cuenta autenticada no proporcionó un correo electrónico válido.')
   }
   const personalNormalizado = normalizarDatosPersonalesRegistro(datos.personal)
+  const academicoNormalizado: DatosAcademicos = {
+    nivel_academico: datos.academico.nivel_academico,
+    escuela_carrera: datos.academico.escuela_carrera.trim(),
+    numero_cuenta: datos.academico.numero_cuenta.trim(),
+  }
   const fichaNormalizada = normalizarFichaEmergenciaRegistro(datos.medico)
 
-  await setDoc(doc(usuariosRef, user.uid), {
+  const lote = writeBatch(db)
+  lote.set(doc(usuariosRef, user.uid), {
     uid: user.uid,
     correo: user.email,
     ...personalNormalizado,
-    ...datos.academico,
+    ...academicoNormalizado,
     ...fichaNormalizada,
     grupo_operativo: 'Ninguno',
     ayudantia_slot: 'Ninguna',
@@ -223,12 +285,71 @@ export async function completarRegistroGoogle(
     creado_en: serverTimestamp(),
     actualizado_en: serverTimestamp(),
   })
+  lote.set(
+    doc(perfilesOperativosRef, user.uid),
+    construirPayloadPerfilOperativo({
+      uid: user.uid,
+      ...personalNormalizado,
+      numero_cuenta: academicoNormalizado.numero_cuenta,
+      estatus: 'Pendiente',
+      etapa: 'Alfa',
+      subgrupo: '',
+      ayudantia: 'Ninguna',
+      grupo_operativo: 'Ninguno',
+      ayudantia_slot: 'Ninguna',
+      qr_codigo_unico: null,
+      clave_radio: '',
+    }),
+  )
+  await lote.commit()
+}
+
+export const completarRegistroGoogle = completarRegistroAutenticado
+
+/**
+ * Permite a un usuario con cuenta en estado `Pendiente` corregir cualquiera de los datos
+ * enviados en su registro antes de ser aprobado, sincronizando `perfiles_operativos/{uid}`.
+ */
+export async function corregirDatosPendiente(
+  uid: string,
+  datos: DatosRegistroSinContrasena,
+): Promise<void> {
+  const personalNormalizado = normalizarDatosPersonalesRegistro(datos.personal)
+  const academicoNormalizado: DatosAcademicos = {
+    nivel_academico: datos.academico.nivel_academico,
+    escuela_carrera: datos.academico.escuela_carrera.trim(),
+    numero_cuenta: datos.academico.numero_cuenta.trim(),
+  }
+  const fichaNormalizada = normalizarFichaEmergenciaRegistro(datos.medico)
+
+  const lote = writeBatch(db)
+  lote.update(doc(usuariosRef, uid), {
+    ...personalNormalizado,
+    ...academicoNormalizado,
+    ...fichaNormalizada,
+    actualizado_en: serverTimestamp(),
+  })
+  lote.set(
+    doc(perfilesOperativosRef, uid),
+    construirPayloadPerfilOperativo({
+      uid,
+      ...personalNormalizado,
+      numero_cuenta: academicoNormalizado.numero_cuenta,
+      estatus: 'Pendiente',
+      etapa: 'Alfa',
+      subgrupo: '',
+      ayudantia: 'Ninguna',
+      grupo_operativo: 'Ninguno',
+      ayudantia_slot: 'Ninguna',
+      qr_codigo_unico: null,
+      clave_radio: '',
+    }),
+  )
+  await lote.commit()
 }
 
 export interface DatosFichaEmergenciaPropia {
-  nombres?: string
-  apellido_paterno?: string
-  apellido_materno?: string
+  tipo_sangre: TipoSangre
   alergias: string
   padecimientos_medicamentos: string
   contacto_emergencia_nombre: string
@@ -237,32 +358,43 @@ export interface DatosFichaEmergenciaPropia {
 }
 
 /**
- * Permite al propio integrante Activo actualizar su Ficha de Emergencia (incluyendo
- * los 3 campos separados de contacto de emergencia) con normalización automática de nombres.
+ * Permite al propio integrante Activo actualizar únicamente su Ficha de Emergencia
+ * (sin tocar nombre completo, número de cuenta ni correo).
  */
 export async function actualizarFichaEmergenciaPropia(
   uid: string,
   datos: DatosFichaEmergenciaPropia,
 ): Promise<void> {
-  const payload: Record<string, unknown> = {
+  await updateDoc(doc(usuariosRef, uid), {
+    tipo_sangre: datos.tipo_sangre,
     alergias: datos.alergias.trim() || 'Ninguna',
     padecimientos_medicamentos: datos.padecimientos_medicamentos.trim() || 'Ninguno',
     contacto_emergencia_nombre: normalizarNombrePropio(datos.contacto_emergencia_nombre),
     contacto_emergencia_parentesco: normalizarParentesco(datos.contacto_emergencia_parentesco),
     contacto_emergencia_telefono: datos.contacto_emergencia_telefono.trim(),
     actualizado_en: serverTimestamp(),
-  }
-  if (datos.nombres !== undefined) {
-    payload.nombres = normalizarNombrePropio(datos.nombres)
-  }
-  if (datos.apellido_paterno !== undefined) {
-    payload.apellido_paterno = normalizarNombrePropio(datos.apellido_paterno)
-  }
-  if (datos.apellido_materno !== undefined) {
-    payload.apellido_materno = normalizarNombrePropio(datos.apellido_materno)
-  }
+  })
+}
 
-  await updateDoc(doc(usuariosRef, uid), payload)
+export interface DatosTelefonoPropio {
+  celular: string
+  celular_con_whatsapp: boolean
+  telefono_fijo: string
+}
+
+/**
+ * Permite al propio integrante Activo actualizar únicamente sus teléfonos de contacto.
+ */
+export async function actualizarTelefonoPropio(
+  uid: string,
+  datos: DatosTelefonoPropio,
+): Promise<void> {
+  await updateDoc(doc(usuariosRef, uid), {
+    celular: datos.celular.trim(),
+    celular_con_whatsapp: datos.celular_con_whatsapp,
+    telefono_fijo: datos.telefono_fijo.trim(),
+    actualizado_en: serverTimestamp(),
+  })
 }
 
 // ── Listeners en tiempo real ─────────────────────────────────────────────────
@@ -293,16 +425,30 @@ export async function verificarEstatusEnServidor(uid: string): Promise<EstatusUs
   return snap.exists() ? (snap.data() as Usuario).estatus : null
 }
 
-/** Solo Administrador / AP / Tesla activo (lo exige firestore.rules). */
+/**
+ * Escucha usuarios por estatus:
+ * - Administrador: consulta global `where('estatus', 'in', estatus)`.
+ * - Jefe de Ayudantía (ej. Tesla): consulta exacta `where('ayudantia', '==', ayudantiaActor)`
+ *   para coincidir con `firestore.rules` sin desperdiciar lecturas y filtra `estatus` en memoria.
+ */
 export function escucharUsuariosPorEstatus(
   estatus: EstatusUsuario[],
   alCambiar: (usuarios: Usuario[]) => void,
   alFallar: (error: FirestoreError) => void,
+  actor?: Usuario,
 ): Unsubscribe {
+  const ayJefe = actor ? ayudantiaJefatura(actor) : null
+  const consulta = ayJefe
+    ? query(usuariosRef, where('ayudantia', '==', ayJefe))
+    : query(usuariosRef, where('estatus', 'in', estatus))
+  const permitidos = new Set<EstatusUsuario>(estatus)
+
   return onSnapshot(
-    query(usuariosRef, where('estatus', 'in', estatus)),
+    consulta,
     (snap) => {
-      const lista = snap.docs.map((d) => normalizarUsuario(d.data() as Usuario))
+      const lista = snap.docs
+        .map((d) => normalizarUsuario(d.data() as Usuario))
+        .filter((u) => permitidos.has(u.estatus))
       lista.sort((a, b) => (a.creado_en?.toMillis() ?? 0) - (b.creado_en?.toMillis() ?? 0))
       alCambiar(lista)
     },
@@ -311,9 +457,11 @@ export function escucharUsuariosPorEstatus(
 }
 
 /**
- * Consulta acotada del directorio según rol (escala Plan Spark 150 → 300 personas):
- * - Administrador, Encargado AP o Encargado Tesla: un solo listener sobre `usuarios`.
- * - Encargado normal (Opción B): consultas acotadas únicamente a `Brigadistas` dentro de `grupos_a_cargo`.
+ * Consulta acotada del directorio según rol (eficiencia Plan Spark):
+ * - Administrador: un solo listener global sobre `usuarios`.
+ * - Jefe de Ayudantía (`Encargado` + `Grupo Operativo` + ayudantía activa): consulta exacta
+ *   `where('ayudantia', '==', ayJefe)` alineada con `firestore.rules` (0 lecturas fuera de su ayudantía).
+ * - Encargado sin ayudantía (Opción B): consultas acotadas únicamente a `Brigadistas` dentro de `grupos_a_cargo`.
  * Nunca descarga `fotos_perfiles`.
  */
 export function escucharDirectorioSegunRol(
@@ -321,9 +469,22 @@ export function escucharDirectorioSegunRol(
   alCambiar: (usuarios: Usuario[]) => void,
   alFallar: (error: FirestoreError) => void,
 ): Unsubscribe {
-  if (esAdmin(actor) || esEncargadoAP(actor) || esEncargadoTesla(actor)) {
+  if (esAdmin(actor)) {
     return onSnapshot(
       usuariosRef,
+      (snap) => {
+        const lista = snap.docs.map((d) => normalizarUsuario(d.data() as Usuario))
+        lista.sort((a, b) => nombreCompleto(a).localeCompare(nombreCompleto(b), 'es-MX'))
+        alCambiar(lista)
+      },
+      alFallar,
+    )
+  }
+
+  const ayJefe = ayudantiaJefatura(actor)
+  if (ayJefe) {
+    return onSnapshot(
+      query(usuariosRef, where('ayudantia', '==', ayJefe)),
       (snap) => {
         const lista = snap.docs.map((d) => normalizarUsuario(d.data() as Usuario))
         lista.sort((a, b) => nombreCompleto(a).localeCompare(nombreCompleto(b), 'es-MX'))
@@ -461,6 +622,8 @@ export function aprobarUsuario(admin: Usuario, objetivo: Usuario, asignacion: As
       new Error('Para asignar a Grupo Operativo es obligatorio seleccionar una ayudantía.'),
     )
   }
+  // Eliminar import no usado de setDoc si ya todo va por writeBatch
+  const qrGenerado = objetivo.qr_codigo_unico ?? crypto.randomUUID()
   const cambios: Record<string, unknown> = {
     grupo_operativo: grupoDesdeEtapa(etapa),
     ayudantia_slot: ayudantia,
@@ -468,12 +631,14 @@ export function aprobarUsuario(admin: Usuario, objetivo: Usuario, asignacion: As
     subgrupo,
     ayudantia,
     estatus: 'Activo',
-    qr_codigo_unico: objetivo.qr_codigo_unico ?? crypto.randomUUID(),
+    qr_codigo_unico: qrGenerado,
   }
 
+  let claveAsignada = objetivo.clave_radio || objetivo.clave_personal_radio || ''
   let detalleRadio = ''
   if (puedeAsignarRadio(admin, objetivo) && typeof asignacion.autorizado_radio === 'boolean') {
     const clave = normalizarClaveRadio(asignacion.clave_radio ?? asignacion.clave_personal_radio)
+    claveAsignada = clave
     cambios.autorizado_radio = asignacion.autorizado_radio
     cambios.clave_radio = clave
     cambios.clave_personal_radio = clave ? clave.slice(0, 10) : null
@@ -483,7 +648,38 @@ export function aprobarUsuario(admin: Usuario, objetivo: Usuario, asignacion: As
   }
 
   const detalle = `Alta aprobada · Etapa ${etapa}${subgrupo ? ` (${subgrupo})` : ''} · Ayudantía ${etiquetaAyudantia(ayudantia)}${detalleRadio}`
-  return nuevoLoteConAuditoria(admin, objetivo, 'APROBACION_USUARIO', detalle, cambios)
+  const lote = writeBatch(db)
+  lote.update(doc(usuariosRef, objetivo.uid), { ...cambios, actualizado_en: serverTimestamp() })
+  if (esAdmin(admin) || Boolean(ayudantiaJefatura(admin))) {
+    lote.set(
+      doc(perfilesOperativosRef, objetivo.uid),
+      construirPayloadPerfilOperativo({
+        uid: objetivo.uid,
+        nombres: objetivo.nombres,
+        apellido_paterno: objetivo.apellido_paterno,
+        apellido_materno: objetivo.apellido_materno,
+        numero_cuenta: objetivo.numero_cuenta,
+        estatus: 'Activo',
+        etapa,
+        subgrupo,
+        ayudantia,
+        grupo_operativo: grupoDesdeEtapa(etapa),
+        ayudantia_slot: ayudantia,
+        qr_codigo_unico: qrGenerado,
+        clave_radio: claveAsignada,
+      }),
+    )
+  }
+  lote.set(doc(auditoriaRef), {
+    tipo: 'APROBACION_USUARIO' as TipoEventoAuditoria,
+    actor_uid: admin.uid,
+    actor_nombre: nombreCompleto(admin),
+    objetivo_uid: objetivo.uid,
+    objetivo_nombre: nombreCompleto(objetivo),
+    detalle,
+    creado_en: serverTimestamp(),
+  })
+  return lote.commit()
 }
 
 export interface DatosRadioUsuario {
@@ -532,6 +728,10 @@ export function actualizarRadioUsuario(
 }
 
 export interface DatosEdicionExpediente {
+  nombres?: string
+  apellido_paterno?: string
+  apellido_materno?: string
+  numero_cuenta?: string
   etapa?: EtapaBrigadista
   subgrupo?: string
   ayudantia?: AyudantiaSlot
@@ -544,8 +744,8 @@ export interface DatosEdicionExpediente {
 
 /**
  * Edición post-incorporación desde el Expediente Unificado respetando estrictamente
- * los campos permitidos por rol en `firestore.rules` y registrando diff antes → después
- * en `auditoria_eventos`.
+ * los campos permitidos por rol en `firestore.rules`, propagando identidad y adscripción a
+ * `perfiles_operativos/{uid}` y registrando `valor_anterior` / `valor_nuevo` en `auditoria_eventos`.
  */
 export function guardarEdicionExpediente(
   actor: Usuario,
@@ -557,12 +757,106 @@ export function guardarEdicionExpediente(
   }
 
   const soyAdmin = esAdmin(actor)
-  const soyAP = esEncargadoAP(actor)
+  const ayJefe = ayudantiaJefatura(actor)
+  const puedoCambiarEstatus = puedeCambiarEstatusBrigadista(actor, objetivo)
   const payload: Record<string, unknown> = {}
   const diffs: string[] = []
+  const partesAnterior: string[] = []
+  const partesNuevo: string[] = []
+
+  // Protección de campos identitarios: exclusivos de Administración
+  const intentaCambiarIdentidad =
+    (cambios.nombres !== undefined && cambios.nombres !== objetivo.nombres) ||
+    (cambios.apellido_paterno !== undefined &&
+      cambios.apellido_paterno !== objetivo.apellido_paterno) ||
+    (cambios.apellido_materno !== undefined &&
+      cambios.apellido_materno !== objetivo.apellido_materno) ||
+    (cambios.numero_cuenta !== undefined &&
+      cambios.numero_cuenta.trim() !== objetivo.numero_cuenta)
+
+  if (!soyAdmin && intentaCambiarIdentidad) {
+    return Promise.reject(
+      new Error('Solo Administración puede corregir nombre completo o número de cuenta.'),
+    )
+  }
+
+  let nombresFinal = normalizarNombrePropio(objetivo.nombres)
+  let paternoFinal = normalizarNombrePropio(objetivo.apellido_paterno)
+  let maternoFinal = normalizarNombrePropio(objetivo.apellido_materno)
+  let cuentaFinal = objetivo.numero_cuenta.trim()
+
+  if (soyAdmin) {
+    const tocaNombre =
+      cambios.nombres !== undefined ||
+      cambios.apellido_paterno !== undefined ||
+      cambios.apellido_materno !== undefined
+
+    if (tocaNombre) {
+      const nProp = normalizarNombrePropio(cambios.nombres ?? objetivo.nombres)
+      const pProp = normalizarNombrePropio(cambios.apellido_paterno ?? objetivo.apellido_paterno)
+      const mProp = normalizarNombrePropio(cambios.apellido_materno ?? objetivo.apellido_materno)
+
+      if (!nProp || nProp.length > 80) {
+        return Promise.reject(new Error('Ingresa un nombre válido (1 a 80 caracteres).'))
+      }
+      if (!pProp || pProp.length > 60) {
+        return Promise.reject(new Error('Ingresa un apellido paterno válido (1 a 60 caracteres).'))
+      }
+      if (mProp.length > 60) {
+        return Promise.reject(new Error('El apellido materno no debe exceder 60 caracteres.'))
+      }
+
+      if (
+        nProp !== objetivo.nombres ||
+        pProp !== objetivo.apellido_paterno ||
+        mProp !== objetivo.apellido_materno
+      ) {
+        const nombrePrevioRaw = [
+          objetivo.nombres,
+          objetivo.apellido_paterno,
+          objetivo.apellido_materno,
+        ]
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .join(' ')
+        nombresFinal = nProp
+        paternoFinal = pProp
+        maternoFinal = mProp
+        const nombreNuevoNorm = [nombresFinal, paternoFinal, maternoFinal].filter(Boolean).join(' ')
+
+        payload.nombres = nombresFinal
+        payload.apellido_paterno = paternoFinal
+        payload.apellido_materno = maternoFinal
+        diffs.push(`Nombre: ${nombrePrevioRaw} → ${nombreNuevoNorm}`)
+        partesAnterior.push(`Nombre: ${nombrePrevioRaw}`)
+        partesNuevo.push(`Nombre: ${nombreNuevoNorm}`)
+      }
+    }
+
+    if (cambios.numero_cuenta !== undefined) {
+      const cProp = cambios.numero_cuenta.trim()
+      if (!cProp || cProp.length > 12) {
+        return Promise.reject(
+          new Error('Ingresa un número de cuenta válido (1 a 12 caracteres, o 0 si no aplica).'),
+        )
+      }
+      if (cProp !== objetivo.numero_cuenta) {
+        cuentaFinal = cProp
+        payload.numero_cuenta = cuentaFinal
+        diffs.push(`No. de cuenta: ${objetivo.numero_cuenta} → ${cuentaFinal}`)
+        partesAnterior.push(`Cuenta: ${objetivo.numero_cuenta}`)
+        partesNuevo.push(`Cuenta: ${cuentaFinal}`)
+      }
+    }
+  }
 
   const etapaFinal = cambios.etapa ?? objetivo.etapa
   const ayudantiaFinal = cambios.ayudantia ?? ayudantiaEfectiva(objetivo)
+  if (ayJefe && ayudantiaFinal !== ayJefe) {
+    return Promise.reject(
+      new Error(`Como Jefe de Ayudantía solo puedes gestionar integrantes dentro de ${ayJefe}.`),
+    )
+  }
   const tocaAdscripcion =
     cambios.etapa !== undefined ||
     cambios.subgrupo !== undefined ||
@@ -600,7 +894,7 @@ export function guardarEdicionExpediente(
     )
   }
   if (
-    (soyAdmin || soyAP) &&
+    puedoCambiarEstatus &&
     cambios.estatus !== undefined &&
     cambios.estatus !== objetivo.estatus
   ) {
@@ -647,8 +941,21 @@ export function guardarEdicionExpediente(
     return Promise.resolve()
   }
 
-  const tipoEvento: TipoEventoAuditoria =
-    payload.rol_sistema !== undefined
+  const hayCorreccionIdentidad = partesAnterior.length > 0
+  const estatusFinal = (payload.estatus as EstatusUsuario | undefined) ?? objetivo.estatus
+  const subgrupoFinal =
+    etapaFinal === 'Grupo Operativo'
+      ? ''
+      : ((payload.subgrupo as string | undefined) ?? (objetivo.subgrupo || ''))
+  const qrFinal =
+    (payload.qr_codigo_unico as string | null | undefined) ?? objetivo.qr_codigo_unico ?? null
+  const claveFinal =
+    (payload.clave_radio as string | undefined) ??
+    (objetivo.clave_radio || objetivo.clave_personal_radio || '')
+
+  const tipoEvento: TipoEventoAuditoria = hayCorreccionIdentidad
+    ? 'CORRECCION_IDENTIDAD'
+    : payload.rol_sistema !== undefined
       ? 'CAMBIO_ROL'
       : payload.estatus === 'Inactivo'
         ? 'BAJA_USUARIO'
@@ -656,13 +963,52 @@ export function guardarEdicionExpediente(
           ? 'APROBACION_USUARIO'
           : 'ACTUALIZACION_PERSONAL'
 
-  return nuevoLoteConAuditoria(
-    actor,
-    objetivo,
-    tipoEvento,
-    diffs.join(' · ').slice(0, 500),
-    payload,
-  )
+  const lote = writeBatch(db)
+  lote.update(doc(usuariosRef, objetivo.uid), { ...payload, actualizado_en: serverTimestamp() })
+
+  // Propagar a `perfiles_operativos/{uid}` normalizando a Tipo Título cuando edita Admin o Jefe de Ayudantía
+  if (soyAdmin || Boolean(ayJefe)) {
+    lote.set(
+      doc(perfilesOperativosRef, objetivo.uid),
+      construirPayloadPerfilOperativo({
+        uid: objetivo.uid,
+        nombres: nombresFinal,
+        apellido_paterno: paternoFinal,
+        apellido_materno: maternoFinal,
+        numero_cuenta: cuentaFinal,
+        estatus: estatusFinal,
+        etapa: etapaFinal,
+        subgrupo: subgrupoFinal,
+        ayudantia: ayudantiaFinal,
+        grupo_operativo: grupoDesdeEtapa(etapaFinal),
+        ayudantia_slot: ayudantiaFinal,
+        qr_codigo_unico: qrFinal,
+        clave_radio: claveFinal,
+      }),
+    )
+  }
+
+  const eventoData: Record<string, unknown> = {
+    tipo: tipoEvento,
+    actor_uid: actor.uid,
+    actor_nombre: nombreCompleto(actor),
+    objetivo_uid: objetivo.uid,
+    objetivo_nombre: nombreCompleto({
+      nombres: nombresFinal,
+      apellido_paterno: paternoFinal,
+      apellido_materno: maternoFinal,
+    }),
+    detalle: diffs.join(' · ').slice(0, 500),
+    creado_en: serverTimestamp(),
+  }
+
+  if (hayCorreccionIdentidad) {
+    eventoData.valor_anterior = partesAnterior.join(' | ').slice(0, 500)
+    eventoData.valor_nuevo = partesNuevo.join(' | ').slice(0, 500)
+  }
+
+  lote.set(doc(auditoriaRef), eventoData)
+  return lote.commit()
 }
 
 export interface DatosOperativosPersonal {

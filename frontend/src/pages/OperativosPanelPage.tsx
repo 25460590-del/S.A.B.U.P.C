@@ -22,9 +22,10 @@ import {
 import { QRCodeCanvas } from 'qrcode.react'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { BitacoraPersonalSection } from '../components/BitacoraPersonalSection'
+import { IndicadorAlcanceAyudantia } from '../components/IndicadorAlcanceAyudantia'
 import { CATEGORIAS_OPERATIVO } from '../constants/catalogos'
 import { normalizarNombrePropio } from '../lib/nombres'
-import { esAdmin, esEncargado } from '../lib/permisos'
+import { ayudantiaJefatura, esAdmin, esEncargado } from '../lib/permisos'
 import { mensajeDeError } from '../services/authService'
 import {
   actualizarConvocatoriaOperativo,
@@ -86,6 +87,7 @@ function clasificarOperativo(op: Operativo, referenciaMs: number): FiltroEstadoO
 export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
   const puedeGestionar = esEncargado(usuario)
   const soyAdmin = esAdmin(usuario)
+  const ayJefe = ayudantiaJefatura(usuario)
 
   const [operativos, setOperativos] = useState<Operativo[]>([])
   const [cargando, setCargando] = useState(true)
@@ -117,6 +119,8 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
     opId: string
     valor: string
   } | null>(null)
+  // Confirmación ligera antes de abrir/cerrar convocatoria (evita clics accidentales)
+  const [confirmandoConvocatoria, setConfirmandoConvocatoria] = useState<boolean | null>(null)
 
   // Modales de Finalizar Operativo (pre-verificación + confirmación irreversible) y Borrado (Admin)
   const [preCierre, setPreCierre] = useState<ResultadoPreCierreOperativo | null>(null)
@@ -263,21 +267,21 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
     }
   }
 
-  async function alternarConvocatoria() {
+  async function aplicarCambioConvocatoria(siguiente: boolean) {
     if (!operativoActivo || !puedeGestionar || opEsFinalizado) return
     setCambiandoEstado(true)
     setError(null)
     setAviso(null)
     try {
-      const siguiente = !operativoActivo.convocatoria_abierta
       await actualizarConvocatoriaOperativo(usuario, operativoActivo, {
         convocatoria_abierta: siguiente,
         cupo_sugerido: operativoActivo.cupo_sugerido ?? null,
       })
+      setConfirmandoConvocatoria(null)
       setAviso(
         siguiente
-          ? `Convocatoria abierta para "${operativoActivo.nombre}". Los brigadistas ya pueden apuntarse.`
-          : `Convocatoria cerrada para "${operativoActivo.nombre}".`,
+          ? `Convocatoria abierta para "${operativoActivo.nombre}". Los brigadistas ya pueden apuntarse desde su panel.`
+          : `Convocatoria cerrada para "${operativoActivo.nombre}". Ya no se reciben nuevos prerregistros abiertos; las altas manuales, edición de roles y confirmaciones por QR siguen activas.`,
       )
     } catch (err) {
       setError(mensajeDeError(err))
@@ -460,6 +464,13 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
             </button>
           )}
         </div>
+
+        {ayJefe && (
+          <IndicadorAlcanceAyudantia
+            ayudantia={ayJefe}
+            descripcion={`En los operativos solo visualizarás, pasarás/aprobarás lista y asignarás roles a integrantes de ${ayJefe}.`}
+          />
+        )}
 
         {/* Chips de filtro con contador discreto: En curso, Programados, Finalizados */}
         <div className="flex flex-wrap items-center gap-2">
@@ -729,6 +740,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                   onClick={() => {
                     setSeleccionadoId(op.id)
                     setSubVista('resumen')
+                    setConfirmandoConvocatoria(null)
                     setError(null)
                     setAviso(null)
                   }}
@@ -808,6 +820,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
               type="button"
               onClick={() => {
                 setSeleccionadoId(null)
+                setConfirmandoConvocatoria(null)
                 setError(null)
                 setAviso(null)
               }}
@@ -842,6 +855,13 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                 : 'Recepción cerrada'}
           </span>
         </div>
+
+        {ayJefe && (
+          <IndicadorAlcanceAyudantia
+            ayudantia={ayJefe}
+            descripcion={`Viendo y gestionando únicamente la participación operativa de ${ayJefe}.`}
+          />
+        )}
 
         {/* Pestañas de sub-vistas */}
         <div className="grid grid-cols-3 gap-1.5 rounded-xl border border-borde bg-superficie-suave p-1 dark:border-noche-borde dark:bg-noche-campo">
@@ -964,16 +984,23 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
 
           {/* Convocatoria y Prerregistro previo */}
           <div className="flex flex-col gap-3 rounded-xl border border-borde bg-superficie-suave p-4 dark:border-noche-borde dark:bg-noche-campo">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <Megaphone size={16} strokeWidth={2} className="text-udec dark:text-activo-claro" />
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="flex items-start gap-2">
+                <Megaphone
+                  size={16}
+                  strokeWidth={2}
+                  className="mt-0.5 shrink-0 text-udec dark:text-activo-claro"
+                />
                 <div>
                   <h4 className="text-xs font-bold uppercase tracking-wide text-tinta dark:text-noche-tinta">
                     Convocatoria y prerregistro previo
                   </h4>
-                  <p className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
-                    Permite que los brigadistas se apunten antes del operativo y confirmen su
-                    llegada escaneando el QR.
+                  <p className="mt-0.5 text-xs text-tinta-suave dark:text-noche-tinta-suave">
+                    {opEsFinalizado
+                      ? 'Este operativo está finalizado en modo solo lectura.'
+                      : operativoActivo.convocatoria_abierta
+                        ? 'Convocatoria abierta: los brigadistas pueden apuntarse por su cuenta antes del operativo y confirmar con QR al llegar.'
+                        : 'Convocatoria cerrada: no admite nuevos prerregistros de brigadistas. Puedes seguir registrando altas manuales, editando roles y confirmando asistencias por QR.'}
                   </p>
                 </div>
               </div>
@@ -991,7 +1018,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                   className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
                     operativoActivo.convocatoria_abierta && !opEsFinalizado
                       ? 'bg-activo-suave text-activo dark:bg-noche-tarjeta dark:text-activo-claro'
-                      : 'bg-tarjeta text-tinta-suave dark:bg-noche-tarjeta dark:text-noche-tinta-suave'
+                      : 'bg-ambar-suave text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto'
                   }`}
                 >
                   {operativoActivo.convocatoria_abierta && !opEsFinalizado
@@ -1002,52 +1029,113 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
             </div>
 
             {puedeGestionar && !opEsFinalizado && (
-              <div className="flex flex-wrap items-end justify-between gap-3 border-t border-borde pt-3 dark:border-noche-borde">
-                <button
-                  type="button"
-                  disabled={cambiandoEstado}
-                  onClick={() => void alternarConvocatoria()}
-                  className={`btn min-h-9 px-3.5 text-xs ${
-                    operativoActivo.convocatoria_abierta
-                      ? 'border border-borde-fuerte bg-tarjeta text-tinta hover:bg-salvia dark:border-noche-borde dark:bg-noche-tarjeta dark:text-noche-tinta'
-                      : 'btn-verde'
-                  }`}
-                >
-                  <Megaphone size={14} strokeWidth={2} />
-                  <span>
-                    {operativoActivo.convocatoria_abierta
-                      ? 'Cerrar convocatoria'
-                      : 'Abrir convocatoria'}
-                  </span>
-                </button>
-
-                <form onSubmit={guardarCupoSugerido} className="flex flex-wrap items-end gap-2">
+              <div className="flex flex-col gap-3 border-t border-borde pt-3 dark:border-noche-borde">
+                <div className="flex flex-wrap items-end justify-between gap-3">
                   <div className="flex flex-col gap-1">
-                    <label htmlFor="resumen-cupo" className="text-[11px] font-semibold text-tinta-suave dark:text-noche-tinta-suave">
-                      Cupo sugerido (vacío = sin límite)
-                    </label>
-                    <input
-                      id="resumen-cupo"
-                      type="number"
-                      min={1}
-                      max={1000}
-                      placeholder="Sin límite"
-                      value={cupoEdicionActual}
-                      onChange={(e) =>
-                        setCupoEditadoPorOp({ opId: operativoActivo.id, valor: e.target.value })
-                      }
-                      className="campo min-h-9 w-36 text-xs tabular-nums"
-                      disabled={cambiandoEstado}
-                    />
+                    <span className="text-[11px] font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                      Estado de la convocatoria (reversible)
+                    </span>
+                    <div
+                      role="group"
+                      aria-label="Estado de la convocatoria"
+                      className="inline-flex rounded-lg border border-borde bg-tarjeta p-0.5 dark:border-noche-borde dark:bg-noche-tarjeta"
+                    >
+                      <button
+                        type="button"
+                        disabled={cambiandoEstado || Boolean(operativoActivo.convocatoria_abierta)}
+                        onClick={() => setConfirmandoConvocatoria(true)}
+                        className={`min-h-8 cursor-pointer rounded-md px-3 text-xs font-semibold transition-colors disabled:cursor-default ${
+                          operativoActivo.convocatoria_abierta
+                            ? 'bg-udec text-white'
+                            : 'text-tinta-suave hover:bg-salvia hover:text-udec-oscuro dark:text-noche-tinta-suave dark:hover:bg-noche-campo'
+                        }`}
+                      >
+                        Convocatoria abierta
+                      </button>
+                      <button
+                        type="button"
+                        disabled={cambiandoEstado || !operativoActivo.convocatoria_abierta}
+                        onClick={() => setConfirmandoConvocatoria(false)}
+                        className={`min-h-8 cursor-pointer rounded-md px-3 text-xs font-semibold transition-colors disabled:cursor-default ${
+                          !operativoActivo.convocatoria_abierta
+                            ? 'bg-ambar-suave text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto'
+                            : 'text-tinta-suave hover:bg-salvia hover:text-udec-oscuro dark:text-noche-tinta-suave dark:hover:bg-noche-campo'
+                        }`}
+                      >
+                        Convocatoria cerrada
+                      </button>
+                    </div>
                   </div>
-                  <button
-                    type="submit"
-                    disabled={cambiandoEstado}
-                    className="btn-salvia min-h-9 px-3 text-xs"
+
+                  <form onSubmit={guardarCupoSugerido} className="flex flex-wrap items-end gap-2">
+                    <div className="flex flex-col gap-1">
+                      <label
+                        htmlFor="resumen-cupo"
+                        className="text-[11px] font-semibold text-tinta-suave dark:text-noche-tinta-suave"
+                      >
+                        Cupo sugerido (vacío = sin límite)
+                      </label>
+                      <input
+                        id="resumen-cupo"
+                        type="number"
+                        min={1}
+                        max={1000}
+                        placeholder="Sin límite"
+                        value={cupoEdicionActual}
+                        onChange={(e) =>
+                          setCupoEditadoPorOp({ opId: operativoActivo.id, valor: e.target.value })
+                        }
+                        className="campo min-h-9 w-36 text-xs tabular-nums"
+                        disabled={cambiandoEstado}
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={cambiandoEstado}
+                      className="btn-salvia min-h-9 px-3 text-xs"
+                    >
+                      Guardar cupo
+                    </button>
+                  </form>
+                </div>
+
+                {confirmandoConvocatoria !== null && (
+                  <div
+                    role="region"
+                    aria-label="Confirmar cambio de convocatoria"
+                    className="flex flex-wrap items-center justify-between gap-2.5 rounded-lg border border-udec/35 bg-tarjeta p-3 dark:border-activo-claro/35 dark:bg-noche-tarjeta"
                   >
-                    Guardar cupo
-                  </button>
-                </form>
+                    <p className="min-w-0 flex-1 text-xs font-medium text-tinta dark:text-noche-tinta">
+                      {confirmandoConvocatoria
+                        ? '¿Abrir la convocatoria ahora? Los brigadistas podrán apuntarse por su cuenta desde su panel.'
+                        : '¿Cerrar la convocatoria ahora? Solo detiene nuevos prerregistros abiertos de brigadistas; podrás seguir dando altas manuales, editando roles y confirmando por QR.'}
+                    </p>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <button
+                        type="button"
+                        disabled={cambiandoEstado}
+                        onClick={() => setConfirmandoConvocatoria(null)}
+                        className="btn-salvia min-h-8 px-3 text-xs"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        disabled={cambiandoEstado}
+                        onClick={() => void aplicarCambioConvocatoria(confirmandoConvocatoria)}
+                        className={`min-h-8 px-3 text-xs ${
+                          confirmandoConvocatoria ? 'btn-verde' : 'btn-naranja'
+                        }`}
+                      >
+                        {cambiandoEstado
+                          ? 'Guardando...'
+                          : confirmandoConvocatoria
+                            ? 'Sí, abrir convocatoria'
+                            : 'Sí, cerrar convocatoria'}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1080,17 +1168,23 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                     )}
                   </button>
 
-                  <button
-                    type="button"
-                    disabled={verificandoCierre}
-                    onClick={() => void iniciarFlujoFinalizar()}
-                    className="btn-naranja min-h-10 px-4 text-xs"
-                  >
-                    <ShieldAlert size={15} strokeWidth={2} />
-                    <span>
-                      {verificandoCierre ? 'Verificando pendientes...' : 'Finalizar Operativo'}
+                  {!ayJefe ? (
+                    <button
+                      type="button"
+                      disabled={verificandoCierre}
+                      onClick={() => void iniciarFlujoFinalizar()}
+                      className="btn-naranja min-h-10 px-4 text-xs"
+                    >
+                      <ShieldAlert size={15} strokeWidth={2} />
+                      <span>
+                        {verificandoCierre ? 'Verificando pendientes...' : 'Finalizar Operativo'}
+                      </span>
+                    </button>
+                  ) : (
+                    <span className="text-xs font-medium text-tinta-suave dark:text-noche-tinta-suave">
+                      El cierre global definitivo del operativo corresponde a Administración.
                     </span>
-                  </button>
+                  )}
                 </>
               ) : (
                 <p className="inline-flex items-center gap-1.5 text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">

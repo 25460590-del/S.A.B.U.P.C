@@ -13,12 +13,17 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore'
 import * as OTPAuth from 'otpauth'
+import { resolverRolInicialOperativo, rolOperativoPorAyudantia } from '../constants/catalogos'
 import { db } from '../lib/firebase'
 import {
+  ayudantiaEfectiva,
+  ayudantiaJefatura,
+  esAdmin,
   esEncargado,
   grupoDesdeEtapa,
   normalizarOperativo,
   normalizarUsuario,
+  type AyudantiaActiva,
 } from '../lib/permisos'
 import type {
   AsistenciaPersonal,
@@ -30,7 +35,8 @@ import type {
   SecretoTotpOperativo,
   Usuario,
 } from '../types'
-import { nombreCompleto } from './authService'
+import { escucharDirectorioSegunRol, nombreCompleto } from './authService'
+import { obtenerMiPrerregistro } from './prerregistrosService'
 
 const asistenciasRef = collection(db, 'asistencias_personal')
 const equiposRef = collection(db, 'equipos_turno')
@@ -228,7 +234,7 @@ async function crearEntradaAtomica(
   brigadista: Usuario,
   operativo: Operativo,
   metodo: MetodoEntrada,
-  rolInicial: RolEnTurno = 'Sin asignar',
+  rolInicial?: RolEnTurno,
 ): Promise<string> {
   const nuevoDoc = doc(asistenciasRef)
   const grupoValido =
@@ -237,7 +243,8 @@ async function crearEntradaAtomica(
     brigadista.grupo_operativo === 'Ninguno'
       ? brigadista.grupo_operativo
       : grupoDesdeEtapa(brigadista.etapa)
-  const ayudantiaValida = brigadista.ayudantia_slot || brigadista.ayudantia || 'Ninguna'
+  const ayudantiaValida = ayudantiaEfectiva(brigadista)
+  const rolFinal = rolInicial ?? rolOperativoPorAyudantia(ayudantiaValida)
   const cuentaValida = (brigadista.numero_cuenta || '0').trim().slice(0, 12) || '0'
 
   await runTransaction(db, async (tx) => {
@@ -250,7 +257,7 @@ async function crearEntradaAtomica(
       usuario_cuenta: cuentaValida,
       grupo_operativo: grupoValido,
       ayudantia_slot: ayudantiaValida,
-      rol_en_turno: rolInicial,
+      rol_en_turno: rolFinal,
       estado_operativo: 'En servicio',
       signos_vitales: null,
       metodo_entrada: metodo,
@@ -348,7 +355,11 @@ export async function registrarAsistenciaQR(
 
     const metodo: MetodoEntrada =
       qr.tipo === 'operativo_totp' ? 'QR_Operativo_TOTP' : 'QR_Operativo_Estatico'
-    const asistenciaId = await crearEntradaAtomica(actor, actor, operativo, metodo)
+    const prerregistroPropio = await obtenerMiPrerregistro(operativo.id, actor.uid).catch(
+      () => null,
+    )
+    const rolInicial = resolverRolInicialOperativo(ayudantiaEfectiva(actor), prerregistroPropio)
+    const asistenciaId = await crearEntradaAtomica(actor, actor, operativo, metodo, rolInicial)
     return {
       accion: 'entrada',
       asistenciaId,
@@ -369,11 +380,28 @@ export async function registrarAsistenciaQR(
     throw new Error(`El operativo "${opNormalizado.nombre}" ya fue finalizado.`)
   }
 
-  const userSnap = await getDoc(doc(usuariosRef, qr.uid))
+  const ayJefe = ayudantiaJefatura(actor)
+  let userSnap
+  try {
+    userSnap = await getDoc(doc(usuariosRef, qr.uid))
+  } catch (err) {
+    const code = (err as { code?: string })?.code ?? ''
+    if (code === 'permission-denied' && ayJefe) {
+      throw new Error(
+        `Esta credencial corresponde a un integrante fuera de tu ayudantía (${ayJefe}). Solo puedes pasar lista a personal de ${ayJefe}.`,
+      )
+    }
+    throw err
+  }
   if (!userSnap.exists()) {
     throw new Error('La credencial escaneada no corresponde a un usuario registrado.')
   }
   const brigadista = normalizarUsuario(userSnap.data() as Usuario)
+  if (ayJefe && ayudantiaEfectiva(brigadista) !== ayJefe) {
+    throw new Error(
+      `Solo puedes pasar lista a integrantes de tu ayudantía (${ayJefe}).`,
+    )
+  }
 
   if (brigadista.estatus === 'Inactivo') {
     await runTransaction(db, async (tx) => {
@@ -424,11 +452,16 @@ export async function registrarAsistenciaQR(
     )
   }
 
+  const prerregistroBrig = await obtenerMiPrerregistro(opNormalizado.id, brigadista.uid).catch(
+    () => null,
+  )
+  const rolInicial = resolverRolInicialOperativo(ayudantiaEfectiva(brigadista), prerregistroBrig)
   const asistenciaId = await crearEntradaAtomica(
     actor,
     brigadista,
     opNormalizado,
     'QR_Credencial',
+    rolInicial,
   )
   return {
     accion: 'entrada',
@@ -444,8 +477,12 @@ export async function registrarAsistenciaManual(
   encargado: Usuario,
   operativo: Operativo,
   brigadista: Usuario,
-  rolEnTurno: RolEnTurno,
+  rolEnTurno?: RolEnTurno,
 ): Promise<ResultadoRegistroQR> {
+  const ayJefe = ayudantiaJefatura(encargado)
+  if (ayJefe && ayudantiaEfectiva(brigadista) !== ayJefe) {
+    throw new Error(`Solo puedes pasar lista a integrantes de tu ayudantía (${ayJefe}).`)
+  }
   const opNorm = normalizarOperativo(operativo)
   if (opNorm.estatus === 'Finalizado') {
     throw new Error(`El operativo "${opNorm.nombre}" ya fue finalizado.`)
@@ -465,12 +502,18 @@ export async function registrarAsistenciaManual(
   if (abierta) {
     throw new Error(`${nombreCompleto(brigadista)} ya tiene una entrada abierta en este operativo.`)
   }
+  const rolFinal =
+    rolEnTurno ??
+    resolverRolInicialOperativo(
+      ayudantiaEfectiva(brigadista),
+      await obtenerMiPrerregistro(operativo.id, brigadista.uid).catch(() => null),
+    )
   const asistenciaId = await crearEntradaAtomica(
     encargado,
     brigadista,
     operativo,
     'Manual',
-    rolEnTurno,
+    rolFinal,
   )
   return {
     accion: 'entrada',
@@ -530,9 +573,18 @@ export function escucharAsistenciasDeOperativo(
   operativoId: string,
   alCambiar: (lista: AsistenciaPersonal[]) => void,
   alFallar: (error: FirestoreError) => void,
+  ayudantiaFiltro?: AyudantiaActiva | null,
 ): Unsubscribe {
+  const consulta = ayudantiaFiltro
+    ? query(
+        asistenciasRef,
+        where('operativo_id', '==', operativoId),
+        where('ayudantia_slot', '==', ayudantiaFiltro),
+      )
+    : query(asistenciasRef, where('operativo_id', '==', operativoId))
+
   return onSnapshot(
-    query(asistenciasRef, where('operativo_id', '==', operativoId)),
+    consulta,
     (snap) => {
       const lista = snap.docs.map((d) => d.data() as AsistenciaPersonal)
       lista.sort((a, b) => (b.hora_entrada?.toMillis() ?? 0) - (a.hora_entrada?.toMillis() ?? 0))
@@ -558,17 +610,43 @@ export function escucharMisAsistencias(
   )
 }
 
+/**
+ * Suscripción al padrón para Bitácora Operativa respetando Plan Spark y `firestore.rules`:
+ * - Administrador: consulta global `estatus in ['Activo', 'Inactivo']`.
+ * - Jefe de Ayudantía: consulta exacta `where('ayudantia', '==', ayJefe)` filtrando estatus en cliente.
+ * - Encargado sin ayudantía (Opción B): delega a `escucharDirectorioSegunRol`.
+ */
 export function escucharUsuariosParaBitacora(
+  actor: Usuario,
   alCambiar: (lista: Usuario[]) => void,
   alFallar: (error: FirestoreError) => void,
 ): Unsubscribe {
-  return onSnapshot(
-    query(usuariosRef, where('estatus', 'in', ['Activo', 'Inactivo'])),
-    (snap) => {
-      const lista = snap.docs.map((d) => normalizarUsuario(d.data() as Usuario))
-      lista.sort((a, b) => nombreCompleto(a).localeCompare(nombreCompleto(b), 'es-MX'))
-      alCambiar(lista)
-    },
-    alFallar,
-  )
+  if (esAdmin(actor)) {
+    return onSnapshot(
+      query(usuariosRef, where('estatus', 'in', ['Activo', 'Inactivo'])),
+      (snap) => {
+        const lista = snap.docs.map((d) => normalizarUsuario(d.data() as Usuario))
+        lista.sort((a, b) => nombreCompleto(a).localeCompare(nombreCompleto(b), 'es-MX'))
+        alCambiar(lista)
+      },
+      alFallar,
+    )
+  }
+
+  const ayJefe = ayudantiaJefatura(actor)
+  if (ayJefe) {
+    return onSnapshot(
+      query(usuariosRef, where('ayudantia', '==', ayJefe)),
+      (snap) => {
+        const lista = snap.docs
+          .map((d) => normalizarUsuario(d.data() as Usuario))
+          .filter((u) => u.estatus === 'Activo' || u.estatus === 'Inactivo')
+        lista.sort((a, b) => nombreCompleto(a).localeCompare(nombreCompleto(b), 'es-MX'))
+        alCambiar(lista)
+      },
+      alFallar,
+    )
+  }
+
+  return escucharDirectorioSegunRol(actor, alCambiar, alFallar)
 }

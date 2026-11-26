@@ -17,6 +17,7 @@ import {
 } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import { comprimirImagenAWebP } from '../lib/imageCompression'
+import { ayudantiaEfectiva } from '../lib/permisos'
 import type { AsistenciaPersonal, EquipoTurno, EvidenciaEquipo, Usuario } from '../types'
 import { nombreCompleto } from './authService'
 
@@ -65,6 +66,7 @@ export async function asignarEquipoBupc(
     operativo_nombre: asistencia.operativo_nombre,
     usuario_uid: asistencia.usuario_uid,
     usuario_nombre: asistencia.usuario_nombre,
+    ayudantia_slot: asistencia.ayudantia_slot,
     nombre_articulo: nombreArticulo,
     codigo_inventario: codigoInventario,
     cantidad,
@@ -182,6 +184,7 @@ export async function asignarEquipoBupcMultiple(
         operativo_nombre: asis.operativo_nombre,
         usuario_uid: asis.usuario_uid,
         usuario_nombre: asis.usuario_nombre,
+        ayudantia_slot: asis.ayudantia_slot,
         nombre_articulo: nombreArticulo,
         codigo_inventario: codigoInventario,
         cantidad,
@@ -382,6 +385,7 @@ export async function registrarEquipoPropio(
     operativo_nombre: asistencia.operativo_nombre,
     usuario_uid: brigadista.uid,
     usuario_nombre: nombreBrig,
+    ayudantia_slot: asistencia.ayudantia_slot || ayudantiaEfectiva(brigadista),
     nombre_articulo: datos.nombre_articulo.trim(),
     codigo_inventario: datos.codigo_inventario.trim(),
     cantidad: Math.min(99, Math.max(1, Math.floor(datos.cantidad ?? 1))),
@@ -555,6 +559,30 @@ export function escucharActasMaterialDeUsuario(
     (err) => {
       if (alFallar) alFallar(err)
       else console.warn('[SABUPC] Error al leer actas del usuario:', err.code)
+    },
+  )
+}
+
+/**
+ * Material propio registrado por un brigadista a través de sus turnos (bajo demanda en Expediente).
+ */
+export function escucharMaterialPropioDeUsuario(
+  usuarioUid: string,
+  alCambiar: (lista: EquipoTurno[]) => void,
+  alFallar?: (error: FirestoreError) => void,
+): Unsubscribe {
+  return onSnapshot(
+    query(equiposRef, where('usuario_uid', '==', usuarioUid)),
+    (snap) => {
+      const lista = snap.docs
+        .map((d) => d.data() as EquipoTurno)
+        .filter((e) => e.origen_material === 'Propio')
+      lista.sort((a, b) => (b.creado_en?.toMillis() ?? 0) - (a.creado_en?.toMillis() ?? 0))
+      alCambiar(lista)
+    },
+    (err) => {
+      if (alFallar) alFallar(err)
+      else console.warn('[SABUPC] Error al leer material propio del usuario:', err.code)
     },
   )
 }

@@ -19,7 +19,9 @@ import { useMemo, useState, type FormEvent } from 'react'
 import { AYUDANTIAS_ACTIVAS, ETAPAS_FORMATIVAS } from '../constants/catalogos'
 import {
   ayudantiaEfectiva,
+  ayudantiaJefatura,
   esAdmin,
+  esConfiguracionJefeAyudantia,
   etapaDeSubgrupo,
   etiquetaAyudantia,
   faltaAyudantiaOperativo,
@@ -36,6 +38,7 @@ import {
   guardarCatalogoSubgrupos,
 } from '../services/catalogosService'
 import type { AyudantiaSlot, EtapaFormativa, Usuario } from '../types'
+import { IndicadorAlcanceAyudantia } from './IndicadorAlcanceAyudantia'
 
 interface GruposVivosPanelProps {
   actor: Usuario
@@ -74,6 +77,7 @@ export function GruposVivosPanel({
   alError,
 }: GruposVivosPanelProps) {
   const soyAdmin = esAdmin(actor)
+  const ayJefe = ayudantiaJefatura(actor)
 
   // Crear nuevo grupo/generación (solo Admin)
   const [etapaNuevo, setEtapaNuevo] = useState<EtapaFormativa>('Alfa')
@@ -135,10 +139,12 @@ export function GruposVivosPanel({
     for (const etapa of ETAPAS_FORMATIVAS) {
       const activosEtapa = subgruposDeEtapa(subgruposActivos, etapa)
       for (const nombre of activosEtapa) {
+        const cuenta = conteoPorSubgrupo.get(nombre) ?? 0
+        if (ayJefe && cuenta === 0) continue
         vistos.add(nombre)
         resultado[etapa].push({
           nombre,
-          activos: conteoPorSubgrupo.get(nombre) ?? 0,
+          activos: cuenta,
           cerrado: false,
         })
       }
@@ -152,7 +158,7 @@ export function GruposVivosPanel({
       }
     }
     return resultado
-  }, [subgruposActivos, conteoPorSubgrupo])
+  }, [subgruposActivos, conteoPorSubgrupo, ayJefe])
 
   const gruposOmegaActivos = useMemo(
     () => subgruposDeEtapa(subgruposActivos, 'Omega'),
@@ -381,6 +387,12 @@ export function GruposVivosPanel({
 
     return (
       <section aria-label={`Integrantes de ${tituloGrupo}`} className="flex flex-col gap-3">
+        {ayJefe && (
+          <IndicadorAlcanceAyudantia
+            ayudantia={ayJefe}
+            descripcion={`Padrón filtrado exclusivamente a los integrantes de ${ayJefe} en este grupo.`}
+          />
+        )}
         {/* Cabecera del grupo abierto */}
         <article className="tarjeta flex flex-col gap-3 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -513,7 +525,10 @@ export function GruposVivosPanel({
                         )}
                       </div>
                       <p className="truncate text-[11px] tabular-nums text-tinta-suave dark:text-noche-tinta-suave">
-                        Cuenta {u.numero_cuenta} · {etiquetaAyudantia(u.ayudantia)} · {u.rol_sistema}
+                        Cuenta {u.numero_cuenta} · {etiquetaAyudantia(u.ayudantia)} ·{' '}
+                        {esConfiguracionJefeAyudantia(u.rol_sistema, u.etapa, u.ayudantia)
+                          ? 'Jefe de Ayudantía'
+                          : u.rol_sistema}
                       </p>
                     </div>
                   </div>
@@ -767,6 +782,12 @@ export function GruposVivosPanel({
 
   return (
     <section aria-label="Grupos activos y progresión" className="flex flex-col gap-4">
+      {ayJefe && (
+        <IndicadorAlcanceAyudantia
+          ayudantia={ayJefe}
+          descripcion={`En Grupos Vivos solo se contabilizan y listan integrantes pertenecientes a ${ayJefe}.`}
+        />
+      )}
       {/* Barra rápida de creación de grupo/generación (exclusiva Admin) */}
       {soyAdmin && (
         <article className="tarjeta flex flex-col gap-3 p-4">
@@ -965,21 +986,33 @@ export function GruposVivosPanel({
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-borde pb-2.5 dark:border-noche-borde">
           <div>
             <h3 className="text-sm font-bold text-tinta dark:text-noche-tinta">
-              Grupo Operativo · Distribución por Ayudantía
+              {ayJefe
+                ? `Grupo Operativo · Ayudantía ${ayJefe}`
+                : 'Grupo Operativo · Distribución por Ayudantía'}
             </h3>
             <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-              Todo integrante en Grupo Operativo pertenece obligatoriamente a una ayudantía.
+              {ayJefe
+                ? `Personal en Grupo Operativo adscrito exclusivamente a ${ayJefe}.`
+                : 'Todo integrante en Grupo Operativo pertenece obligatoriamente a una ayudantía.'}
             </p>
           </div>
           <span className="rounded-full bg-udec px-2.5 py-0.5 text-xs font-bold tabular-nums text-white">
-            {Array.from(conteoOperativoPorAyudantia.mapa.values()).reduce((a, b) => a + b, 0) +
-              conteoOperativoPorAyudantia.sinAyudantia}{' '}
+            {ayJefe
+              ? conteoOperativoPorAyudantia.mapa.get(ayJefe) ?? 0
+              : Array.from(conteoOperativoPorAyudantia.mapa.values()).reduce((a, b) => a + b, 0) +
+                conteoOperativoPorAyudantia.sinAyudantia}{' '}
             activos
           </span>
         </div>
 
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
-          {AYUDANTIAS_ACTIVAS.map((ay) => {
+        <div
+          className={
+            ayJefe
+              ? 'grid grid-cols-1 gap-2 sm:max-w-sm'
+              : 'grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5'
+          }
+        >
+          {(ayJefe ? [ayJefe] : AYUDANTIAS_ACTIVAS).map((ay) => {
             const total = conteoOperativoPorAyudantia.mapa.get(ay) ?? 0
             return (
               <button
@@ -994,7 +1027,7 @@ export function GruposVivosPanel({
                     {total}
                   </span>
                   <span className="text-[11px] font-semibold text-tinta-suave dark:text-noche-tinta-suave">
-                    Ver →
+                    Ver integrantes →
                   </span>
                 </div>
               </button>

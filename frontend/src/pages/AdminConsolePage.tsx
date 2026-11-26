@@ -14,6 +14,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { CatalogosAuditoriaTab } from '../components/CatalogosAuditoriaTab'
 import { ExpedienteUnificadoModal } from '../components/ExpedienteUnificadoModal'
 import { GruposVivosPanel } from '../components/GruposVivosPanel'
+import { IndicadorAlcanceAyudantia } from '../components/IndicadorAlcanceAyudantia'
 import {
   AYUDANTIAS,
   AYUDANTIAS_ACTIVAS,
@@ -21,9 +22,10 @@ import {
   ROLES,
 } from '../constants/catalogos'
 import {
+  ayudantiaJefatura,
   esAdmin,
   esAyudantiaValidaParaEtapa,
-  esEncargadoAP,
+  esConfiguracionJefeAyudantia,
   etiquetaAyudantia,
   faltaAyudantiaOperativo,
   grupoDesdeEtapa,
@@ -349,8 +351,8 @@ export function AdminConsolePage({
   pestanaInicial = 'directorio',
 }: AdminConsolePageProps) {
   const soyAdmin = esAdmin(admin)
-  const soyAP = esEncargadoAP(admin)
-  const puedeVerPendientes = soyAdmin || soyAP
+  const ayJefe = ayudantiaJefatura(admin)
+  const puedeVerPendientes = soyAdmin
 
   const [pestana, setPestana] = useState<PestanaPersonal>(
     pestanaInicial === 'pendientes' && !puedeVerPendientes ? 'directorio' : pestanaInicial,
@@ -440,12 +442,22 @@ export function AdminConsolePage({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-bold tracking-tight text-tinta dark:text-noche-tinta">
-            {soyAdmin || soyAP ? 'Administración de Personal' : 'Mi Personal a Cargo'}
+            {soyAdmin
+              ? 'Administración de Personal'
+              : ayJefe
+                ? `Jefatura de Ayudantía · ${ayJefe}`
+                : 'Mi Personal a Cargo'}
           </h2>
-          {soyAdmin || soyAP ? (
+          {soyAdmin ? (
             <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-              Directorio completo ({usuarios.length} registros) · Grupos activos, progresión,
-              aprobaciones y expedientes.
+              Directorio completo ({usuarios.length} registros) · Asignar rol Encargado en Grupo
+              Operativo con ayudantía activa automáticamente el mando como Jefe de Ayudantía.
+            </p>
+          ) : ayJefe ? (
+            <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
+              Padrón operativo de {ayJefe} ({usuarios.length} integrante
+              {usuarios.length === 1 ? '' : 's'}) · Consulta de Ficha de Emergencia, material propio
+              y edición operativa.
             </p>
           ) : (
             <div className="mt-1 flex flex-wrap items-center gap-1.5">
@@ -522,6 +534,13 @@ export function AdminConsolePage({
           )}
         </div>
       </div>
+
+      {ayJefe && (
+        <IndicadorAlcanceAyudantia
+          ayudantia={ayJefe}
+          descripcion={`Estás viendo únicamente a los integrantes que pertenecen a la ayudantía ${ayJefe}.`}
+        />
+      )}
 
       {error && (
         <div
@@ -632,21 +651,23 @@ export function AdminConsolePage({
                 </select>
               )}
 
-              <select
-                aria-label="Filtrar por ayudantía"
-                value={filtroAyudantia}
-                onChange={(e) => setFiltroAyudantia(e.target.value as 'Todas' | AyudantiaSlot)}
-                className="campo min-h-8 w-auto py-0.5 text-[11px] font-semibold"
-              >
-                <option value="Todas">Todas las ayudantías</option>
-                {AYUDANTIAS.map((ay) => (
-                  <option key={ay} value={ay}>
-                    {etiquetaAyudantia(ay)}
-                  </option>
-                ))}
-              </select>
+              {!ayJefe && (
+                <select
+                  aria-label="Filtrar por ayudantía"
+                  value={filtroAyudantia}
+                  onChange={(e) => setFiltroAyudantia(e.target.value as 'Todas' | AyudantiaSlot)}
+                  className="campo min-h-8 w-auto py-0.5 text-[11px] font-semibold"
+                >
+                  <option value="Todas">Todas las ayudantías</option>
+                  {AYUDANTIAS.map((ay) => (
+                    <option key={ay} value={ay}>
+                      {etiquetaAyudantia(ay)}
+                    </option>
+                  ))}
+                </select>
+              )}
 
-              {(soyAdmin || soyAP) && (
+              {(soyAdmin || Boolean(ayJefe)) && (
                 <select
                   aria-label="Filtrar por rol"
                   value={filtroRol}
@@ -722,7 +743,9 @@ export function AdminConsolePage({
                         <p className="truncate text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
                           {u.etapa}
                           {u.subgrupo ? ` · ${u.subgrupo}` : ''} · {etiquetaAyudantia(u.ayudantia)} ·{' '}
-                          {u.rol_sistema}
+                          {esConfiguracionJefeAyudantia(u.rol_sistema, u.etapa, u.ayudantia)
+                            ? `Jefe de Ayudantía (${u.ayudantia})`
+                            : u.rol_sistema}
                           {clave ? ` · ${clave}` : ''}
                         </p>
                         {sinAyuOp && (
@@ -809,7 +832,14 @@ export function AdminConsolePage({
                             )}
                           </td>
                           <td className="px-3 py-2 text-xs font-semibold text-tinta dark:text-noche-tinta">
-                            {u.rol_sistema}
+                            <div className="flex flex-wrap items-center gap-1">
+                              <span>{u.rol_sistema}</span>
+                              {esConfiguracionJefeAyudantia(u.rol_sistema, u.etapa, u.ayudantia) && (
+                                <span className="rounded-full bg-salvia px-2 py-0.5 text-[10px] font-bold text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
+                                  Jefe de Ayudantía
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-3 py-2 text-xs whitespace-nowrap">
                             {clave || u.autorizado_radio ? (

@@ -1,6 +1,6 @@
 import { AlertCircle, CheckCircle2, Lock, Radio, Search } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { esAdmin, puedeAsignarRadio } from '../lib/permisos'
+import { ayudantiaJefatura, esAdmin, puedeAsignarRadio } from '../lib/permisos'
 import {
   actualizarRadioUsuario,
   escucharUsuariosPorEstatus,
@@ -8,6 +8,7 @@ import {
   nombreCompleto,
 } from '../services/authService'
 import type { Usuario } from '../types'
+import { IndicadorAlcanceAyudantia } from './IndicadorAlcanceAyudantia'
 
 interface GestionTeslaPanelProps {
   actor: Usuario
@@ -23,9 +24,11 @@ function iniciales(u: Usuario): string {
  * Vista dedicada "Claves TESLA" (Dominio exclusivo de Radio):
  * - Sin datos médicos, sin incidencias de AP y sin cargar `fotos_perfiles`.
  * - Bloquea autoasignación en UI cuando el actor no es Administrador.
+ * - Si el actor es Jefe de Ayudantía Tesla, filtra estrictamente a su ayudantía.
  */
 export function GestionTeslaPanel({ actor }: GestionTeslaPanelProps) {
   const soyAdmin = esAdmin(actor)
+  const ayJefe = ayudantiaJefatura(actor)
   const [usuarios, setUsuarios] = useState<Usuario[]>([])
   const [cargando, setCargando] = useState(true)
   const [busqueda, setBusqueda] = useState('')
@@ -49,9 +52,10 @@ export function GestionTeslaPanel({ actor }: GestionTeslaPanelProps) {
         setError(mensajeDeError(err))
         setCargando(false)
       },
+      actor,
     )
     return cancelar
-  }, [])
+  }, [actor])
 
   const conteos = useMemo(() => {
     let autorizados = 0
@@ -118,12 +122,19 @@ export function GestionTeslaPanel({ actor }: GestionTeslaPanelProps) {
     <section className="flex flex-col gap-4">
       <div>
         <h2 className="text-xl font-bold text-tinta dark:text-noche-tinta">
-          Claves TESLA
+          Claves TESLA{ayJefe ? ` · ${ayJefe}` : ''}
         </h2>
         <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
           Asigna, edita o revoca claves de radio y permisos de acceso a la consola.
         </p>
       </div>
+
+      {ayJefe && (
+        <IndicadorAlcanceAyudantia
+          ayudantia={ayJefe}
+          descripcion="Solo puedes consultar y gestionar claves de radio de los integrantes adscritos a Tesla."
+        />
+      )}
 
       {error && (
         <div

@@ -10,7 +10,7 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore'
 import { db } from '../lib/firebase'
-import { esAdmin, esEncargadoAP } from '../lib/permisos'
+import { esAdmin } from '../lib/permisos'
 import type {
   GravedadIncidencia,
   IncidenciaPersonal,
@@ -121,10 +121,9 @@ export function escucharIncidenciasPersonalSegunRol(
   alCambiar: (lista: IncidenciaPersonal[]) => void,
   alFallar?: (error: FirestoreError) => void,
 ): Unsubscribe {
-  const consulta =
-    esAdmin(actor) || esEncargadoAP(actor)
-      ? incidenciasRef
-      : query(incidenciasRef, where('creado_por_uid', '==', actor.uid))
+  const consulta = esAdmin(actor)
+    ? incidenciasRef
+    : query(incidenciasRef, where('creado_por_uid', '==', actor.uid))
 
   return onSnapshot(
     consulta,

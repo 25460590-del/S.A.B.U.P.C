@@ -3,14 +3,24 @@ import {
   doc,
   getDoc,
   onSnapshot,
+  query,
   runTransaction,
   serverTimestamp,
+  updateDoc,
+  where,
   type FirestoreError,
   type Unsubscribe,
 } from 'firebase/firestore'
+import { rolOperativoPorAyudantia } from '../constants/catalogos'
 import { db } from '../lib/firebase'
-import { ayudantiaEfectiva, etapaEfectiva, normalizarOperativo } from '../lib/permisos'
-import type { Operativo, PrerregistroOperativo, Usuario } from '../types'
+import {
+  ayudantiaEfectiva,
+  ayudantiaJefatura,
+  etapaEfectiva,
+  normalizarOperativo,
+  type AyudantiaActiva,
+} from '../lib/permisos'
+import type { Operativo, PrerregistroOperativo, RolEnTurno, Usuario } from '../types'
 import { nombreCompleto } from './authService'
 
 function prerregistrosRef(operativoId: string) {
@@ -22,15 +32,20 @@ function prerregistroDocRef(operativoId: string, usuarioUid: string) {
 }
 
 /**
- * Escucha la lista completa de prerregistros de un operativo (solo Encargado o Administrador).
+ * Escucha la lista de prerregistros de un operativo:
+ * - Administrador / Encargado sin ayudantía: todos los prerregistros del operativo.
+ * - Jefe de Ayudantía: consulta filtrada exactamente por `where('ayudantia', '==', ayudantiaFiltro)`.
  */
 export function escucharPrerregistrosDeOperativo(
   operativoId: string,
   alCambiar: (lista: PrerregistroOperativo[]) => void,
   alFallar?: (error: FirestoreError) => void,
+  ayudantiaFiltro?: AyudantiaActiva | null,
 ): Unsubscribe {
+  const ref = prerregistrosRef(operativoId)
+  const consulta = ayudantiaFiltro ? query(ref, where('ayudantia', '==', ayudantiaFiltro)) : ref
   return onSnapshot(
-    prerregistrosRef(operativoId),
+    consulta,
     (snap) => {
       const lista = snap.docs.map((d) => d.data() as PrerregistroOperativo)
       lista.sort((a, b) => (a.fecha_registro?.toMillis() ?? 0) - (b.fecha_registro?.toMillis() ?? 0))
@@ -59,18 +74,42 @@ function construirPayloadPrerregistro(
   integrante: Usuario,
   registradoPorUid: string,
   origen: 'Autoregistro' | 'Manual_Encargado',
+  rolPersonalizado?: RolEnTurno,
 ) {
+  const ay = ayudantiaEfectiva(integrante)
+  const rolAuto = rolOperativoPorAyudantia(ay)
+  const rolFinal = rolPersonalizado ?? rolAuto
   return {
     usuario_uid: integrante.uid,
     usuario_nombre: nombreCompleto(integrante),
     usuario_cuenta: integrante.numero_cuenta,
     etapa: etapaEfectiva(integrante),
     subgrupo: (integrante.subgrupo ?? '').trim(),
-    ayudantia: ayudantiaEfectiva(integrante),
+    ayudantia: ay,
+    ayudantia_slot: ay,
+    rol_en_turno: rolFinal,
+    rol_editado_manual: rolFinal !== rolAuto,
     origen,
     registrado_por_uid: registradoPorUid,
     fecha_registro: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
   }
+}
+
+/**
+ * Permite a Administración, Jefe de Ayudantía (dentro de su ayudantía) o Encargado
+ * ajustar el rol operativo de un participante prerregistrado durante la convocatoria.
+ */
+export function actualizarRolPrerregistro(
+  operativoId: string,
+  usuarioUid: string,
+  rol: RolEnTurno,
+): Promise<void> {
+  return updateDoc(prerregistroDocRef(operativoId, usuarioUid), {
+    rol_en_turno: rol,
+    rol_editado_manual: true,
+    actualizado_en: serverTimestamp(),
+  })
 }
 
 /**
@@ -154,6 +193,10 @@ export async function registrarPrerregistroManual(
   encargado: Usuario,
   integrante: Usuario,
 ): Promise<void> {
+  const ayJefe = ayudantiaJefatura(encargado)
+  if (ayJefe && ayudantiaEfectiva(integrante) !== ayJefe) {
+    throw new Error(`Solo puedes prerregistrar integrantes de tu ayudantía (${ayJefe}).`)
+  }
   const opRef = doc(db, 'operativos', operativoId)
   const preRef = prerregistroDocRef(operativoId, integrante.uid)
 

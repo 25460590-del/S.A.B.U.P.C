@@ -13,17 +13,17 @@ rules_version = '2';
 //   Campos obligatorios base (28, retrocompatibles con v1.0):
 //   - uid: string (== ID del documento, inmutable)
 //   - correo: string (== request.auth.token.email al crear, inmutable)
-//   - nombres: string 1..80
-//   - apellido_paterno: string 1..60
-//   - apellido_materno: string 0..60
-//   - fecha_nacimiento: string 'AAAA-MM-DD' (10 caracteres)
-//   - sexo: 'Mujer' | 'Hombre' | 'Prefiero no decir'
-//   - telefono_fijo: string 0..20
-//   - celular: string 1..20
-//   - celular_con_whatsapp: bool
-//   - nivel_academico: 'Media Superior' | 'Superior' | 'Egresado' | 'Estudiante externo UdeC'
-//   - escuela_carrera: string 1..120
-//   - numero_cuenta: string 1..12 ('0' si no aplica)
+//   - nombres: string 1..80                (editable por dueño Pendiente o Admin)
+//   - apellido_paterno: string 1..60       (editable por dueño Pendiente o Admin)
+//   - apellido_materno: string 0..60       (editable por dueño Pendiente o Admin)
+//   - fecha_nacimiento: string 'AAAA-MM-DD' (10 caracteres; solo dueño Pendiente)
+//   - sexo: 'Mujer' | 'Hombre' | 'Prefiero no decir' (solo dueño Pendiente)
+//   - telefono_fijo: string 0..20          (editable por dueño Pendiente o Activo)
+//   - celular: string 1..20                (editable por dueño Pendiente o Activo)
+//   - celular_con_whatsapp: bool           (editable por dueño Pendiente o Activo)
+//   - nivel_academico: 'Media Superior' | 'Superior' | 'Egresado' | 'Estudiante externo UdeC' (solo dueño Pendiente)
+//   - escuela_carrera: string 1..120       (solo dueño Pendiente)
+//   - numero_cuenta: string 1..12 ('0' si no aplica; editable por dueño Pendiente o Admin)
 //   - tipo_sangre: 'O+' | 'O-' | 'A+' | 'A-' | 'B+' | 'B-' | 'AB+' | 'AB-'
 //   - alergias: string 0..300
 //   - padecimientos_medicamentos: string 0..500
@@ -37,7 +37,7 @@ rules_version = '2';
 //   - clave_personal_radio: string 1..10 | null                      (PRIVILEGIADO)
 //   - estatus: 'Pendiente' | 'Activo' | 'Inactivo'                   (PRIVILEGIADO)
 //   - qr_codigo_unico: string 1..64 | null                           (PRIVILEGIADO)
-//   - tiene_foto: bool
+//   - tiene_foto: bool                                               (solo dueño Activo)
 //   - creado_en: timestamp (inmutable)
 //   - actualizado_en: timestamp (== request.time en cada escritura)
 //   Campos opcionales v1.1 (jerarquía escalable y contacto de emergencia):
@@ -47,9 +47,11 @@ rules_version = '2';
 //                'Tesla' | 'Socorros' | 'Logística' | 'Ninguna'      (PRIVILEGIADO)
 //   - grupos_a_cargo: list (<= 30 elementos)                         (PRIVILEGIADO)
 //   - clave_radio: string 0..20 | null                               (PRIVILEGIADO)
-//   - contacto_emergencia_parentesco: string 0..60                   (editable por dueño)
+//   - contacto_emergencia_parentesco: string 0..60                   (editable por dueño Pendiente o Activo)
 //
 // Colección: perfiles_operativos/{uid}   (proyección mínima sin PII médico)
+//   Escritura por Admin Activo, Jefe de Ayudantía Activo (su ayudantía), o por el
+//   propio titular sin privilegios en alta inicial / recuperación huérfana / estatus Pendiente.
 //   - uid: string (== ID del documento, inmutable)
 //   - nombre_completo: string 1..200
 //   - numero_cuenta: string 1..12 (opcional)
@@ -94,13 +96,17 @@ rules_version = '2';
 //           'CREACION_CANAL_RADIO' | 'EDICION_BITACORA_RADIO' | 'SEED_CLAVES_REBACE' |
 //           'EDICION_CATALOGO_CLAVES' | 'ACTUALIZACION_PERSONAL' | 'ASIGNACION_RADIO' |
 //           'FINALIZACION_OPERATIVO' | 'ELIMINACION_OPERATIVO' |
-//           'INCIDENCIA_PERSONAL' | 'EDICION_CATALOGO_SUBGRUPOS' | 'PROMOCION_LOTE'
+//           'INCIDENCIA_PERSONAL' | 'EDICION_CATALOGO_SUBGRUPOS' | 'PROMOCION_LOTE' |
+//           'CORRECCION_IDENTIDAD'
 //   - actor_uid: string (== request.auth.uid)
 //   - actor_nombre: string 1..200
 //   - objetivo_uid: string 1..128
 //   - objetivo_nombre: string 1..200
 //   - detalle: string 0..500
 //   - creado_en: timestamp (== request.time)
+//   Campos opcionales (obligatorios con longitud 1..500 cuando tipo == 'CORRECCION_IDENTIDAD'):
+//   - valor_anterior: string 0..500 | null
+//   - valor_nuevo: string 0..500 | null
 //
 // Colección: fotos_perfiles/{uid}   (foto de perfil WebP en base64, sin Storage)
 //   - uid: string (== ID del documento, inmutable)
@@ -143,8 +149,14 @@ rules_version = '2';
 //   - ayudantia: 'Capacitación' | 'Administración de Personal' |
 //                'Tesla' | 'Socorros' | 'Logística' | 'Ninguna'
 //   - origen: 'Autoregistro' | 'Manual_Encargado'
-//   - registrado_por_uid: string (== request.auth.uid)
-//   - fecha_registro: timestamp (== request.time)
+//   - registrado_por_uid: string 1..128 (== request.auth.uid al crear, inmutable)
+//   - fecha_registro: timestamp (== request.time al crear, inmutable)
+//   Campos opcionales (en update se validan parcialmente los campos tocados para
+//   compatibilidad con documentos históricos legacy con ayudantia o ayudantia_slot):
+//   - ayudantia_slot: string (== ayudantia, inmutable)
+//   - rol_en_turno: rol operativo válido (editable en convocatoria por Admin/Encargado)
+//   - rol_editado_manual: bool (opcional)
+//   - actualizado_en: timestamp (== request.time al crear/editar)
 //
 // Colección: asistencias_personal/{asistenciaId}
 //   - id: string (== ID del documento, inmutable)
@@ -156,8 +168,8 @@ rules_version = '2';
 //   - grupo_operativo: 'Alfa' | 'Omega' | 'Ninguno' (inmutable)
 //   - ayudantia_slot: 'Capacitación' | 'Administración de Personal' |
 //                     'Tesla' | 'Socorros' | 'Logística' | 'Ninguna' (inmutable)
-//   - rol_en_turno: 'Primeros Auxilios' | 'Radiocomunicación' | 'Búsqueda y Rescate' |
-//                   'Evacuación' | 'Logística' | 'Encargado' | 'Sin asignar'
+//   - rol_en_turno: 'Búsqueda y Rescate' | 'Radios' | 'Encargados' |
+//                   'Abastecedores' | 'Atención' | 'Sin definir' (y legados)
 //   - estado_operativo: 'En servicio' | 'En descanso' | 'Reserva' | 'Retirado'
 //   - signos_vitales: map { spo2, fc, fr, ta, temp, tomado_en, tomado_por } | null
 //   - metodo_entrada: 'QR_Operativo_TOTP' | 'QR_Operativo_Estatico' |
@@ -194,6 +206,8 @@ rules_version = '2';
 //   - creado_por_nombre: string 0..200 (opcional)
 //   - operativo_nombre: string 0..120 (opcional)
 //   - cantidad: int 1..99 (opcional, por defecto 1)
+//   - ayudantia_slot: 'Capacitación' | 'Administración de Personal' |
+//                     'Tesla' | 'Socorros' | 'Logística' | 'Ninguna' (opcional, inmutable)
 //
 // Colección: evidencias_equipos/{evidenciaId}   (evidencia fotográfica WebP inmutable)
 //   - id: string (== ID del documento, inmutable)
@@ -325,22 +339,32 @@ service cloud.firestore {
           && p.rol_sistema in ['Encargado', 'Administrador'];
     }
 
-    // ¿Es un Encargado Activo de Administración de Personal?
-    function esEncargadoAPActivo() {
-      let p = perfilPropio();
-      return isSignedIn()
-          && p.estatus == 'Activo'
+    // ¿El perfil p (con ayudantía ya resuelta ay) actúa como Jefe de Ayudantía Activo?
+    // Requiere simultáneamente: estatus Activo + rol Encargado (no Administrador)
+    // + pertenecer a Grupo Operativo (o legado sin 'etapa' con grupo_operativo == 'Ninguno')
+    // + ayudantía activa asignada (distinta de 'Ninguna').
+    function esJefeAyudantiaConAy(p, ay) {
+      return p.estatus == 'Activo'
           && p.rol_sistema == 'Encargado'
-          && ayudantiaDe(p) == 'Administración de Personal';
+          && ('etapa' in p
+              ? p.etapa == 'Grupo Operativo'
+              : p.get('grupo_operativo', 'Ninguno') == 'Ninguno')
+          && ay in ['Capacitación', 'Administración de Personal',
+                    'Tesla', 'Socorros', 'Logística'];
     }
 
-    // ¿Es un Encargado Activo de la ayudantía Tesla (Radio)?
-    function esEncargadoTeslaActivo() {
-      let p = perfilPropio();
-      return isSignedIn()
-          && p.estatus == 'Activo'
-          && p.rol_sistema == 'Encargado'
-          && ayudantiaDe(p) == 'Tesla';
+    // ¿El mapa de perfil p corresponde a un Jefe de Ayudantía Activo?
+    function esJefeAyudantiaDePerfil(p) {
+      return esJefeAyudantiaConAy(p, ayudantiaDe(p));
+    }
+
+    // ¿El mapa d pertenece a la ayudantía activa ay (distinta de 'Ninguna')?
+    // Compatible tanto con getDoc sobre documentos legados sin campo 'ayudantia'
+    // como con el analizador estático de consultas list usando
+    // where('ayudantia', '==', ay) o where('ayudantia_slot', '==', ay).
+    function perteneceAyudantiaLectura(d, ay) {
+      return d.get('ayudantia', 'Ninguna') == ay
+          || d.get('ayudantia_slot', 'Ninguna') == ay;
     }
 
     // ¿Puede operar el módulo de radiocomunicación?
@@ -354,44 +378,53 @@ service cloud.firestore {
     }
 
     // ¿Puede un tercero leer/listar el perfil de usuarios/{uid}?
-    // Evalúa perfilPropio() y ayudantiaDe(p) una sola vez para mantener bajo
-    // el conteo de expresiones de Firestore Rules.
+    // Evalúa perfilPropio() y ayudantiaDe(p) una sola vez. Las ramas Jefe de
+    // Ayudantía y Encargado Opción B son mutuamente excluyentes.
     function puedeLeerUsuarioPorTercero() {
       let p = perfilPropio();
       let ay = ayudantiaDe(p);
       return isSignedIn()
           && p.estatus == 'Activo'
-          && (p.rol_sistema == 'Administrador'
-              || (p.rol_sistema == 'Encargado'
-                  && (ay in ['Administración de Personal', 'Tesla']
-                      || (resource.data.rol_sistema == 'Brigadista'
-                          && perteneceAGruposACargo(p, resource.data)))));
+          && (
+            p.rol_sistema == 'Administrador'
+            || (p.rol_sistema == 'Encargado'
+                && (esJefeAyudantiaConAy(p, ay)
+                    ? perteneceAyudantiaLectura(resource.data, ay)
+                    : (resource.data.rol_sistema == 'Brigadista'
+                       && perteneceAGruposACargo(p, resource.data))))
+          );
     }
 
-    // Sub-regla de actualización para Encargado (Tesla, AP u Opción B).
+    // Sub-regla de actualización para Encargado (Jefe de Ayudantía vs Opción B).
     // Se invoca solo cuando el actor es Encargado Activo editando a un tercero.
     function puedeActualizarComoEncargado(p, changed) {
       let ay = ayudantiaDe(p);
-      return (ay == 'Tesla'
-              && changed.hasOnly(['clave_radio', 'clave_personal_radio',
-                                  'autorizado_radio', 'actualizado_en']))
-          || (resource.data.rol_sistema == 'Brigadista'
-              && (
-                (ay == 'Administración de Personal'
-                 && changed.hasOnly(['estatus', 'etapa', 'subgrupo',
-                                     'ayudantia', 'grupo_operativo',
-                                     'ayudantia_slot', 'qr_codigo_unico',
-                                     'actualizado_en']))
-                || (ay != 'Administración de Personal'
-                    && ay != 'Tesla'
-                    && changed.hasOnly(['etapa', 'subgrupo', 'ayudantia',
-                                        'grupo_operativo', 'ayudantia_slot',
-                                        'actualizado_en'])
-                    && perteneceAGruposACargo(p, resource.data))
-              ));
+      let camposAdscripcion = ['etapa', 'subgrupo', 'ayudantia',
+                               'grupo_operativo', 'ayudantia_slot',
+                               'actualizado_en'];
+      return esJefeAyudantiaConAy(p, ay)
+          ? (ayudantiaDe(resource.data) == ay
+             && ayudantiaDe(request.resource.data) == ay
+             && request.resource.data.ayudantia_slot == ay
+             && (
+               (ay == 'Tesla'
+                && resource.data.rol_sistema != 'Administrador'
+                && changed.hasOnly(['clave_radio', 'clave_personal_radio',
+                                    'autorizado_radio', 'actualizado_en']))
+               || (resource.data.rol_sistema == 'Brigadista'
+                   && (changed.hasOnly(camposAdscripcion)
+                       || (ay == 'Administración de Personal'
+                           && changed.hasOnly(['estatus', 'etapa', 'subgrupo',
+                                               'ayudantia', 'grupo_operativo',
+                                               'ayudantia_slot', 'qr_codigo_unico',
+                                               'actualizado_en']))))
+             ))
+          : (resource.data.rol_sistema == 'Brigadista'
+             && changed.hasOnly(camposAdscripcion)
+             && perteneceAGruposACargo(p, resource.data));
     }
 
-    // ¿Puede un tercero (Admin, Encargado Tesla, Encargado AP o Encargado Opción B)
+    // ¿Puede un tercero (Admin, Jefe de Ayudantía o Encargado Opción B)
     // actualizar usuarios/{uid}? Evalúa perfilPropio() una sola vez.
     function puedeActualizarUsuarioPorTercero(uid, changed) {
       let p = perfilPropio();
@@ -405,6 +438,95 @@ service cloud.firestore {
           );
     }
 
+    // Helpers para perfiles_operativos/{uid} (1 sola lectura de perfilPropio()).
+    function puedeLeerPerfilOperativoPorTercero() {
+      let p = perfilPropio();
+      let ay = ayudantiaDe(p);
+      return isSignedIn()
+          && p.estatus == 'Activo'
+          && (
+            p.rol_sistema == 'Administrador'
+            || (p.rol_sistema == 'Encargado'
+                && (!esJefeAyudantiaConAy(p, ay)
+                    || perteneceAyudantiaLectura(resource.data, ay)))
+          );
+    }
+
+    function puedeEscribirPerfilOperativo() {
+      let p = perfilPropio();
+      let ay = ayudantiaDe(p);
+      return isSignedIn()
+          && p.estatus == 'Activo'
+          && (
+            p.rol_sistema == 'Administrador'
+            || (esJefeAyudantiaConAy(p, ay)
+                && ayudantiaDe(request.resource.data) == ay
+                && (resource == null || ayudantiaDe(resource.data) == ay))
+          );
+    }
+
+    // Valores iniciales sin privilegios para alta/recuperación/corrección propia en Pendiente
+    function tieneValoresInicialesPerfilOperativo(d) {
+      return d.estatus == 'Pendiente'
+          && (!('etapa' in d) || d.etapa in ['Alfa', 'Ninguno'])
+          && (!('subgrupo' in d) || d.subgrupo == '' || d.subgrupo == null)
+          && (!('ayudantia' in d) || d.ayudantia == 'Ninguna')
+          && (!('grupo_operativo' in d) || d.grupo_operativo == 'Ninguno')
+          && (!('ayudantia_slot' in d) || d.ayudantia_slot == 'Ninguna')
+          && (!('qr_codigo_unico' in d) || d.qr_codigo_unico == null)
+          && (!('clave_radio' in d) || d.clave_radio == null || d.clave_radio == '');
+    }
+
+    // Escritura propia de perfiles_operativos/{uid} únicamente en alta inicial,
+    // recuperación de cuenta huérfana o corrección mientras usuarios/{uid} esté Pendiente.
+    function puedeEscribirPerfilOperativoPropioPendiente(uid) {
+      let uPath = /databases/$(database)/documents/usuarios/$(uid);
+      return esPropietario(uid)
+          && tieneValoresInicialesPerfilOperativo(request.resource.data)
+          && (!exists(uPath) || get(uPath).data.estatus == 'Pendiente')
+          && existsAfter(uPath)
+          && getAfter(uPath).data.estatus == 'Pendiente';
+    }
+
+    // Helpers para incidencias_personal/{incidenciaId}.
+    function puedeLeerIncidenciaGet() {
+      let p = perfilPropio();
+      let ay = ayudantiaDe(p);
+      let uPath = /databases/$(database)/documents/usuarios/$(resource.data.usuario_uid);
+      return isSignedIn()
+          && p.estatus == 'Activo'
+          && (
+            p.rol_sistema == 'Administrador'
+            || (p.rol_sistema == 'Encargado'
+                && (resource.data.creado_por_uid == request.auth.uid
+                    || (exists(uPath)
+                        && (esJefeAyudantiaConAy(p, ay)
+                            ? ayudantiaDe(get(uPath).data) == ay
+                            : perteneceAGruposACargo(p, get(uPath).data)))))
+          );
+    }
+
+    function puedeCrearIncidencia(d) {
+      let p = perfilPropio();
+      let ay = ayudantiaDe(p);
+      let uPath = /databases/$(database)/documents/usuarios/$(d.usuario_uid);
+      return isSignedIn()
+          && p.estatus == 'Activo'
+          && (
+            p.rol_sistema == 'Administrador'
+            || (p.rol_sistema == 'Encargado'
+                && (esJefeAyudantiaConAy(p, ay)
+                    ? (exists(uPath)
+                       && get(uPath).data.rol_sistema == 'Brigadista'
+                       && ayudantiaDe(get(uPath).data) == ay
+                       && (d.operativo_id == null || operativoNoFinalizado(d.operativo_id)))
+                    : ((d.operativo_id != null && operativoNoFinalizado(d.operativo_id))
+                       || (exists(uPath)
+                           && get(uPath).data.rol_sistema == 'Brigadista'
+                           && perteneceAGruposACargo(p, get(uPath).data)))))
+          );
+    }
+
     // Actualización unificada de usuarios/{uid}: calcula camposCambiados() una
     // sola vez y evalúa de menor a mayor costo (adscripción -> autorización ->
     // esquema completo) para mantenerse muy por debajo del límite de 1000 expresiones.
@@ -414,8 +536,14 @@ service cloud.firestore {
       return adscripcionGrupoOperativoValida(d, changed)
           && (
             (request.auth.uid == uid
-             && resource.data.estatus == 'Activo'
-             && changed.hasOnly(camposEditablesPorDueno()))
+             && (
+               (resource.data.estatus == 'Pendiente'
+                && d.estatus == 'Pendiente'
+                && changed.hasOnly(camposEditablesPorDuenoPendiente()))
+               || (resource.data.estatus == 'Activo'
+                   && d.estatus == 'Activo'
+                   && changed.hasOnly(camposEditablesPorDuenoActivo()))
+             ))
             || puedeActualizarUsuarioPorTercero(uid, changed)
           )
           && esUsuarioValido(d, uid);
@@ -473,16 +601,66 @@ service cloud.firestore {
           && esOperativoValido(request.resource.data, operativoId);
     }
 
+    // -------------------------------------------------------------
+    // Helpers de catálogo de roles operativos
+    // -------------------------------------------------------------
+
+    // ¿El rol operativo en turno pertenece al catálogo oficial o valores legados?
+    function esRolEnTurnoValido(rol) {
+      return rol in ['Búsqueda y Rescate', 'Radios', 'Encargados',
+                     'Abastecedores', 'Atención', 'Sin definir',
+                     'Primeros Auxilios', 'Radiocomunicación',
+                     'Evacuación', 'Logística', 'Encargado', 'Sin asignar'];
+    }
+
+    // Rol operativo predeterminado según la ayudantía del brigadista.
+    function rolOperativoPorAyudantia(ay) {
+      return ay == 'Capacitación' ? 'Búsqueda y Rescate'
+          : ay == 'Tesla' ? 'Radios'
+          : ay == 'Administración de Personal' ? 'Encargados'
+          : ay == 'Logística' ? 'Abastecedores'
+          : ay == 'Socorros' ? 'Atención'
+          : 'Sin definir';
+    }
+
+    // ¿Puede un Encargado/Admin leer o listar operativos/{operativoId}/prerregistros/{uid}?
+    function puedeLeerPrerregistroComoEncargadoOAdmin() {
+      let p = perfilPropio();
+      let ay = ayudantiaDe(p);
+      return isSignedIn()
+          && p.estatus == 'Activo'
+          && (
+            p.rol_sistema == 'Administrador'
+            || (p.rol_sistema == 'Encargado'
+                && (!esJefeAyudantiaConAy(p, ay)
+                    || resource.data.ayudantia == ay
+                    || resource.data.get('ayudantia_slot', 'Ninguna') == ay))
+          );
+    }
+
     // Sub-helper para crear prerregistro usando el mapa ya leído del operativo padre.
     function puedeCrearPrerregistroEnOperativo(op, uid) {
       let p = perfilPropio();
+      let ay = ayudantiaDe(p);
+      let esJefe = esJefeAyudantiaConAy(p, ay);
       return op.get('estatus', 'Activo') != 'Finalizado'
           && p.estatus == 'Activo'
           && (
-            p.rol_sistema in ['Encargado', 'Administrador']
+            p.rol_sistema == 'Administrador'
+            || (esJefe
+                && request.resource.data.ayudantia == ay
+                && (!('ayudantia_slot' in request.resource.data)
+                    || request.resource.data.ayudantia_slot == ay))
+            || (p.rol_sistema == 'Encargado' && !esJefe)
             || (request.auth.uid == uid
+                && p.rol_sistema == 'Brigadista'
                 && request.resource.data.origen == 'Autoregistro'
-                && op.get('convocatoria_abierta', false) == true)
+                && op.get('convocatoria_abierta', false) == true
+                && request.resource.data.ayudantia == ay
+                && (!('rol_en_turno' in request.resource.data)
+                    || request.resource.data.rol_en_turno == rolOperativoPorAyudantia(ay))
+                && (!('rol_editado_manual' in request.resource.data)
+                    || request.resource.data.rol_editado_manual == false))
           );
     }
 
@@ -493,13 +671,30 @@ service cloud.firestore {
           && puedeCrearPrerregistroEnOperativo(get(opPath).data, uid);
     }
 
+    // ¿Puede un Encargado/Admin actualizar rol_en_turno en prerregistros/{uid}?
+    function puedeActualizarPrerregistroComoEncargadoOAdmin() {
+      let p = perfilPropio();
+      let ay = ayudantiaDe(p);
+      return isSignedIn()
+          && p.estatus == 'Activo'
+          && (
+            p.rol_sistema == 'Administrador'
+            || (p.rol_sistema == 'Encargado'
+                && (!esJefeAyudantiaConAy(p, ay)
+                    || perteneceAyudantiaLectura(resource.data, ay)))
+          );
+    }
+
     // Sub-helper para eliminar prerregistro usando el mapa ya leído del operativo padre.
     function puedeEliminarPrerregistroEnOperativo(op, uid) {
       let p = perfilPropio();
+      let esJefe = esJefeAyudantiaDePerfil(p);
       return op.get('estatus', 'Activo') != 'Finalizado'
           && p.estatus == 'Activo'
           && (
-            p.rol_sistema in ['Encargado', 'Administrador']
+            p.rol_sistema == 'Administrador'
+            || (esJefe && resource.data.ayudantia == ayudantiaDe(p))
+            || (p.rol_sistema == 'Encargado' && !esJefe)
             || (request.auth.uid == uid
                 && op.get('convocatoria_abierta', false) == true)
           );
@@ -510,6 +705,94 @@ service cloud.firestore {
       let opPath = /databases/$(database)/documents/operativos/$(operativoId);
       return exists(opPath)
           && puedeEliminarPrerregistroEnOperativo(get(opPath).data, uid);
+    }
+
+    // Helpers para asistencias_personal/{asistenciaId} y equipos_turno/{equipoId}.
+    function puedeLeerAsistencia() {
+      let p = perfilPropio();
+      let ay = ayudantiaDe(p);
+      return isSignedIn()
+          && p.estatus == 'Activo'
+          && (
+            p.rol_sistema == 'Administrador'
+            || resource.data.usuario_uid == request.auth.uid
+            || (p.rol_sistema == 'Encargado'
+                && (!esJefeAyudantiaConAy(p, ay)
+                    || resource.data.ayudantia_slot == ay))
+          );
+    }
+
+    // Valida el rol_en_turno en auto-registro QR propio: respeta el rol asignado
+    // en prerregistros/{uid} si existe y contiene rol_en_turno; en caso contrario
+    // exige el rol operativo predeterminado según la ayudantía del perfil.
+    function rolAutoRegistroAsistenciaValido(opId, rol, ay) {
+      let prePath = /databases/$(database)/documents/operativos/$(opId)/prerregistros/$(request.auth.uid);
+      return (exists(prePath) && 'rol_en_turno' in get(prePath).data)
+          ? rol == get(prePath).data.rol_en_turno
+          : rol == rolOperativoPorAyudantia(ay);
+    }
+
+    function puedeCrearAsistenciaPorRol() {
+      let p = perfilPropio();
+      let ay = ayudantiaDe(p);
+      return isSignedIn()
+          && p.estatus == 'Activo'
+          && (
+            p.rol_sistema == 'Administrador'
+            || (p.rol_sistema == 'Encargado'
+                && (!esJefeAyudantiaConAy(p, ay)
+                    || request.resource.data.ayudantia_slot == ay))
+            || (request.resource.data.usuario_uid == request.auth.uid
+                && request.resource.data.ayudantia_slot == ay
+                && rolAutoRegistroAsistenciaValido(request.resource.data.operativo_id,
+                                                   request.resource.data.rol_en_turno,
+                                                   ay)
+                && request.resource.data.estado_operativo == 'En servicio'
+                && request.resource.data.salida_cerrada_manual == false
+                && request.resource.data.signos_vitales == null
+                && request.resource.data.metodo_entrada in ['QR_Operativo_TOTP',
+                                                            'QR_Operativo_Estatico'])
+          );
+    }
+
+    function puedeActualizarAsistenciaPorRol() {
+      let p = perfilPropio();
+      let ay = ayudantiaDe(p);
+      let changed = camposCambiados();
+      return p.estatus == 'Activo'
+          && (
+            (resource.data.usuario_uid == request.auth.uid
+             && resource.data.hora_salida == null
+             && resource.data.equipos_bupc_pendientes == 0
+             && changed.hasOnly(['hora_salida', 'horas_totales',
+                                 'estado_operativo', 'actualizado_en'])
+             && request.resource.data.hora_salida == request.time
+             && request.resource.data.estado_operativo == 'Retirado')
+            || ((p.rol_sistema == 'Administrador'
+                 || (p.rol_sistema == 'Encargado'
+                     && (!esJefeAyudantiaConAy(p, ay)
+                         || resource.data.ayudantia_slot == ay)))
+                && changed.hasOnly(['rol_en_turno', 'estado_operativo',
+                                    'signos_vitales', 'equipos_bupc_pendientes',
+                                    'hora_salida', 'horas_totales',
+                                    'salida_cerrada_manual', 'actualizado_en'])
+                && candadoDuroRespetado())
+          );
+    }
+
+    function puedeGestionarEquipoComoEncargadoOAdmin(asistenciaId) {
+      let p = perfilPropio();
+      let ay = ayudantiaDe(p);
+      let asisPath = /databases/$(database)/documents/asistencias_personal/$(asistenciaId);
+      return isSignedIn()
+          && p.estatus == 'Activo'
+          && (
+            p.rol_sistema == 'Administrador'
+            || (p.rol_sistema == 'Encargado'
+                && (!esJefeAyudantiaConAy(p, ay)
+                    || (exists(asisPath)
+                        && get(asisPath).data.ayudantia_slot == ay)))
+          );
     }
 
     // -------------------------------------------------------------
@@ -558,19 +841,28 @@ service cloud.firestore {
               'contacto_emergencia_parentesco'];
     }
 
-    // Campos que el dueño (Activo) puede modificar
-    function camposEditablesPorDueno() {
+    // Campos que el dueño en estatus 'Pendiente' puede corregir antes de su aprobación
+    function camposEditablesPorDuenoPendiente() {
       return ['nombres', 'apellido_paterno', 'apellido_materno', 'fecha_nacimiento',
               'sexo', 'telefono_fijo', 'celular', 'celular_con_whatsapp',
               'nivel_academico', 'escuela_carrera', 'numero_cuenta', 'tipo_sangre',
               'alergias', 'padecimientos_medicamentos', 'contacto_emergencia_nombre',
               'contacto_emergencia_parentesco', 'contacto_emergencia_telefono',
+              'actualizado_en'];
+    }
+
+    // Campos operativos/médicos no identitarios que el dueño 'Activo' puede modificar
+    function camposEditablesPorDuenoActivo() {
+      return ['telefono_fijo', 'celular', 'celular_con_whatsapp', 'tipo_sangre',
+              'alergias', 'padecimientos_medicamentos', 'contacto_emergencia_nombre',
+              'contacto_emergencia_parentesco', 'contacto_emergencia_telefono',
               'tiene_foto', 'actualizado_en'];
     }
 
-    // Campos que un Administrador Activo puede modificar
+    // Campos que un Administrador Activo puede modificar (incluye corrección de identidad)
     function camposEditablesPorAdmin() {
-      return ['grupo_operativo', 'ayudantia_slot', 'etapa', 'subgrupo', 'ayudantia',
+      return ['nombres', 'apellido_paterno', 'apellido_materno', 'numero_cuenta',
+              'grupo_operativo', 'ayudantia_slot', 'etapa', 'subgrupo', 'ayudantia',
               'grupos_a_cargo', 'rol_sistema', 'autorizado_radio',
               'clave_personal_radio', 'clave_radio', 'estatus',
               'qr_codigo_unico', 'actualizado_en'];
@@ -733,10 +1025,11 @@ service cloud.firestore {
     // Validador de dominio: auditoria_eventos
     // -------------------------------------------------------------
     function esEventoValido(d) {
-      let campos = ['tipo', 'actor_uid', 'actor_nombre', 'objetivo_uid',
-                    'objetivo_nombre', 'detalle', 'creado_en'];
-      return d.keys().hasAll(campos)
-          && d.keys().hasOnly(campos)
+      let camposBase = ['tipo', 'actor_uid', 'actor_nombre', 'objetivo_uid',
+                        'objetivo_nombre', 'detalle', 'creado_en'];
+      let keys = d.keys();
+      return keys.hasAll(camposBase)
+          && keys.hasOnly(camposBase.concat(['valor_anterior', 'valor_nuevo']))
           && d.tipo in ['APROBACION_USUARIO', 'RECHAZO_USUARIO', 'BAJA_USUARIO',
                         'CAMBIO_ROL', 'CREACION_OPERATIVO',
                         'CAMBIO_RECEPCION_OPERATIVO',
@@ -748,13 +1041,20 @@ service cloud.firestore {
                         'ACTUALIZACION_PERSONAL', 'ASIGNACION_RADIO',
                         'FINALIZACION_OPERATIVO', 'ELIMINACION_OPERATIVO',
                         'INCIDENCIA_PERSONAL', 'EDICION_CATALOGO_SUBGRUPOS',
-                        'PROMOCION_LOTE']
+                        'PROMOCION_LOTE', 'CORRECCION_IDENTIDAD']
           && d.actor_uid == request.auth.uid
           && cadena(d.actor_nombre, 1, 200)
           && cadena(d.objetivo_uid, 1, 128)
           && cadena(d.objetivo_nombre, 1, 200)
           && cadena(d.detalle, 0, 500)
-          && d.creado_en == request.time;
+          && d.creado_en == request.time
+          && (!('valor_anterior' in d) || cadenaONull(d.valor_anterior, 0, 500))
+          && (!('valor_nuevo' in d) || cadenaONull(d.valor_nuevo, 0, 500))
+          && (d.tipo != 'CORRECCION_IDENTIDAD'
+              || ('valor_anterior' in d
+                  && 'valor_nuevo' in d
+                  && cadena(d.valor_anterior, 1, 500)
+                  && cadena(d.valor_nuevo, 1, 500)));
     }
 
     // -------------------------------------------------------------
@@ -831,12 +1131,13 @@ service cloud.firestore {
     // Validador de dominio: operativos/{operativoId}/prerregistros/{uid}
     // -------------------------------------------------------------
     function esPrerregistroValido(d, uid) {
-      let campos = ['usuario_uid', 'usuario_nombre', 'usuario_cuenta', 'etapa',
-                    'subgrupo', 'ayudantia', 'origen', 'registrado_por_uid',
-                    'fecha_registro'];
+      let camposBase = ['usuario_uid', 'usuario_nombre', 'usuario_cuenta', 'etapa',
+                        'subgrupo', 'ayudantia', 'origen', 'registrado_por_uid',
+                        'fecha_registro'];
       let keys = d.keys();
-      return keys.hasAll(campos)
-          && keys.hasOnly(campos)
+      return keys.hasAll(camposBase)
+          && keys.hasOnly(camposBase.concat(['ayudantia_slot', 'rol_en_turno',
+                                             'rol_editado_manual', 'actualizado_en']))
           && d.usuario_uid == uid
           && cadena(d.usuario_nombre, 1, 200)
           && cadena(d.usuario_cuenta, 1, 12)
@@ -845,8 +1146,12 @@ service cloud.firestore {
           && d.ayudantia in ['Capacitación', 'Administración de Personal',
                              'Tesla', 'Socorros', 'Logística', 'Ninguna']
           && d.origen in ['Autoregistro', 'Manual_Encargado']
-          && d.registrado_por_uid == request.auth.uid
-          && d.fecha_registro == request.time;
+          && cadena(d.registrado_por_uid, 1, 128)
+          && d.fecha_registro is timestamp
+          && (!('ayudantia_slot' in d) || d.ayudantia_slot == d.ayudantia)
+          && (!('rol_en_turno' in d) || esRolEnTurnoValido(d.rol_en_turno))
+          && (!('rol_editado_manual' in d) || d.rol_editado_manual is bool)
+          && (!('actualizado_en' in d) || d.actualizado_en is timestamp);
     }
 
     // -------------------------------------------------------------
@@ -889,9 +1194,7 @@ service cloud.firestore {
           && d.grupo_operativo in ['Alfa', 'Omega', 'Ninguno']
           && d.ayudantia_slot in ['Capacitación', 'Administración de Personal',
                                   'Tesla', 'Socorros', 'Logística', 'Ninguna']
-          && d.rol_en_turno in ['Primeros Auxilios', 'Radiocomunicación',
-                                'Búsqueda y Rescate', 'Evacuación', 'Logística',
-                                'Encargado', 'Sin asignar']
+          && esRolEnTurnoValido(d.rol_en_turno)
           && d.estado_operativo in ['En servicio', 'En descanso', 'Reserva', 'Retirado']
           && esSignosVitalesValidos(d.signos_vitales)
           && d.metodo_entrada in ['QR_Operativo_TOTP', 'QR_Operativo_Estatico',
@@ -945,7 +1248,8 @@ service cloud.firestore {
       return d.keys().hasAll(camposBase)
           && d.keys().hasOnly(camposBase.concat(['creado_por_nombre',
                                                  'operativo_nombre',
-                                                 'cantidad']))
+                                                 'cantidad',
+                                                 'ayudantia_slot']))
           && d.id == equipoId
           && cadena(d.asistencia_id, 1, 128)
           && cadena(d.operativo_id, 1, 128)
@@ -966,7 +1270,10 @@ service cloud.firestore {
           && (!('creado_por_nombre' in d) || cadena(d.creado_por_nombre, 0, 200))
           && (!('operativo_nombre' in d) || cadena(d.operativo_nombre, 0, 120))
           && (!('cantidad' in d)
-              || (d.cantidad is int && d.cantidad >= 1 && d.cantidad <= 99));
+              || (d.cantidad is int && d.cantidad >= 1 && d.cantidad <= 99))
+          && (!('ayudantia_slot' in d)
+              || d.ayudantia_slot in ['Capacitación', 'Administración de Personal',
+                                      'Tesla', 'Socorros', 'Logística', 'Ninguna']);
     }
 
     // -------------------------------------------------------------
@@ -1066,12 +1373,12 @@ service cloud.firestore {
     match /usuarios/{uid} {
 
       // Lectura individual: dueño siempre (evaluado primero para evitar get()),
-      // Administrador Activo, Encargado AP Activo, Encargado Tesla Activo,
-      // o Encargado Activo solo sobre Brigadistas de sus grupos_a_cargo.
+      // Administrador Activo, Jefe de Ayudantía (solo su ayudantía),
+      // o Encargado sin ayudantía (Opción B sobre Brigadistas de sus grupos_a_cargo).
       allow get: if esPropietario(uid) || puedeLeerUsuarioPorTercero();
 
-      // Consultas (list): Administrador, Encargado AP, Encargado Tesla,
-      // o Encargado Activo restringido a Brigadistas de sus grupos_a_cargo.
+      // Consultas (list): Administrador, Jefe de Ayudantía (solo su ayudantía),
+      // o Encargado sin ayudantía restringido a Brigadistas de sus grupos_a_cargo.
       allow list: if puedeLeerUsuarioPorTercero();
 
       // Alta: solo el propio usuario, con esquema válido y valores iniciales
@@ -1082,11 +1389,11 @@ service cloud.firestore {
 
       // Actualización unificada (calcula camposCambiados() una sola vez y
       // evalúa adscripción -> autorización -> esUsuarioValido):
-      // (a) Dueño Activo (datos personales/académicos/médicos + tiene_foto)
-      // (b) Encargado Tesla Activo (dominio exclusivo de radio, sin autoasignación)
-      // (c) Encargado AP Activo (Brigadistas ajenos, sin rol/grupos_a_cargo/radio)
-      // (d) Encargado normal Opción B (Brigadistas ajenos en grupos_a_cargo)
-      // (e) Administrador Activo (campos privilegiados)
+      // (a1) Dueño en estatus 'Pendiente' (corrección de datos de registro previos a aprobación)
+      // (a2) Dueño en estatus 'Activo' (solo datos operativos/médicos no identitarios + tiene_foto)
+      // (b) Jefe de Ayudantía Activo (exclusivo de su propia ayudantía, sin autoasignación)
+      // (c) Encargado sin ayudantía Opción B (Brigadistas ajenos en grupos_a_cargo)
+      // (d) Administrador Activo (campos privilegiados + corrección de identidad)
       allow update: if isSignedIn()
                     && request.resource.data.actualizado_en == request.time
                     && puedeActualizarUsuario(uid);
@@ -1100,14 +1407,18 @@ service cloud.firestore {
     // =============================================================
     match /perfiles_operativos/{uid} {
 
-      // Lectura y listado: Encargado/Administrador Activo o el propio titular.
-      allow get, list: if esEncargadoOAdminActivo() || esPropietario(uid);
+      // Lectura y listado: propio titular, Administrador Activo, Jefe de Ayudantía
+      // (solo su ayudantía) o Encargado sin ayudantía Activo.
+      allow get, list: if esPropietario(uid) || puedeLeerPerfilOperativoPorTercero();
 
-      // Alta y actualización: Administrador, Encargado AP o Encargado Tesla Activo.
-      allow create, update: if (esAdminActivo()
-                                || esEncargadoAPActivo()
-                                || esEncargadoTeslaActivo())
-                            && esPerfilOperativoValido(request.resource.data, uid);
+      // Alta y actualización:
+      // (a) Propio titular sin privilegios en alta inicial, recuperación de cuenta
+      //     huérfana o mientras usuarios/{uid} permanezca en 'Pendiente' (cortocircuito
+      //     previo a perfilPropio() para soportar writeBatch de alta inicial).
+      // (b) Administrador Activo o Jefe de Ayudantía Activo (restringido a su ayudantía).
+      allow create, update: if esPerfilOperativoValido(request.resource.data, uid)
+                            && (puedeEscribirPerfilOperativoPropioPendiente(uid)
+                                || puedeEscribirPerfilOperativo());
 
       // Nunca se eliminan proyecciones operativas.
       allow delete: if false;
@@ -1134,34 +1445,19 @@ service cloud.firestore {
     // =============================================================
     match /incidencias_personal/{incidenciaId} {
 
-      // Lectura individual: Admin, Encargado AP, o Encargado Activo si la creó
-      // o si el usuario objetivo pertenece a sus grupos_a_cargo.
-      allow get: if esAdminActivo()
-                 || esEncargadoAPActivo()
-                 || (esEncargadoActivo()
-                     && (resource.data.creado_por_uid == request.auth.uid
-                         || (exists(/databases/$(database)/documents/usuarios/$(resource.data.usuario_uid))
-                             && perteneceAGruposACargo(perfilPropio(),
-                                                       get(/databases/$(database)/documents/usuarios/$(resource.data.usuario_uid)).data))));
+      // Lectura individual: Admin, Encargado creador, Jefe de Ayudantía (si el
+      // usuario objetivo es de su ayudantía) o Encargado sin ayudantía (grupos_a_cargo).
+      allow get: if puedeLeerIncidenciaGet();
 
-      // Listado: Admin, Encargado AP, o Encargado Activo filtrado a sus propias incidencias.
+      // Listado: Admin o Encargado Activo filtrado a sus propias incidencias.
       allow list: if esAdminActivo()
-                  || esEncargadoAPActivo()
                   || (esEncargadoActivo()
                       && resource.data.creado_por_uid == request.auth.uid);
 
-      // Alta: esquema válido + Admin, Encargado AP, o Encargado Activo durante
-      // operativo no finalizado o sobre Brigadista de sus grupos_a_cargo.
+      // Alta: esquema válido + Admin, Jefe de Ayudantía (solo Brigadistas de su
+      // ayudantía y operativo nulo o no finalizado) o Encargado sin ayudantía.
       allow create: if esIncidenciaPersonalValida(request.resource.data, incidenciaId)
-                    && (esAdminActivo()
-                        || esEncargadoAPActivo()
-                        || (esEncargadoActivo()
-                            && ((request.resource.data.operativo_id != null
-                                 && operativoNoFinalizado(request.resource.data.operativo_id))
-                                || (exists(/databases/$(database)/documents/usuarios/$(request.resource.data.usuario_uid))
-                                    && get(/databases/$(database)/documents/usuarios/$(request.resource.data.usuario_uid)).data.rol_sistema == 'Brigadista'
-                                    && perteneceAGruposACargo(perfilPropio(),
-                                                              get(/databases/$(database)/documents/usuarios/$(request.resource.data.usuario_uid)).data)))));
+                    && puedeCrearIncidencia(request.resource.data);
 
       // Inmutable: nunca se edita ni se elimina.
       allow update, delete: if false;
@@ -1262,26 +1558,46 @@ service cloud.firestore {
       // -----------------------------------------------------------
       match /prerregistros/{uid} {
 
-        // Lectura individual: el propio brigadista Activo (cortocircuito en 1 get())
-        // o un Encargado/Administrador Activo.
+        // Lectura individual: propio usuario Activo (cortocircuito en 1 get()),
+        // Administrador, Jefe de Ayudantía (solo su ayudantía) o Encargado sin ayudantía.
         allow get: if (esPropietario(uid) && esActivo())
-                   || esEncargadoOAdminActivo();
+                   || puedeLeerPrerregistroComoEncargadoOAdmin();
 
-        // Listado: exclusivo de Encargado o Administrador Activo.
-        allow list: if esEncargadoOAdminActivo();
+        // Listado: Administrador, Jefe de Ayudantía (filtrado a su ayudantía)
+        // o Encargado sin ayudantía Activo.
+        allow list: if puedeLeerPrerregistroComoEncargadoOAdmin();
 
         // Alta: esquema estricto + operativo existente y no Finalizado.
-        // Encargado/Admin Activo (cualquier origen) o propio Brigadista Activo
-        // con origen 'Autoregistro' y convocatoria_abierta == true.
+        // Admin, Jefe de Ayudantía (solo su ayudantía), Encargado sin ayudantía
+        // o propio Brigadista Activo con 'Autoregistro' y convocatoria_abierta == true.
         allow create: if isSignedIn()
                       && esPrerregistroValido(request.resource.data, uid)
+                      && request.resource.data.registrado_por_uid == request.auth.uid
+                      && request.resource.data.fecha_registro == request.time
+                      && (!('actualizado_en' in request.resource.data)
+                          || request.resource.data.actualizado_en == request.time)
                       && puedeCrearPrerregistro(operativoId, uid);
 
-        // Inmutable: para corregir se elimina y se vuelve a registrar.
-        allow update: if false;
+        // Actualización controlada durante la convocatoria (operativo no Finalizado):
+        // solo Admin Activo, Jefe de Ayudantía Activo (sobre su ayudantía vía
+        // ayudantia o ayudantia_slot) o Encargado Activo sin ayudantía; valida
+        // parcialmente únicamente rol_en_turno, rol_editado_manual y
+        // actualizado_en == request.time para compatibilidad con históricos legacy.
+        allow update: if isSignedIn()
+                      && operativoNoFinalizado(operativoId)
+                      && camposCambiados().hasOnly(['rol_en_turno',
+                                                    'rol_editado_manual',
+                                                    'actualizado_en'])
+                      && request.resource.data.actualizado_en == request.time
+                      && 'rol_en_turno' in request.resource.data
+                      && esRolEnTurnoValido(request.resource.data.rol_en_turno)
+                      && (!('rol_editado_manual' in request.resource.data)
+                          || request.resource.data.rol_editado_manual is bool)
+                      && puedeActualizarPrerregistroComoEncargadoOAdmin();
 
-        // Baja: operativo existente y no Finalizado. Encargado/Admin Activo
-        // o propio Brigadista Activo mientras convocatoria_abierta == true.
+        // Baja: operativo existente y no Finalizado. Admin, Jefe de Ayudantía
+        // (solo su ayudantía), Encargado sin ayudantía o propio usuario Activo
+        // mientras convocatoria_abierta == true.
         allow delete: if isSignedIn()
                       && puedeEliminarPrerregistro(operativoId, uid);
       }
@@ -1292,13 +1608,13 @@ service cloud.firestore {
     // =============================================================
     match /asistencias_personal/{asistenciaId} {
 
-      // Lectura y listado: el propio brigadista Activo (solo sus asistencias)
-      // o un Encargado/Administrador Activo.
-      allow get, list: if (esActivo() && resource.data.usuario_uid == request.auth.uid)
-                       || esEncargadoOAdminActivo();
+      // Lectura y listado: propio usuario Activo (sus asistencias), Admin,
+      // Jefe de Ayudantía (solo ayudantia_slot == su ayudantía) o Encargado sin ayudantía.
+      allow get, list: if puedeLeerAsistencia();
 
       // Alta: requiere operativo no finalizado con recepción abierta.
-      // Permitido para Encargado/Administrador Activo o auto-registro QR propio.
+      // Permitido para Admin, Jefe de Ayudantía (solo su ayudantia_slot),
+      // Encargado sin ayudantía o auto-registro QR propio.
       allow create: if esAsistenciaValida(request.resource.data, asistenciaId)
                     && operativoConRecepcionAbierta(request.resource.data.operativo_id)
                     && request.resource.data.equipos_bupc_pendientes == 0
@@ -1308,42 +1624,19 @@ service cloud.firestore {
                     && request.resource.data.creado_en == request.time
                     && request.resource.data.actualizado_en == request.time
                     && request.resource.data.registrado_por_uid == request.auth.uid
-                    && (esEncargadoOAdminActivo()
-                        || (esActivo()
-                            && request.resource.data.usuario_uid == request.auth.uid
-                            && request.resource.data.rol_en_turno == 'Sin asignar'
-                            && request.resource.data.estado_operativo == 'En servicio'
-                            && request.resource.data.salida_cerrada_manual == false
-                            && request.resource.data.signos_vitales == null
-                            && request.resource.data.metodo_entrada in ['QR_Operativo_TOTP',
-                                                                        'QR_Operativo_Estatico']));
+                    && puedeCrearAsistenciaPorRol();
 
       // Actualización unificada mientras el operativo no esté Finalizado
       // (incluso con recepción cerrada): evalúa operativoNoFinalizado y
       // esAsistenciaValida una sola vez.
       // (a) Dueño Activo: cierra su propia salida sin equipos BUPC pendientes.
-      // (b) Encargado/Admin Activo: rol, estado, signos, equipos_bupc_pendientes
-      //     y salida respetando el Candado Duro de Salida.
+      // (b) Admin / Jefe de Ayudantía (solo su ayudantia_slot) / Encargado sin ayudantía:
+      //     rol, estado, signos, equipos_bupc_pendientes y salida respetando Candado Duro.
       allow update: if isSignedIn()
                     && operativoNoFinalizado(resource.data.operativo_id)
                     && request.resource.data.actualizado_en == request.time
                     && esAsistenciaValida(request.resource.data, asistenciaId)
-                    && (
-                      (esActivo()
-                       && resource.data.usuario_uid == request.auth.uid
-                       && resource.data.hora_salida == null
-                       && resource.data.equipos_bupc_pendientes == 0
-                       && camposCambiados().hasOnly(['hora_salida', 'horas_totales',
-                                                     'estado_operativo', 'actualizado_en'])
-                       && request.resource.data.hora_salida == request.time
-                       && request.resource.data.estado_operativo == 'Retirado')
-                      || (esEncargadoOAdminActivo()
-                          && camposCambiados().hasOnly(['rol_en_turno', 'estado_operativo',
-                                                        'signos_vitales', 'equipos_bupc_pendientes',
-                                                        'hora_salida', 'horas_totales',
-                                                        'salida_cerrada_manual', 'actualizado_en'])
-                          && candadoDuroRespetado())
-                    );
+                    && puedeActualizarAsistenciaPorRol();
 
       // Nunca se eliminan registros de asistencia.
       allow delete: if false;
@@ -1359,7 +1652,8 @@ service cloud.firestore {
                        || esEncargadoOAdminActivo();
 
       // Alta unificada mientras el operativo no esté Finalizado:
-      // Encargado/Admin Activo (cualquier origen) o brigadista Activo (solo Propio).
+      // Admin / Encargado sin ayudantía / Jefe de Ayudantía (solo asistencias de
+      // su ayudantía) o brigadista Activo (solo Material Propio).
       allow create: if isSignedIn()
                     && operativoNoFinalizado(request.resource.data.operativo_id)
                     && esEquipoTurnoValido(request.resource.data, equipoId)
@@ -1368,21 +1662,22 @@ service cloud.firestore {
                     && request.resource.data.creado_por_uid == request.auth.uid
                     && request.resource.data.creado_en == request.time
                     && request.resource.data.actualizado_en == request.time
-                    && (esEncargadoOAdminActivo()
+                    && (puedeGestionarEquipoComoEncargadoOAdmin(request.resource.data.asistencia_id)
                         || (esActivo()
                             && request.resource.data.usuario_uid == request.auth.uid
                             && request.resource.data.origen_material == 'Propio'
                             && request.resource.data.estado_reporte in ['OK', 'Con_Falla']));
 
       // Actualización unificada mientras el operativo no esté Finalizado:
-      // (a) Encargado/Admin Activo: reporte, devolución o acta de incidencia.
+      // (a) Admin / Encargado sin ayudantía / Jefe de Ayudantía (solo asistencias
+      //     de su ayudantía): reporte, devolución o acta de incidencia.
       // (b) Brigadista Activo: solo reporte OK o Con_Falla sin devolución ni acta.
       allow update: if isSignedIn()
                     && operativoNoFinalizado(resource.data.operativo_id)
                     && request.resource.data.actualizado_en == request.time
                     && esEquipoTurnoValido(request.resource.data, equipoId)
                     && (
-                      (esEncargadoOAdminActivo()
+                      (puedeGestionarEquipoComoEncargadoOAdmin(resource.data.asistencia_id)
                        && camposCambiados().hasOnly(['estado_reporte', 'falla_reportada',
                                                      'devuelto', 'devuelto_en',
                                                      'devuelto_por_uid', 'acta_incidencia',

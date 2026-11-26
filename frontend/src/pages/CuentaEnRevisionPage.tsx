@@ -1,4 +1,4 @@
-import { Clock, LogOut, RefreshCw } from 'lucide-react'
+import { CheckCircle2, Clock, LogOut, Pencil, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
 import { BarraEstado } from '../components/BarraEstado'
 import { BupcLogo } from '../components/BupcLogo'
@@ -9,6 +9,7 @@ import {
   verificarEstatusEnServidor,
 } from '../services/authService'
 import type { Usuario } from '../types'
+import { RegistroPage } from './RegistroPage'
 
 interface CuentaEnRevisionPageProps {
   perfil: Usuario
@@ -16,7 +17,9 @@ interface CuentaEnRevisionPageProps {
 
 export function CuentaEnRevisionPage({ perfil }: CuentaEnRevisionPageProps) {
   const [verificando, setVerificando] = useState(false)
+  const [editandoDatos, setEditandoDatos] = useState(false)
   const [mensaje, setMensaje] = useState<string | null>(null)
+  const [avisoCorreccion, setAvisoCorreccion] = useState<string | null>(null)
 
   async function manejarVerificar() {
     setVerificando(true)
@@ -31,6 +34,20 @@ export function CuentaEnRevisionPage({ perfil }: CuentaEnRevisionPageProps) {
     } finally {
       setVerificando(false)
     }
+  }
+
+  if (editandoDatos) {
+    return (
+      <RegistroPage
+        perfilPendiente={perfil}
+        alVolverALogin={() => setEditandoDatos(false)}
+        alCancelarCorreccion={() => setEditandoDatos(false)}
+        alGuardarCorreccion={() => {
+          setEditandoDatos(false)
+          setAvisoCorreccion('Tus datos fueron corregidos y actualizados en tu solicitud.')
+        }}
+      />
+    )
   }
 
   return (
@@ -99,7 +116,25 @@ export function CuentaEnRevisionPage({ perfil }: CuentaEnRevisionPageProps) {
                 {perfil.numero_cuenta}
               </dd>
             </div>
+            <div className="flex items-center justify-between gap-2 py-2.5">
+              <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                Celular
+              </dt>
+              <dd className="text-sm font-semibold tabular-nums text-tinta dark:text-noche-tinta">
+                {perfil.celular}
+              </dd>
+            </div>
           </dl>
+
+          {avisoCorreccion && (
+            <div
+              role="status"
+              className="flex w-full items-start gap-2 rounded-lg border border-activo bg-activo-suave p-3 text-left text-xs font-semibold text-emerald-900 dark:bg-noche-campo dark:text-activo-claro"
+            >
+              <CheckCircle2 size={16} strokeWidth={2} className="mt-0.5 shrink-0" />
+              <span>{avisoCorreccion}</span>
+            </div>
+          )}
 
           {mensaje && (
             <p role="status" className="text-xs font-semibold text-ambar-texto dark:text-noche-ambar-texto">
@@ -120,6 +155,18 @@ export function CuentaEnRevisionPage({ perfil }: CuentaEnRevisionPageProps) {
                 className={verificando ? 'animate-spin' : ''}
               />
               <span>{verificando ? 'Consultando...' : 'Verificar Estado de Aprobación'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAvisoCorreccion(null)
+                setMensaje(null)
+                setEditandoDatos(true)
+              }}
+              className="btn w-full border border-udec bg-tarjeta text-udec-oscuro hover:bg-salvia dark:border-activo-claro dark:bg-noche-tarjeta dark:text-activo-claro"
+            >
+              <Pencil size={17} strokeWidth={2} />
+              <span>Corregir Datos Enviados</span>
             </button>
             <button type="button" onClick={() => void cerrarSesion()} className="btn-salvia w-full">
               <LogOut size={18} strokeWidth={2} />

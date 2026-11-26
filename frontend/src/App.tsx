@@ -33,6 +33,7 @@ function PantallaCarga() {
 export default function App() {
   const { usuarioAuth, perfil, perfilBloqueado, limpiarBloqueo } = useSesion()
   const [vistaPublica, setVistaPublica] = useState<'login' | 'registro'>('login')
+  const [correoPrellenadoLogin, setCorreoPrellenadoLogin] = useState('')
   const [verificadoEnSesion, setVerificadoEnSesion] = useState(false)
 
   // 1. Bloqueo inmediato al pasar a Inactivo (listener global onSnapshot)
@@ -56,9 +57,21 @@ export default function App() {
   // 3. Sin sesión autenticada
   if (!usuarioAuth) {
     if (vistaPublica === 'registro') {
-      return <RegistroPage alVolverALogin={() => setVistaPublica('login')} />
+      return (
+        <RegistroPage
+          alVolverALogin={(correoSugerido) => {
+            if (correoSugerido) setCorreoPrellenadoLogin(correoSugerido)
+            setVistaPublica('login')
+          }}
+        />
+      )
     }
-    return <LoginPage alIrARegistro={() => setVistaPublica('registro')} />
+    return (
+      <LoginPage
+        correoInicial={correoPrellenadoLogin}
+        alIrARegistro={() => setVistaPublica('registro')}
+      />
+    )
   }
 
   // 4. Cargando expediente Firestore
@@ -66,11 +79,11 @@ export default function App() {
     return <PantallaCarga />
   }
 
-  // 5. Cuenta autenticada (ej. Google) sin documento en `usuarios/{uid}` → Registro 3 pasos precargado
+  // 5. Recuperación automática de cuentas huérfanas (Auth sin documento en `usuarios/{uid}`)
   if (perfil === null) {
     return (
       <RegistroPage
-        usuarioGoogle={usuarioAuth}
+        usuarioAutenticado={usuarioAuth}
         alVolverALogin={() => {
           void cerrarSesion()
           setVistaPublica('login')
@@ -97,6 +110,7 @@ export default function App() {
     return (
       <VerificacionCorreoPage
         usuarioAuth={usuarioAuth}
+        perfil={perfil}
         alConfirmarVerificacion={() => setVerificadoEnSesion(true)}
       />
     )

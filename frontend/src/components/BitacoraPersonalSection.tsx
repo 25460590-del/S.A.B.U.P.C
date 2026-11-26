@@ -5,6 +5,7 @@ import {
   ClipboardCheck,
   Clock,
   FileWarning,
+  HeartPulse,
   Lock,
   Package,
   PackagePlus,
@@ -18,9 +19,15 @@ import {
   Zap,
 } from 'lucide-react'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { EQUIPO_BUPC_SUGERIDO, ESTADOS_OPERATIVOS, ROLES_EN_TURNO } from '../constants/catalogos'
+import {
+  EQUIPO_BUPC_SUGERIDO,
+  ESTADOS_OPERATIVOS,
+  opcionesRolEnTurno,
+  resolverRolInicialOperativo,
+  rolOperativoPorAyudantia,
+} from '../constants/catalogos'
 import { normalizarNombrePropio } from '../lib/nombres'
-import { etiquetaAyudantia } from '../lib/permisos'
+import { ayudantiaEfectiva, ayudantiaJefatura, etiquetaAyudantia } from '../lib/permisos'
 import {
   actualizarEstadoOperativo,
   actualizarRolEnTurno,
@@ -41,6 +48,7 @@ import {
   marcarEquipoDevueltoOk,
 } from '../services/equiposService'
 import {
+  actualizarRolPrerregistro,
   escucharPrerregistrosDeOperativo,
   quitarPrerregistroManual,
   registrarPrerregistroManual,
@@ -56,6 +64,7 @@ import type {
 } from '../types'
 import { AlertaInactivoModal } from './AlertaInactivoModal'
 import { CandadoDuroModal } from './CandadoDuroModal'
+import { IndicadorAlcanceAyudantia } from './IndicadorAlcanceAyudantia'
 import { QrScannerModal } from './QrScannerModal'
 
 interface BitacoraPersonalSectionProps {
@@ -95,6 +104,7 @@ function etiquetaGrupoAsistencia(a: AsistenciaPersonal, mapaUsuarios: Map<string
 export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPersonalSectionProps) {
   const esFinalizado = operativo.estatus === 'Finalizado'
   const recepcionAbierta = operativo.recepcion_abierta && !esFinalizado
+  const ayJefe = ayudantiaJefatura(encargado)
 
   const [asistencias, setAsistencias] = useState<AsistenciaPersonal[]>([])
   const [prerregistros, setPrerregistros] = useState<PrerregistroOperativo[]>([])
@@ -131,7 +141,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
   // Modal Registro Manual
   const [modalManual, setModalManual] = useState(false)
   const [uidManual, setUidManual] = useState('')
-  const [rolManual, setRolManual] = useState<RolEnTurno>('Primeros Auxilios')
+  const [rolManual, setRolManual] = useState<RolEnTurno>('Sin definir')
 
   // Modal Signos Vitales
   const [vitalesObjetivo, setVitalesObjetivo] = useState<AsistenciaPersonal | null>(null)
@@ -153,6 +163,9 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
   const [motivoIncidencia, setMotivoIncidencia] = useState('')
   const [archivoEvidencia, setArchivoEvidencia] = useState<File | null>(null)
 
+  // Modal de consulta rápida de Ficha de Emergencia en operativo
+  const [fichaEmergenciaUid, setFichaEmergenciaUid] = useState<string | null>(null)
+
   useEffect(() => {
     const cancelarAsis = escucharAsistenciasDeOperativo(
       operativo.id,
@@ -164,12 +177,18 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
         setError(mensajeDeError(err))
         setCargando(false)
       },
+      ayJefe,
     )
-    const cancelarPre = escucharPrerregistrosDeOperativo(operativo.id, setPrerregistros)
+    const cancelarPre = escucharPrerregistrosDeOperativo(
+      operativo.id,
+      setPrerregistros,
+      undefined,
+      ayJefe,
+    )
     const cancelarEq = escucharEquiposDeOperativo(operativo.id, setEquipos, (err) =>
       setError(mensajeDeError(err)),
     )
-    const cancelarUsr = escucharUsuariosParaBitacora(setUsuarios, () => undefined)
+    const cancelarUsr = escucharUsuariosParaBitacora(encargado, setUsuarios, () => undefined)
 
     return () => {
       cancelarAsis()
@@ -177,11 +196,26 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
       cancelarEq()
       cancelarUsr()
     }
-  }, [operativo.id])
+  }, [operativo.id, encargado, ayJefe])
 
   const mapaUsuarios = useMemo(
     () => new Map(usuarios.map((u) => [u.uid, u])),
     [usuarios],
+  )
+
+  const mapaPrerregistros = useMemo(
+    () => new Map(prerregistros.map((p) => [p.usuario_uid, p])),
+    [prerregistros],
+  )
+
+  const idsAsistenciasVisibles = useMemo(
+    () => new Set(asistencias.map((a) => a.id)),
+    [asistencias],
+  )
+
+  const equiposVisibles = useMemo(
+    () => (ayJefe ? equipos.filter((eq) => idsAsistenciasVisibles.has(eq.asistencia_id)) : equipos),
+    [equipos, ayJefe, idsAsistenciasVisibles],
   )
 
   // Cruce en memoria prerregistros <-> asistencias_personal (0 escrituras extra al escanear QR)
@@ -204,14 +238,14 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
   const { equiposBupcPorAsistencia, equiposPropiosPorAsistencia } = useMemo(() => {
     const mapaBupc = new Map<string, EquipoTurno[]>()
     const mapaPropios = new Map<string, EquipoTurno[]>()
-    for (const eq of equipos) {
+    for (const eq of equiposVisibles) {
       const destino = eq.origen_material === 'Propio' ? mapaPropios : mapaBupc
       const lista = destino.get(eq.asistencia_id) ?? []
       lista.push(eq)
       destino.set(eq.asistencia_id, lista)
     }
     return { equiposBupcPorAsistencia: mapaBupc, equiposPropiosPorAsistencia: mapaPropios }
-  }, [equipos])
+  }, [equiposVisibles])
 
   const gruposDisponibles = useMemo(() => {
     const set = new Set<string>()
@@ -404,6 +438,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
       const res = await registrarAsistenciaManual(encargado, operativo, brigadista, rolManual)
       setModalManual(false)
       setUidManual('')
+      setRolManual('Sin definir')
       if (res.accion === 'perfil_inactivo') {
         setAlertaInactivo(res.usuario)
       } else if (res.accion === 'entrada') {
@@ -569,6 +604,18 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
     }
   }
 
+  async function manejarActualizarRolPrerregistro(
+    p: PrerregistroOperativo,
+    nuevoRol: RolEnTurno,
+  ) {
+    setError(null)
+    try {
+      await actualizarRolPrerregistro(operativo.id, p.usuario_uid, nuevoRol)
+    } catch (err) {
+      setError(mensajeDeError(err))
+    }
+  }
+
   async function manejarEntradaDesdePrerregistro(p: PrerregistroOperativo) {
     if (!recepcionAbierta) return
     const u = mapaUsuarios.get(p.usuario_uid)
@@ -580,7 +627,8 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
     setError(null)
     setAviso(null)
     try {
-      const res = await registrarAsistenciaManual(encargado, operativo, u, 'Sin asignar')
+      const rolInicial = resolverRolInicialOperativo(ayudantiaEfectiva(u), p)
+      const res = await registrarAsistenciaManual(encargado, operativo, u, rolInicial)
       if (res.accion === 'perfil_inactivo') {
         setAlertaInactivo(res.usuario)
       } else if (res.accion === 'entrada') {
@@ -621,6 +669,15 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
         <div className="flex items-center gap-2 border-b border-borde bg-superficie-suave px-4 py-2 text-xs font-semibold text-tinta-suave dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta-suave">
           <Lock size={14} strokeWidth={2} />
           <span>Operativo finalizado — consulta en modo solo lectura.</span>
+        </div>
+      )}
+
+      {ayJefe && (
+        <div className="border-b border-borde p-3 dark:border-noche-borde">
+          <IndicadorAlcanceAyudantia
+            ayudantia={ayJefe}
+            descripcion={`Pase y aprobación de lista, roles en turno, Ficha de Emergencia y material propio acotados a ${ayJefe}.`}
+          />
         </div>
       )}
 
@@ -697,7 +754,11 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                     ? 'Registrar entrada manualmente'
                     : 'Recepción cerrada: reábrela para registrar nuevas entradas'
                 }
-                onClick={() => setModalManual(true)}
+                onClick={() => {
+                  setUidManual('')
+                  setRolManual('Sin definir')
+                  setModalManual(true)
+                }}
                 className="btn-naranja min-h-9 px-2.5 text-xs"
               >
                 <UserPlus size={14} strokeWidth={2} />
@@ -783,7 +844,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
             </select>
           )}
 
-          {ayudantiasDisponibles.length > 1 && (
+          {!ayJefe && ayudantiasDisponibles.length > 1 && (
             <select
               aria-label="Filtrar por ayudantía"
               value={filtroAyudantia}
@@ -950,36 +1011,55 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                     </p>
                   </div>
 
-                  {!esFinalizado && (
-                    <div className="flex shrink-0 items-center gap-1.5">
-                      {recepcionAbierta && (
+                  <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                    <select
+                      aria-label={`Rol preasignado de ${p.usuario_nombre}`}
+                      value={p.rol_en_turno ?? rolOperativoPorAyudantia(p.ayudantia)}
+                      disabled={esFinalizado}
+                      onChange={(e) =>
+                        void manejarActualizarRolPrerregistro(p, e.target.value as RolEnTurno)
+                      }
+                      className="campo min-h-8 w-auto py-0.5 text-[11px]"
+                    >
+                      {opcionesRolEnTurno(p.rol_en_turno ?? rolOperativoPorAyudantia(p.ayudantia)).map(
+                        (rol) => (
+                          <option key={rol} value={rol}>
+                            {rol}
+                          </option>
+                        ),
+                      )}
+                    </select>
+                    {!esFinalizado && (
+                      <>
+                        {recepcionAbierta && (
+                          <button
+                            type="button"
+                            disabled={ocupadoId === `inpre-${p.usuario_uid}`}
+                            onClick={() => void manejarEntradaDesdePrerregistro(p)}
+                            className="btn-verde min-h-8 px-2.5 text-[11px]"
+                          >
+                            <UserPlus size={12} strokeWidth={2} />
+                            <span>
+                              {ocupadoId === `inpre-${p.usuario_uid}`
+                                ? 'Registrando...'
+                                : 'Confirmar entrada'}
+                            </span>
+                          </button>
+                        )}
                         <button
                           type="button"
-                          disabled={ocupadoId === `inpre-${p.usuario_uid}`}
-                          onClick={() => void manejarEntradaDesdePrerregistro(p)}
-                          className="btn-verde min-h-8 px-2.5 text-[11px]"
+                          disabled={ocupadoId === `delpre-${p.usuario_uid}`}
+                          onClick={() => void manejarQuitarPrerregistro(p)}
+                          title="Quitar de la lista previa"
+                          aria-label={`Quitar a ${p.usuario_nombre} del prerregistro`}
+                          className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-lg border border-borde-fuerte bg-tarjeta px-2.5 text-[11px] font-semibold text-tinta-suave hover:border-alerta hover:text-alerta disabled:opacity-50 dark:border-noche-borde dark:bg-noche-tarjeta dark:text-noche-tinta-suave dark:hover:text-noche-rojo-texto"
                         >
-                          <UserPlus size={12} strokeWidth={2} />
-                          <span>
-                            {ocupadoId === `inpre-${p.usuario_uid}`
-                              ? 'Registrando...'
-                              : 'Confirmar entrada'}
-                          </span>
+                          <Trash2 size={12} strokeWidth={2} />
+                          <span>Quitar</span>
                         </button>
-                      )}
-                      <button
-                        type="button"
-                        disabled={ocupadoId === `delpre-${p.usuario_uid}`}
-                        onClick={() => void manejarQuitarPrerregistro(p)}
-                        title="Quitar de la lista previa"
-                        aria-label={`Quitar a ${p.usuario_nombre} del prerregistro`}
-                        className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-lg border border-borde-fuerte bg-tarjeta px-2.5 text-[11px] font-semibold text-tinta-suave hover:border-alerta hover:text-alerta disabled:opacity-50 dark:border-noche-borde dark:bg-noche-tarjeta dark:text-noche-tinta-suave dark:hover:text-noche-rojo-texto"
-                      >
-                        <Trash2 size={12} strokeWidth={2} />
-                        <span>Quitar</span>
-                      </button>
-                    </div>
-                  )}
+                      </>
+                    )}
+                  </div>
                 </div>
               )
             })}
@@ -1062,14 +1142,45 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                     </div>
                   </div>
 
-                  {/* Línea 2: Metadatos compactos + Acciones 1 toque */}
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="truncate text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
-                      {grupo} · {etiquetaAyudantia(a.ayudantia_slot)} ·{' '}
-                      {formatearHoraCorta(a.hora_entrada?.toMillis())}
-                    </p>
+                  {/* Línea 2: Metadatos compactos + Rol en turno + Acciones 1 toque */}
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <p className="truncate text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
+                        {grupo} · {etiquetaAyudantia(a.ayudantia_slot)} ·{' '}
+                        {formatearHoraCorta(a.hora_entrada?.toMillis())}
+                      </p>
+                      <select
+                        aria-label={`Rol en turno de ${a.usuario_nombre}`}
+                        value={a.rol_en_turno}
+                        disabled={cerrada || esFinalizado}
+                        onChange={(e) =>
+                          void actualizarRolEnTurno(a.id, e.target.value as RolEnTurno).catch(
+                            (err) => setError(mensajeDeError(err)),
+                          )
+                        }
+                        className="campo min-h-7 w-auto py-0.5 text-[11px]"
+                      >
+                        {opcionesRolEnTurno(a.rol_en_turno).map((rol) => (
+                          <option key={rol} value={rol}>
+                            {rol}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
 
                     <div className="flex shrink-0 items-center gap-1">
+                      {mapaUsuarios.has(a.usuario_uid) && (
+                        <button
+                          type="button"
+                          onClick={() => setFichaEmergenciaUid(a.usuario_uid)}
+                          aria-label={`Consultar Ficha de Emergencia de ${a.usuario_nombre}`}
+                          title="Consultar Ficha de Emergencia"
+                          className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-alerta/45 bg-alerta-suave text-alerta dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+                        >
+                          <HeartPulse size={13} strokeWidth={2} />
+                        </button>
+                      )}
+
                       <button
                         type="button"
                         onClick={() => {
@@ -1228,7 +1339,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                             }
                             className="campo min-h-8 w-auto py-0.5 text-[11px]"
                           >
-                            {ROLES_EN_TURNO.map((rol) => (
+                            {opcionesRolEnTurno(a.rol_en_turno).map((rol) => (
                               <option key={rol} value={rol}>
                                 {rol}
                               </option>
@@ -1320,6 +1431,18 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
 
                       <td className="px-3 py-1.5 text-right whitespace-nowrap">
                         <div className="inline-flex items-center gap-1">
+                          {mapaUsuarios.has(a.usuario_uid) && (
+                            <button
+                              type="button"
+                              onClick={() => setFichaEmergenciaUid(a.usuario_uid)}
+                              title="Consultar Ficha de Emergencia"
+                              aria-label={`Consultar Ficha de Emergencia de ${a.usuario_nombre}`}
+                              className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-lg border border-alerta/45 bg-alerta-suave px-2 text-[11px] font-semibold text-alerta hover:border-alerta dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+                            >
+                              <HeartPulse size={13} strokeWidth={2} />
+                              <span>Ficha</span>
+                            </button>
+                          )}
                           {!esFinalizado && (
                             <button
                               type="button"
@@ -1386,6 +1509,103 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
           alEntendido={() => setCandadoPendientes(null)}
         />
       )}
+
+      {/* Modal de consulta rápida de Ficha de Emergencia */}
+      {fichaEmergenciaUid && mapaUsuarios.get(fichaEmergenciaUid) && (() => {
+        const integrante = mapaUsuarios.get(fichaEmergenciaUid)!
+        return (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Ficha de Emergencia de ${nombreCompleto(integrante)}`}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
+          >
+            <article className="tarjeta flex w-full max-w-md flex-col gap-3.5 p-5">
+              <div className="flex items-start justify-between gap-2 border-b border-borde pb-3 dark:border-noche-borde">
+                <div className="flex items-center gap-2">
+                  <HeartPulse
+                    size={19}
+                    strokeWidth={2}
+                    className="shrink-0 text-alerta dark:text-noche-rojo-texto"
+                  />
+                  <div>
+                    <h3 className="text-sm font-bold text-tinta dark:text-noche-tinta">
+                      Ficha de Emergencia
+                    </h3>
+                    <p className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                      {nombreCompleto(integrante)} · {etiquetaAyudantia(integrante.ayudantia)}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFichaEmergenciaUid(null)}
+                  aria-label="Cerrar Ficha de Emergencia"
+                  className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-tinta-suave"
+                >
+                  <X size={18} strokeWidth={2} />
+                </button>
+              </div>
+
+              <dl className="flex flex-col gap-2 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                    Tipo de sangre
+                  </dt>
+                  <dd className="rounded-full bg-alerta-suave px-2.5 py-0.5 font-bold tabular-nums text-alerta dark:bg-noche-rojo-suave dark:text-noche-rojo-texto">
+                    {integrante.tipo_sangre}
+                  </dd>
+                </div>
+                <div className="flex items-start justify-between gap-2 border-t border-borde pt-2 dark:border-noche-borde">
+                  <dt className="font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                    Alergias
+                  </dt>
+                  <dd className="text-right font-semibold text-tinta dark:text-noche-tinta">
+                    {integrante.alergias || 'Ninguna'}
+                  </dd>
+                </div>
+                <div className="flex items-start justify-between gap-2 border-t border-borde pt-2 dark:border-noche-borde">
+                  <dt className="font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                    Condiciones / medicamentos
+                  </dt>
+                  <dd className="text-right font-medium text-tinta dark:text-noche-tinta">
+                    {integrante.padecimientos_medicamentos || 'Ninguno'}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-2 border-t border-borde pt-2 dark:border-noche-borde">
+                  <dt className="font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                    Contacto de emergencia
+                  </dt>
+                  <dd className="text-right font-bold text-tinta dark:text-noche-tinta">
+                    {normalizarNombrePropio(integrante.contacto_emergencia_nombre)}
+                    {integrante.contacto_emergencia_parentesco
+                      ? ` (${integrante.contacto_emergencia_parentesco})`
+                      : ''}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-2 border-t border-borde pt-2 dark:border-noche-borde">
+                  <dt className="font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                    Teléfono de emergencia
+                  </dt>
+                  <dd className="text-right font-bold tabular-nums text-tinta dark:text-noche-tinta">
+                    {integrante.contacto_emergencia_telefono}
+                  </dd>
+                </div>
+              </dl>
+
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={() => setFichaEmergenciaUid(null)}
+                  className="btn-salvia min-h-9 px-4 text-xs"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </article>
+          </div>
+        )
+      })()}
 
       {/* Cajón / Modal de Material del Brigadista (Material BUPC + Material Propio) */}
       {asistenciaMaterialActiva && (
@@ -1735,31 +1955,53 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                     Apuntados por llegar ({pendientesDeLlegar.length})
                   </span>
                   <div className="flex max-h-44 flex-col divide-y divide-borde overflow-y-auto rounded-lg border border-borde dark:divide-noche-borde dark:border-noche-borde">
-                    {pendientesDeLlegar.map((p) => (
-                      <div
-                        key={p.usuario_uid}
-                        className="flex items-center justify-between gap-2 px-3 py-2"
-                      >
-                        <div className="min-w-0">
-                          <span className="block truncate text-xs font-semibold text-tinta dark:text-noche-tinta">
-                            {normalizarNombrePropio(p.usuario_nombre)}
-                          </span>
-                          <span className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
-                            {p.subgrupo || p.etapa} ·{' '}
-                            {p.origen === 'Autoregistro' ? 'Autoregistro' : 'Manual'}
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          disabled={ocupadoId === `delpre-${p.usuario_uid}`}
-                          onClick={() => void manejarQuitarPrerregistro(p)}
-                          className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-1 rounded-lg border border-borde-fuerte bg-tarjeta px-2 text-[11px] font-semibold text-tinta-suave hover:border-alerta hover:text-alerta disabled:opacity-50 dark:border-noche-borde dark:bg-noche-tarjeta dark:text-noche-tinta-suave dark:hover:text-noche-rojo-texto"
+                    {pendientesDeLlegar.map((p) => {
+                      const rolPre = p.rol_en_turno ?? rolOperativoPorAyudantia(p.ayudantia)
+                      return (
+                        <div
+                          key={p.usuario_uid}
+                          className="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
                         >
-                          <Trash2 size={12} strokeWidth={2} />
-                          <span>Quitar</span>
-                        </button>
-                      </div>
-                    ))}
+                          <div className="min-w-0 flex-1">
+                            <span className="block truncate text-xs font-semibold text-tinta dark:text-noche-tinta">
+                              {normalizarNombrePropio(p.usuario_nombre)}
+                            </span>
+                            <span className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
+                              {p.subgrupo || p.etapa} ·{' '}
+                              {p.origen === 'Autoregistro' ? 'Autoregistro' : 'Manual'}
+                            </span>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            <select
+                              aria-label={`Rol preasignado de ${p.usuario_nombre}`}
+                              value={rolPre}
+                              onChange={(e) =>
+                                void manejarActualizarRolPrerregistro(
+                                  p,
+                                  e.target.value as RolEnTurno,
+                                )
+                              }
+                              className="campo min-h-8 w-auto py-0.5 text-[11px]"
+                            >
+                              {opcionesRolEnTurno(rolPre).map((rol) => (
+                                <option key={rol} value={rol}>
+                                  {rol}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              disabled={ocupadoId === `delpre-${p.usuario_uid}`}
+                              onClick={() => void manejarQuitarPrerregistro(p)}
+                              className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-1 rounded-lg border border-borde-fuerte bg-tarjeta px-2 text-[11px] font-semibold text-tinta-suave hover:border-alerta hover:text-alerta disabled:opacity-50 dark:border-noche-borde dark:bg-noche-tarjeta dark:text-noche-tinta-suave dark:hover:text-noche-rojo-texto"
+                            >
+                              <Trash2 size={12} strokeWidth={2} />
+                              <span>Quitar</span>
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
               )}
@@ -1809,7 +2051,21 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                 <select
                   id="manual-usr"
                   value={uidManual}
-                  onChange={(e) => setUidManual(e.target.value)}
+                  onChange={(e) => {
+                    const uid = e.target.value
+                    setUidManual(uid)
+                    const seleccionado = usuariosActivos.find((u) => u.uid === uid)
+                    if (seleccionado) {
+                      setRolManual(
+                        resolverRolInicialOperativo(
+                          ayudantiaEfectiva(seleccionado),
+                          mapaPrerregistros.get(seleccionado.uid),
+                        ),
+                      )
+                    } else {
+                      setRolManual('Sin definir')
+                    }
+                  }}
                   className="campo"
                   required
                 >
@@ -1832,7 +2088,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                   onChange={(e) => setRolManual(e.target.value as RolEnTurno)}
                   className="campo"
                 >
-                  {ROLES_EN_TURNO.map((rol) => (
+                  {opcionesRolEnTurno(rolManual).map((rol) => (
                     <option key={rol} value={rol}>
                       {rol}
                     </option>

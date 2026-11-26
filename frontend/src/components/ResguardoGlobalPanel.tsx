@@ -9,7 +9,8 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { normalizarNombrePropio } from '../lib/nombres'
-import { mensajeDeError } from '../services/authService'
+import { ayudantiaJefatura } from '../lib/permisos'
+import { escucharDirectorioSegunRol, mensajeDeError } from '../services/authService'
 import {
   escucharResguardoGlobalBupc,
   levantarActaIncidencia,
@@ -17,6 +18,7 @@ import {
 } from '../services/equiposService'
 import { escucharOperativos } from '../services/operativosService'
 import type { EquipoTurno, Operativo, Usuario } from '../types'
+import { IndicadorAlcanceAyudantia } from './IndicadorAlcanceAyudantia'
 
 interface ResguardoGlobalPanelProps {
   encargado: Usuario
@@ -30,8 +32,10 @@ function formatearHoraCorta(ms?: number): string {
 }
 
 export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
+  const ayJefe = ayudantiaJefatura(encargado)
   const [equipos, setEquipos] = useState<EquipoTurno[]>([])
   const [operativos, setOperativos] = useState<Operativo[]>([])
+  const [usuariosAyudantia, setUsuariosAyudantia] = useState<Usuario[]>([])
   const [cargando, setCargando] = useState(true)
 
   // Filtros 100% en cliente
@@ -59,11 +63,25 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
       },
     )
     const cOps = escucharOperativos(setOperativos, () => undefined)
+    const cUsr = ayJefe
+      ? escucharDirectorioSegunRol(encargado, setUsuariosAyudantia, () => undefined)
+      : () => undefined
     return () => {
       cEq()
       cOps()
+      cUsr()
     }
-  }, [])
+  }, [encargado, ayJefe])
+
+  const uidsAyudantia = useMemo(
+    () => (ayJefe ? new Set(usuariosAyudantia.map((u) => u.uid)) : null),
+    [ayJefe, usuariosAyudantia],
+  )
+
+  const equiposEnAlcance = useMemo(
+    () => (uidsAyudantia ? equipos.filter((e) => uidsAyudantia.has(e.usuario_uid)) : equipos),
+    [equipos, uidsAyudantia],
+  )
 
   const mapaOperativos = useMemo(
     () => new Map(operativos.map((o) => [o.id, o])),
@@ -72,20 +90,20 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
 
   const tiposDisponibles = useMemo(
     () =>
-      Array.from(new Set(equipos.map((e) => e.nombre_articulo))).sort((a, b) =>
+      Array.from(new Set(equiposEnAlcance.map((e) => e.nombre_articulo))).sort((a, b) =>
         a.localeCompare(b, 'es-MX'),
       ),
-    [equipos],
+    [equiposEnAlcance],
   )
 
   const operativosEnResguardo = useMemo(() => {
-    const ids = new Set(equipos.map((e) => e.operativo_id))
+    const ids = new Set(equiposEnAlcance.map((e) => e.operativo_id))
     return operativos.filter((o) => ids.has(o.id))
-  }, [equipos, operativos])
+  }, [equiposEnAlcance, operativos])
 
   const filtrados = useMemo(() => {
     const q = busqueda.trim().toLowerCase()
-    return equipos.filter((eq) => {
+    return equiposEnAlcance.filter((eq) => {
       const op = mapaOperativos.get(eq.operativo_id)
       if (soloActivos && op?.estatus === 'Finalizado') return false
       if (filtroOperativo !== 'TODOS' && eq.operativo_id !== filtroOperativo) return false
@@ -99,7 +117,7 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
         opNombre.includes(q)
       )
     })
-  }, [equipos, mapaOperativos, soloActivos, filtroOperativo, filtroTipo, busqueda])
+  }, [equiposEnAlcance, mapaOperativos, soloActivos, filtroOperativo, filtroTipo, busqueda])
 
   async function manejarDevolverOk(eq: EquipoTurno) {
     setOcupadoId(eq.id)
@@ -148,16 +166,25 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-xl font-bold text-tinta dark:text-noche-tinta">
-            Resguardo Global de Material BUPC
+            {ayJefe ? `Resguardo de Material · ${ayJefe}` : 'Resguardo Global de Material BUPC'}
           </h2>
           <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-            Control centralizado de equipo en préstamo a través de operativos activos.
+            {ayJefe
+              ? `Equipo institucional en préstamo asignado a integrantes de ${ayJefe}.`
+              : 'Control centralizado de equipo en préstamo a través de operativos activos.'}
           </p>
         </div>
         <span className="rounded-full bg-naranja-suave px-3 py-1 text-xs font-bold tabular-nums text-naranja-oscuro dark:bg-noche-campo dark:text-naranja">
           {filtrados.length} en préstamo
         </span>
       </div>
+
+      {ayJefe && (
+        <IndicadorAlcanceAyudantia
+          ayudantia={ayJefe}
+          descripcion={`Solo se muestra material BUPC en resguardo de integrantes pertenecientes a ${ayJefe}.`}
+        />
+      )}
 
       {error && (
         <div
