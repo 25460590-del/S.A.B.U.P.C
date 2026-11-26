@@ -4,7 +4,8 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 /*
- * Paleta oficial Verde Universidad de Colima (PROHIBIDO azul marino y tonos slate azulados).
+ * Paleta oficial Verde Universidad de Colima alineada con DESING.md
+ * (PROHIBIDO azul marino y degradados).
  */
 @theme {
   --font-sans: 'Montserrat', sans-serif;
@@ -13,28 +14,35 @@
   --color-udec: #2e5a27;
   --color-udec-oscuro: #1e5631;
   --color-udec-brillo: #3f8f4f;
-  --color-salvia: #edf5eb;
+  --color-salvia: #eaf2e4;
   --color-salvia-hover: #dfeedc;
-  --color-naranja: #ea580c;
-  --color-naranja-oscuro: #c2410c;
-  --color-naranja-suave: #fff7ed;
+  --color-salvia-borde: #c8ddb9;
+  --color-naranja: #f06514;
+  --color-naranja-hover: #e55b0b;
+  --color-naranja-oscuro: #9a3412;
+  --color-naranja-suave: #ffedd5;
   --color-activo: #059669;
   --color-activo-claro: #10b981;
   --color-activo-suave: #ecfdf5;
+  --color-activo-texto: #065f46;
+  --color-activo-hover: #d1fae5;
   --color-alerta: #dc2626;
+  --color-alerta-oscuro: #b91c1c;
   --color-alerta-suave: #fef2f2;
+  --color-alerta-texto: #991b1b;
   --color-ambar: #d97706;
-  --color-ambar-texto: #b45309;
+  --color-ambar-texto: #92400e;
   --color-ambar-suave: #fffbeb;
+  --color-ambar-hover: #fef3c7;
 
   /* Modo Día (neutros limpios sin matiz azulado) */
-  --color-fondo: #f8fafc;
+  --color-fondo: #f4f6f8;
   --color-tarjeta: #ffffff;
   --color-superficie-suave: #f2f5f2;
   --color-borde: #dce3dc;
   --color-borde-fuerte: #c5d0c5;
   --color-esqueleto: #e2e8e2;
-  --color-tinta: #18181b;
+  --color-tinta: #111827;
   --color-tinta-suave: #4b5563;
 
   /* Modo Nocturno */
@@ -130,15 +138,20 @@
   @apply btn bg-udec text-white hover:bg-udec-oscuro;
 }
 
-/* CTA Naranja Protección Civil: texto oscuro para máxima legibilidad bajo sol directo */
+/* CTA Naranja Protección Civil: mantiene text-tinta con contraste WCAG AA (>= 5:1) en reposo, hover y active */
 @utility btn-naranja {
-  @apply btn bg-naranja text-tinta hover:bg-naranja-oscuro hover:text-white;
+  @apply btn bg-naranja text-tinta hover:bg-naranja-hover active:bg-naranja-hover;
 }
 
 @utility btn-salvia {
-  @apply btn border border-borde-fuerte bg-salvia text-udec-oscuro hover:bg-salvia-hover dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta dark:hover:bg-noche-tarjeta;
+  @apply btn border border-salvia-borde bg-salvia text-udec-oscuro hover:bg-salvia-hover dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta dark:hover:bg-noche-tarjeta;
 }
 
 @utility btn-rojo {
-  @apply btn bg-alerta text-white hover:bg-red-700;
+  @apply btn bg-alerta text-white hover:bg-alerta-oscuro;
+}
+
+/* Badge institucional unificado para ayudantías en toda la aplicación */
+@utility badge-ayudantia {
+  @apply inline-flex items-center gap-1 rounded-full border border-salvia-borde bg-salvia px-2.5 py-0.5 text-[11px] font-bold text-udec-oscuro dark:border-activo-claro/35 dark:bg-noche-campo dark:text-activo-claro;
 }

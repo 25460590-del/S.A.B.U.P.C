@@ -9,7 +9,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
-      registerType: 'autoUpdate',
+      registerType: 'prompt',
       includeAssets: ['logo-bupc.png'],
       manifest: {
         name: 'S.A.B.U.P.C — BUPC UdeC',

@@ -191,7 +191,7 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
       {error && (
         <div
           role="alert"
-          className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-3 text-xs font-semibold text-red-900 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+          className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-3 text-xs font-semibold text-alerta-texto dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
         >
           <AlertCircle size={16} strokeWidth={2} className="mt-0.5 shrink-0" />
           <span>{error}</span>
@@ -201,7 +201,7 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
       {aviso && (
         <div
           role="status"
-          className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-3 text-xs font-semibold text-emerald-900 dark:bg-noche-campo dark:text-activo-claro"
+          className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-3 text-xs font-semibold text-activo-texto dark:bg-noche-campo dark:text-activo-claro"
         >
           <CheckCircle2 size={16} strokeWidth={2} className="mt-0.5 shrink-0" />
           <span>{aviso}</span>
@@ -307,12 +307,12 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
                     </div>
                     <div className="flex shrink-0 flex-wrap items-center gap-1">
                       {eq.sync_status === 'pendiente' && (
-                        <span className="rounded bg-ambar-suave px-1.5 py-0.5 text-[10px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
+                        <span className="rounded bg-ambar-suave px-1.5 py-0.5 text-[11px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
                           Pendiente de sincronizar
                         </span>
                       )}
                       {eq.estado_reporte === 'Con_Falla' && (
-                        <span className="shrink-0 rounded bg-alerta-suave px-1.5 py-0.5 text-[10px] font-bold text-alerta dark:bg-noche-rojo-suave dark:text-noche-rojo-texto">
+                        <span className="shrink-0 rounded bg-alerta-suave px-1.5 py-0.5 text-[11px] font-bold text-alerta dark:bg-noche-rojo-suave dark:text-noche-rojo-texto">
                           Falla
                         </span>
                       )}
@@ -389,17 +389,17 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
                             {eq.nombre_articulo}
                           </span>
                           {eq.codigo_inventario && (
-                            <span className="rounded bg-superficie-suave px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave">
+                            <span className="rounded bg-superficie-suave px-1.5 py-0.5 text-[11px] font-bold tabular-nums text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave">
                               {eq.codigo_inventario}
                             </span>
                           )}
                           {eq.sync_status === 'pendiente' && (
-                            <span className="rounded bg-ambar-suave px-1.5 py-0.5 text-[10px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
+                            <span className="rounded bg-ambar-suave px-1.5 py-0.5 text-[11px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
                               Pendiente de sincronizar
                             </span>
                           )}
                           {eq.estado_reporte === 'Con_Falla' && (
-                            <span className="rounded bg-alerta-suave px-1.5 py-0.5 text-[10px] font-bold text-alerta dark:bg-noche-rojo-suave dark:text-noche-rojo-texto">
+                            <span className="rounded bg-alerta-suave px-1.5 py-0.5 text-[11px] font-bold text-alerta dark:bg-noche-rojo-suave dark:text-noche-rojo-texto">
                               Falla
                             </span>
                           )}
@@ -420,7 +420,7 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
                       <td className="px-3 py-2 text-xs tabular-nums text-tinta-suave dark:text-noche-tinta-suave">
                         <span>{formatearHoraCorta(eq.creado_en?.toMillis())}</span>
                         {eq.creado_por_nombre && (
-                          <span className="block text-[10px]">Por: {eq.creado_por_nombre}</span>
+                          <span className="block text-[11px]">Por: {eq.creado_por_nombre}</span>
                         )}
                       </td>
                       <td className="px-3 py-2 text-right whitespace-nowrap">
@@ -434,7 +434,7 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
                               type="button"
                               disabled={ocupadoId === eq.id}
                               onClick={() => void manejarDevolverOk(eq)}
-                              className="cursor-pointer rounded border border-activo bg-activo-suave px-2.5 py-1 text-[11px] font-bold text-activo hover:bg-emerald-100 disabled:opacity-50 dark:border-activo-claro dark:bg-noche-campo dark:text-activo-claro"
+                              className="cursor-pointer rounded border border-activo bg-activo-suave px-2.5 py-1 text-[11px] font-bold text-activo hover:bg-activo-hover disabled:opacity-50 dark:border-activo-claro dark:bg-noche-campo dark:text-activo-claro"
                             >
                               Devolver OK
                             </button>

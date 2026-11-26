@@ -641,7 +641,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
               </span>
             </div>
             {!esFinalizado && (
-              <span className="text-[10px]">
+              <span className="text-[11px]">
                 {operativo.convocatoria_abierta ? 'Convocatoria abierta' : 'Convocatoria cerrada'}
               </span>
             )}
@@ -788,7 +788,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
       {error && (
         <div
           role="alert"
-          className="mx-3 mt-2.5 flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-2.5 text-xs font-semibold text-red-900 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+          className="mx-3 mt-2.5 flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-2.5 text-xs font-semibold text-alerta-texto dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
         >
           <AlertCircle size={15} strokeWidth={2} className="mt-0.5 shrink-0" />
           <span>{error}</span>
@@ -798,7 +798,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
       {aviso && (
         <div
           role="status"
-          className="mx-3 mt-2.5 flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-2.5 text-xs font-semibold text-emerald-900 dark:bg-noche-campo dark:text-activo-claro"
+          className="mx-3 mt-2.5 flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-2.5 text-xs font-semibold text-activo-texto dark:bg-noche-campo dark:text-activo-claro"
         >
           <CheckCircle2 size={15} strokeWidth={2} className="mt-0.5 shrink-0" />
           <span>{aviso}</span>

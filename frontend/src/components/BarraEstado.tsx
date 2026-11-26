@@ -5,6 +5,12 @@ import {
   obtenerEstadoColaOffline,
   suscribirColaOffline,
 } from '../lib/colaOffline'
+import {
+  aplicarActualizacionPwa,
+  obtenerEstadoPwa,
+  posponerActualizacionPwa,
+  suscribirEstadoPwa,
+} from '../lib/pwaBeta'
 
 interface BarraEstadoProps {
   /** Reservado por retrocompatibilidad; no se muestra en estado estable. */
@@ -15,10 +21,10 @@ interface BarraEstadoProps {
 }
 
 /**
- * Indicador de conexión silencioso (UI limpia) + alertas visibles de rechazos diferidos:
- * - En conexión estable sin pendientes ni rechazos: NO renderiza ninguna barra superior.
+ * Indicador de conexión silencioso (UI limpia), actualizaciones PWA controladas y rechazos diferidos:
+ * - En conexión estable sin pendientes, actualizaciones ni rechazos: NO renderiza ninguna barra superior.
  * - Solo aparece ante un estado accionable: sin conexión, sincronizando cambios pendientes,
- *   rechazo diferido al reconectar o alerta de acceso.
+ *   nueva versión disponible, rechazo diferido al reconectar o alerta de acceso.
  */
 export function BarraEstado({
   variante = 'normal',
@@ -29,6 +35,11 @@ export function BarraEstado({
     suscribirColaOffline,
     obtenerEstadoColaOffline,
     obtenerEstadoColaOffline,
+  )
+  const estadoPwa = useSyncExternalStore(
+    suscribirEstadoPwa,
+    obtenerEstadoPwa,
+    obtenerEstadoPwa,
   )
 
   useEffect(() => {
@@ -44,6 +55,7 @@ export function BarraEstado({
 
   const haySincronizacion = sincronizando || (enLinea && colaOffline.pendientes.length > 0)
   const hayRechazos = colaOffline.rechazos.length > 0
+  const hayActualizacion = estadoPwa.actualizacionDisponible
 
   const barraPrincipal =
     variante === 'alerta' ? (
@@ -80,17 +92,50 @@ export function BarraEstado({
       </div>
     ) : null
 
-  if (!barraPrincipal && !hayRechazos) {
+  if (!barraPrincipal && !hayRechazos && !hayActualizacion) {
     return null
   }
 
   return (
-    <div className="flex w-full flex-col">
+    <div className="flex w-full shrink-0 flex-col">
+      {hayActualizacion && (
+        <div
+          role="status"
+          className="flex w-full items-center justify-center gap-2 border-b border-udec/30 bg-udec-oscuro px-3 py-1.5 text-xs font-semibold text-white dark:border-noche-borde dark:bg-noche-sidebar"
+        >
+          <button
+            type="button"
+            disabled={estadoPwa.aplicando}
+            onClick={() => void aplicarActualizacionPwa()}
+            className="inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-md bg-white/15 px-3 py-1 text-xs font-bold text-white transition-colors hover:bg-white/25 disabled:opacity-60"
+          >
+            <RefreshCw
+              size={13}
+              strokeWidth={2}
+              className={estadoPwa.aplicando ? 'animate-spin' : ''}
+              aria-hidden="true"
+            />
+            <span>
+              {estadoPwa.aplicando
+                ? 'Actualizando aplicación...'
+                : 'Nueva versión disponible · Tocar para actualizar'}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={posponerActualizacionPwa}
+            aria-label="Cerrar aviso de actualización"
+            className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-white/80 hover:bg-white/15 hover:text-white"
+          >
+            <X size={14} strokeWidth={2} />
+          </button>
+        </div>
+      )}
       {barraPrincipal}
       {hayRechazos && (
         <div
           role="alert"
-          className="flex w-full flex-col gap-1.5 border-b border-alerta bg-alerta-suave px-3 py-2 text-xs text-red-900 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+          className="flex w-full flex-col gap-1.5 border-b border-alerta bg-alerta-suave px-3 py-2 text-xs text-alerta-texto dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
         >
           {colaOffline.rechazos.map((r) => (
             <div key={r.id} className="mx-auto flex w-full max-w-5xl items-start justify-between gap-2">

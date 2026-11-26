@@ -289,7 +289,7 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
       {error && (
         <div
           role="alert"
-          className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-3 text-xs font-semibold text-red-900 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+          className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-3 text-xs font-semibold text-alerta-texto dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
         >
           <AlertCircle size={16} strokeWidth={2} className="mt-0.5 shrink-0" />
           <span>{error}</span>
@@ -299,7 +299,7 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
       {aviso && (
         <div
           role="status"
-          className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-3 text-xs font-semibold text-emerald-900 dark:bg-noche-campo dark:text-activo-claro"
+          className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-3 text-xs font-semibold text-activo-texto dark:bg-noche-campo dark:text-activo-claro"
         >
           <CheckCircle2 size={16} strokeWidth={2} className="mt-0.5 shrink-0" />
           <span>{aviso}</span>
@@ -347,21 +347,21 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
             className="campo min-h-9 min-w-44 flex-1 text-xs"
             required
           />
-          <button type="submit" disabled={ocupado} className="btn-naranja min-h-9 px-3.5 text-xs">
+          <button type="submit" disabled={ocupado} className="btn-verde min-h-9 px-3.5 text-xs">
             <Plus size={14} strokeWidth={2} />
             <span>Agregar Grupo</span>
           </button>
         </form>
 
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="grid grid-cols-1 divide-y divide-borde border-t border-borde pt-2 md:grid-cols-3 md:divide-x md:divide-y-0 dark:divide-noche-borde dark:border-noche-borde">
           {ETAPAS_FORMATIVAS.map((etapaGrupo) => {
             const listaEtapa = subgruposActivos.filter((s) => etapaDeSubgrupo(s) === etapaGrupo)
             return (
               <div
                 key={etapaGrupo}
-                className="flex flex-col gap-2 rounded-lg border border-borde bg-superficie-suave p-3 dark:border-noche-borde dark:bg-noche-campo"
+                className="flex flex-col gap-2 py-2.5 first:pt-1 md:px-3 md:py-1 md:first:pl-0 md:last:pr-0"
               >
-                <span className="text-xs font-bold text-tinta dark:text-noche-tinta">
+                <span className="text-xs font-bold tabular-nums text-tinta dark:text-noche-tinta">
                   {etapaGrupo === 'SIERRA' ? 'SIERRA' : `Etapa ${etapaGrupo}`} ({listaEtapa.length})
                 </span>
                 <div className="flex flex-wrap gap-1.5">
@@ -373,7 +373,7 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
                     listaEtapa.map((sg) => (
                       <span
                         key={sg}
-                        className="inline-flex items-center gap-1.5 rounded-full border border-borde bg-tarjeta px-2.5 py-1 text-xs font-semibold text-tinta dark:border-noche-borde dark:bg-noche-tarjeta dark:text-noche-tinta"
+                        className="inline-flex items-center gap-1.5 rounded-full border border-borde bg-superficie-suave px-2.5 py-1 text-xs font-semibold text-tinta dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta"
                       >
                         <span>{sg}</span>
                         <button
@@ -603,7 +603,7 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
                     </span>{' '}
                     {c.tabla === 'claves_personales' && (
                       <span
-                        className={`mr-1 rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                        className={`mr-1 rounded px-1.5 py-0.5 text-[11px] font-bold ${
                           c.categoria === 'Unidad'
                             ? 'bg-naranja-suave text-naranja-oscuro dark:bg-noche-campo dark:text-naranja'
                             : 'bg-salvia text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro'
@@ -706,7 +706,7 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
                   className="flex flex-col gap-1 py-3"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="rounded bg-salvia px-2 py-0.5 text-[10px] font-bold text-udec-oscuro dark:bg-noche-tarjeta dark:text-activo-claro">
+                    <span className="rounded bg-salvia px-2 py-0.5 text-[11px] font-bold text-udec-oscuro dark:bg-noche-tarjeta dark:text-activo-claro">
                       {ev.tipo.replace(/_/g, ' ')}
                     </span>
                     <span className="text-[11px] tabular-nums text-tinta-suave dark:text-noche-tinta-suave">

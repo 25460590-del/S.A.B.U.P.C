@@ -131,7 +131,7 @@ export function GestionTeslaPanel({ actor }: GestionTeslaPanelProps) {
       {error && (
         <div
           role="alert"
-          className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-3 text-xs font-semibold text-red-900 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+          className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-3 text-xs font-semibold text-alerta-texto dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
         >
           <AlertCircle size={16} strokeWidth={2} className="mt-0.5 shrink-0" />
           <span>{error}</span>
@@ -141,7 +141,7 @@ export function GestionTeslaPanel({ actor }: GestionTeslaPanelProps) {
       {aviso && (
         <div
           role="status"
-          className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-3 text-xs font-semibold text-emerald-900 dark:bg-noche-campo dark:text-activo-claro"
+          className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-3 text-xs font-semibold text-activo-texto dark:bg-noche-campo dark:text-activo-claro"
         >
           <CheckCircle2 size={16} strokeWidth={2} className="mt-0.5 shrink-0" />
           <span>{aviso}</span>
@@ -228,7 +228,7 @@ export function GestionTeslaPanel({ actor }: GestionTeslaPanelProps) {
                         {nombreCompleto(u)}
                         {esMiCuenta ? ' (Tú)' : ''}
                       </span>
-                      <span className="rounded bg-superficie-suave px-1.5 py-0.5 text-[10px] font-bold text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave">
+                      <span className="rounded bg-superficie-suave px-1.5 py-0.5 text-[11px] font-bold text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave">
                         {u.rol_sistema}
                       </span>
                     </div>

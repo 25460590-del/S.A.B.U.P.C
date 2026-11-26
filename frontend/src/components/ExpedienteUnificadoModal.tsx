@@ -372,7 +372,7 @@ export function ExpedienteUnificadoModal({
           {error && (
             <div
               role="alert"
-              className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-2.5 text-xs font-semibold text-red-900 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+              className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-2.5 text-xs font-semibold text-alerta-texto dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
             >
               <AlertCircle size={15} strokeWidth={2} className="mt-0.5 shrink-0" />
               <span>{error}</span>
@@ -382,18 +382,18 @@ export function ExpedienteUnificadoModal({
           {aviso && (
             <div
               role="status"
-              className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-2.5 text-xs font-semibold text-emerald-900 dark:bg-noche-campo dark:text-activo-claro"
+              className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-2.5 text-xs font-semibold text-activo-texto dark:bg-noche-campo dark:text-activo-claro"
             >
               <CheckCircle2 size={15} strokeWidth={2} className="mt-0.5 shrink-0" />
               <span>{aviso}</span>
             </div>
           )}
 
-          {/* PESTAÑA A: PERFIL Y ADSCRIPCIÓN */}
+          {/* PESTAÑA A: PERFIL Y ADSCRIPCIÓN (secciones limpias con divisores, sin card-in-card) */}
           {pestana === 'perfil' && (
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col divide-y divide-borde dark:divide-noche-borde">
               {/* Datos generales de contacto y académico */}
-              <div className="grid grid-cols-1 gap-2.5 rounded-xl border border-borde bg-superficie-suave p-3.5 text-xs sm:grid-cols-2 dark:border-noche-borde dark:bg-noche-campo">
+              <div className="grid grid-cols-1 gap-2.5 pb-4 text-xs sm:grid-cols-2">
                 <div className="flex items-center gap-2 text-tinta dark:text-noche-tinta">
                   <Mail size={14} strokeWidth={2} className="shrink-0 text-udec dark:text-activo-claro" />
                   <span className="truncate">{usuario.correo}</span>
@@ -411,13 +411,13 @@ export function ExpedienteUnificadoModal({
                 </div>
               </div>
 
-              {/* Bloque Ficha de Emergencia (contacto en 3 campos + aviso legal discreto) */}
-              <div className="flex flex-col gap-2.5 rounded-xl border border-borde bg-superficie-suave p-3.5 text-xs dark:border-noche-borde dark:bg-noche-campo">
+              {/* Bloque Ficha de Emergencia */}
+              <div className="flex flex-col gap-2.5 py-4 text-xs">
                 <div className="flex items-center justify-between gap-2">
                   <h4 className="font-bold tracking-wider uppercase text-tinta dark:text-noche-tinta">
                     Ficha de Emergencia
                   </h4>
-                  <span className="rounded-full bg-alerta-suave px-2.5 py-0.5 text-[11px] font-bold tabular-nums text-alerta dark:bg-noche-rojo-suave dark:text-noche-rojo-texto">
+                  <span className="rounded-full bg-alerta-suave px-2.5 py-0.5 text-[11px] font-bold tabular-nums text-alerta-texto dark:bg-noche-rojo-suave dark:text-noche-rojo-texto">
                     Sangre: {usuario.tipo_sangre}
                   </span>
                 </div>
@@ -435,9 +435,9 @@ export function ExpedienteUnificadoModal({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 gap-2 border-t border-borde pt-2.5 sm:grid-cols-3 dark:border-noche-borde">
+                <div className="grid grid-cols-1 gap-2 pt-1 sm:grid-cols-3">
                   <div>
-                    <span className="block text-[10px] font-semibold uppercase text-tinta-suave dark:text-noche-tinta-suave">
+                    <span className="block text-[11px] font-semibold uppercase text-tinta-suave dark:text-noche-tinta-suave">
                       Contacto de emergencia
                     </span>
                     <span className="font-bold text-tinta dark:text-noche-tinta">
@@ -446,7 +446,7 @@ export function ExpedienteUnificadoModal({
                   </div>
                   {usuario.contacto_emergencia_parentesco && (
                     <div>
-                      <span className="block text-[10px] font-semibold uppercase text-tinta-suave dark:text-noche-tinta-suave">
+                      <span className="block text-[11px] font-semibold uppercase text-tinta-suave dark:text-noche-tinta-suave">
                         Parentesco
                       </span>
                       <span className="font-semibold text-tinta dark:text-noche-tinta">
@@ -455,7 +455,7 @@ export function ExpedienteUnificadoModal({
                     </div>
                   )}
                   <div>
-                    <span className="block text-[10px] font-semibold uppercase text-tinta-suave dark:text-noche-tinta-suave">
+                    <span className="block text-[11px] font-semibold uppercase text-tinta-suave dark:text-noche-tinta-suave">
                       Teléfono de emergencia
                     </span>
                     <span className="font-bold tabular-nums text-tinta dark:text-noche-tinta">
@@ -464,14 +464,14 @@ export function ExpedienteUnificadoModal({
                   </div>
                 </div>
 
-                <p className="border-t border-borde pt-2 text-[11px] leading-snug text-tinta-suave dark:border-noche-borde dark:text-noche-tinta-suave">
+                <p className="text-[11px] leading-snug text-tinta-suave dark:text-noche-tinta-suave">
                   Información declarada voluntariamente por el integrante únicamente como referencia
                   en caso de emergencia.
                 </p>
               </div>
 
               {/* Bloque Material Propio registrado por el integrante */}
-              <div className="flex flex-col gap-2 rounded-xl border border-borde bg-superficie-suave p-3.5 text-xs dark:border-noche-borde dark:bg-noche-campo">
+              <div className="flex flex-col gap-2 py-4 text-xs">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5">
                     <Package size={14} strokeWidth={2} className="text-udec dark:text-activo-claro" />
@@ -479,7 +479,7 @@ export function ExpedienteUnificadoModal({
                       Material Propio Registrado
                     </h4>
                   </div>
-                  <span className="rounded-full bg-salvia px-2.5 py-0.5 text-[11px] font-bold tabular-nums text-udec-oscuro dark:bg-noche-tarjeta dark:text-activo-claro">
+                  <span className="rounded-full bg-salvia px-2.5 py-0.5 text-[11px] font-bold tabular-nums text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
                     {materialPropio.length}
                   </span>
                 </div>
@@ -525,9 +525,9 @@ export function ExpedienteUnificadoModal({
               </div>
 
               {/* Formulario de edición post-incorporación */}
-              <form onSubmit={manejarGuardar} className="flex flex-col gap-3.5">
+              <form onSubmit={manejarGuardar} className="flex flex-col gap-3.5 pt-4">
                 {soyAdmin && (
-                  <div className="flex flex-col gap-3 rounded-xl border border-borde bg-superficie-suave p-3.5 dark:border-noche-borde dark:bg-noche-campo">
+                  <div className="flex flex-col gap-3 border-b border-borde pb-4 dark:border-noche-borde">
                     <div>
                       <h4 className="text-xs font-bold tracking-wider uppercase text-tinta dark:text-noche-tinta">
                         Identidad oficial (Exclusivo Administración)
@@ -941,11 +941,11 @@ export function ExpedienteUnificadoModal({
                       <div key={inc.id} className="flex flex-col gap-1 p-3 text-xs">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="flex items-center gap-1.5">
-                            <span className="rounded bg-salvia px-2 py-0.5 text-[10px] font-bold text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
+                            <span className="rounded bg-salvia px-2 py-0.5 text-[11px] font-bold text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
                               {inc.tipo}
                             </span>
                             <span
-                              className={`rounded px-2 py-0.5 text-[10px] font-bold ${
+                              className={`rounded px-2 py-0.5 text-[11px] font-bold ${
                                 inc.gravedad === 'Alta'
                                   ? 'bg-alerta-suave text-alerta dark:bg-noche-rojo-suave dark:text-noche-rojo-texto'
                                   : inc.gravedad === 'Media'

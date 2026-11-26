@@ -102,7 +102,7 @@ export function ControlQrOperativo({
                 type="button"
                 disabled={cambiandoEstado}
                 onClick={alAlternarRecepcion}
-                className="btn min-h-9 border border-ambar bg-ambar-suave px-3 text-xs text-ambar-texto hover:bg-amber-100 dark:bg-noche-ambar dark:text-noche-ambar-texto"
+                className="btn min-h-9 border border-ambar bg-ambar-suave px-3 text-xs text-ambar-texto hover:bg-ambar-hover dark:bg-noche-ambar dark:text-noche-ambar-texto"
               >
                 <Lock size={14} strokeWidth={2} />
                 <span>Cerrar Recepción</span>

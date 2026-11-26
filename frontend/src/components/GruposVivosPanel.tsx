@@ -291,7 +291,7 @@ export function GruposVivosPanel({
                   </h3>
                   {esFormativo && (
                     <span
-                      className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                      className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
                         grupoAbierto.cerrado
                           ? 'bg-superficie-suave text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave'
                           : 'bg-activo-suave text-activo dark:bg-noche-campo dark:text-activo-claro'
@@ -405,7 +405,7 @@ export function GruposVivosPanel({
                           {nombreCompleto(u)}
                         </span>
                         {sinAyuOperativo && (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-ambar-suave px-2 py-0.5 text-[10px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-ambar-suave px-2 py-0.5 text-[11px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
                             <AlertTriangle size={11} strokeWidth={2} />
                             <span>Falta asignar ayudantía</span>
                           </span>
@@ -588,11 +588,11 @@ export function GruposVivosPanel({
                   Sin grupos activos en {etapa}.
                 </p>
               ) : (
-                <div className="flex flex-col gap-2">
+                <div className="divide-y divide-borde dark:divide-noche-borde">
                   {lista.map((g) => (
                     <div
                       key={g.nombre}
-                      className="flex items-center justify-between gap-2 rounded-lg border border-borde bg-superficie-suave px-3 py-2.5 dark:border-noche-borde dark:bg-noche-campo"
+                      className="flex items-center justify-between gap-2 py-2.5 first:pt-0 last:pb-0"
                     >
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
@@ -600,10 +600,10 @@ export function GruposVivosPanel({
                             {g.nombre}
                           </span>
                           <span
-                            className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+                            className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
                               g.cerrado
-                                ? 'bg-tarjeta text-tinta-suave dark:bg-noche-tarjeta dark:text-noche-tinta-suave'
-                                : 'bg-activo-suave text-activo dark:bg-noche-tarjeta dark:text-activo-claro'
+                                ? 'bg-superficie-suave text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave'
+                                : 'bg-activo-suave text-activo-texto dark:bg-noche-campo dark:text-activo-claro'
                             }`}
                           >
                             {g.cerrado ? 'Cerrado' : 'Activo'}
@@ -664,8 +664,8 @@ export function GruposVivosPanel({
         })}
       </div>
 
-      <article className="tarjeta flex flex-col gap-3 p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-borde pb-2.5 dark:border-noche-borde">
+      <article className="tarjeta flex flex-col overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-borde p-4 dark:border-noche-borde">
           <div>
             <h3 className="text-sm font-bold text-tinta dark:text-noche-tinta">
               {ayJefe
@@ -690,8 +690,8 @@ export function GruposVivosPanel({
         <div
           className={
             ayJefe
-              ? 'grid grid-cols-1 gap-2 sm:max-w-sm'
-              : 'grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5'
+              ? 'divide-y divide-borde dark:divide-noche-borde'
+              : 'grid grid-cols-1 divide-y divide-borde sm:grid-cols-2 lg:grid-cols-5 lg:divide-x lg:divide-y-0 dark:divide-noche-borde'
           }
         >
           {(ayJefe ? [ayJefe] : AYUDANTIAS_ACTIVAS).map((ay) => {
@@ -701,7 +701,7 @@ export function GruposVivosPanel({
                 key={ay}
                 type="button"
                 onClick={() => abrirGrupo({ tipo: 'operativo', ayudantia: ay })}
-                className="flex cursor-pointer flex-col justify-between gap-2 rounded-lg border border-borde bg-superficie-suave p-3 text-left transition-colors hover:border-udec dark:border-noche-borde dark:bg-noche-campo dark:hover:border-activo-claro"
+                className="flex cursor-pointer flex-col justify-between gap-2 p-3.5 text-left transition-colors hover:bg-superficie-suave dark:hover:bg-noche-campo/70"
               >
                 <span className="text-xs font-bold text-tinta dark:text-noche-tinta">{ay}</span>
                 <div className="flex items-center justify-between">

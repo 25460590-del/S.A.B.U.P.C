@@ -9,7 +9,7 @@ import {
 } from '@firebase/rules-unit-testing';
 import {
   doc, getDoc, setDoc, updateDoc, deleteDoc, collection, getDocs, addDoc,
-  query, where, writeBatch, increment, serverTimestamp, Timestamp,
+  query, where, writeBatch, increment, arrayUnion, arrayRemove, serverTimestamp, Timestamp,
 } from 'firebase/firestore';
 
 let env;
@@ -3064,5 +3064,79 @@ test('B9-1) Modo offline writeBatch determinista (VÍA 2, material genérico, de
     items: ['1'],
     actualizado_en: serverTimestamp(),
     actualizado_por_uid: 'activo1',
+  }));
+});
+
+test('B10-1: Radio atómico arrayUnion/arrayRemove en unidades_participantes e idempotencia con ID determinista', async () => {
+  const fRadio1 = db('brigRadio');
+  const fRadio2 = db('encRadio');
+  const fSinRadio = db('activo1');
+
+  // 1. Crear canal en operativo activo
+  await assertSucceeds(setDoc(doc(fRadio1, 'canales_radio/canalB10'), {
+    id: 'canalB10',
+    operativo_id: 'opAbierto',
+    nombre_canal: 'CECOM',
+    frecuencia_etiqueta: 'Canal 1',
+    unidades_participantes: ['CECOM', '58A'],
+    creado_por: 'Ana Pérez',
+    creado_por_uid: 'brigRadio',
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // 2. Dos operadores agregan unidades de forma atómica con arrayUnion sin pisarse
+  await assertSucceeds(updateDoc(doc(fRadio1, 'canales_radio/canalB10'), {
+    unidades_participantes: arrayUnion('TESLA-102'),
+    actualizado_en: serverTimestamp(),
+  }));
+  await assertSucceeds(updateDoc(doc(fRadio2, 'canales_radio/canalB10'), {
+    unidades_participantes: arrayUnion('LINCE'),
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // 3. Usuario sin autorización de radio NO puede modificar unidades_participantes
+  await assertFails(updateDoc(doc(fSinRadio, 'canales_radio/canalB10'), {
+    unidades_participantes: arrayUnion('INTRUSO'),
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // 4. Retiro atómico con arrayRemove permitido para operador autorizado
+  await assertSucceeds(updateDoc(doc(fRadio2, 'canales_radio/canalB10'), {
+    unidades_participantes: arrayRemove('58A'),
+    actualizado_en: serverTimestamp(),
+  }));
+
+  const snapCanal = await assertSucceeds(getDoc(doc(fRadio1, 'canales_radio/canalB10')));
+  const unidades = snapCanal.data().unidades_participantes;
+  if (!unidades.includes('TESLA-102') || !unidades.includes('LINCE') || unidades.includes('58A')) {
+    throw new Error(`arrayUnion/arrayRemove no preservó las unidades esperadas: ${JSON.stringify(unidades)}`);
+  }
+
+  // 5. Alta de transmisión con ID determinista (borradorId) y bloqueo de duplicado/sobrescritura de hora_original
+  const regId = 'radio_borrador_b10_001';
+  const payloadMsg = {
+    id: regId,
+    canal_id: 'canalB10',
+    operativo_id: 'opAbierto',
+    hora_original: '14:25:10',
+    origen: 'TESLA-102',
+    destinos: ['CECOM'],
+    actividades: '70 51R en acceso norte',
+    registrado_por: 'Ana Pérez',
+    registrado_por_uid: 'brigRadio',
+    fue_editado: false,
+    actividad_original_respaldo: null,
+    editado_en: null,
+    editado_por: null,
+    creado_en: serverTimestamp(),
+    actualizado_en: serverTimestamp(),
+  };
+  await assertSucceeds(setDoc(doc(fRadio1, `bitacora_radio_registros/${regId}`), payloadMsg));
+
+  // Un reenvío tardío con el mismo ID determinista tratando de reescribir hora_original/creado_en es rechazado (evita duplicados)
+  await assertFails(setDoc(doc(fRadio1, `bitacora_radio_registros/${regId}`), {
+    ...payloadMsg,
+    hora_original: '14:25:12',
   }));
 });

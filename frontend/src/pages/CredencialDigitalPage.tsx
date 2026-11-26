@@ -197,7 +197,7 @@ export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
             {avisoFoto && (
               <div
                 role="status"
-                className="flex w-full items-center gap-2 rounded-lg border border-activo bg-activo-suave px-3 py-2 text-left text-xs font-semibold text-emerald-900 dark:bg-noche-campo dark:text-activo-claro"
+                className="flex w-full items-center gap-2 rounded-lg border border-activo bg-activo-suave px-3 py-2 text-left text-xs font-semibold text-activo-texto dark:bg-noche-campo dark:text-activo-claro"
               >
                 <CheckCircle2 size={16} strokeWidth={2} className="shrink-0" />
                 <span>{avisoFoto}</span>
@@ -207,7 +207,7 @@ export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
             {errorFoto && (
               <div
                 role="alert"
-                className="flex w-full items-center gap-2 rounded-lg border border-alerta bg-alerta-suave px-3 py-2 text-left text-xs font-semibold text-red-900 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+                className="flex w-full items-center gap-2 rounded-lg border border-alerta bg-alerta-suave px-3 py-2 text-left text-xs font-semibold text-alerta-texto dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
               >
                 <AlertCircle size={16} strokeWidth={2} className="shrink-0" />
                 <span>{errorFoto}</span>
@@ -228,15 +228,15 @@ export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
               </div>
             </div>
 
-            {/* Badges simultáneos: Etapa/Grupo + Ayudantía + Estatus */}
+            {/* Badges simultáneos: Etapa/Grupo + Ayudantía (unificado) + Estatus */}
             <div className="flex flex-wrap items-center justify-center gap-2">
               <span className="rounded-full bg-udec px-3 py-1 text-xs font-semibold text-white">
                 {perfil.subgrupo || perfil.etapa}
               </span>
-              <span className="rounded-full border border-naranja bg-naranja-suave px-3 py-1 text-xs font-semibold text-naranja-oscuro dark:bg-noche-campo dark:text-naranja">
+              <span className="badge-ayudantia px-3 py-1 text-xs">
                 {etiquetaAyudantia(perfil.ayudantia)}
               </span>
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-activo bg-activo-suave px-3 py-1 text-xs font-bold text-activo dark:border-activo-claro dark:bg-noche-campo dark:text-activo-claro">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-activo bg-activo-suave px-3 py-1 text-xs font-bold text-activo-texto dark:border-activo-claro dark:bg-noche-campo dark:text-activo-claro">
                 <span className="h-2 w-2 rounded-full bg-activo dark:bg-activo-claro" />
                 <span>ACTIVO</span>
               </span>
@@ -293,9 +293,7 @@ export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
         <article className="tarjeta flex flex-col overflow-hidden border-2 border-alerta">
           <header className="flex items-center gap-2.5 bg-alerta px-4 py-4 text-white">
             <HeartPulse size={22} strokeWidth={2} className="shrink-0" />
-            <h2 className="text-sm font-bold tracking-wide">
-              FICHA DE EMERGENCIA · SIN CONEXIÓN
-            </h2>
+            <h2 className="text-sm font-bold tracking-wide">FICHA DE EMERGENCIA · BUPC</h2>
           </header>
 
           <div className="flex flex-col gap-4 p-5">

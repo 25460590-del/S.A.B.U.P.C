@@ -75,7 +75,7 @@ export function CuentaEnRevisionPage({ perfil }: CuentaEnRevisionPageProps) {
             <h2 className="text-2xl font-bold text-tinta dark:text-noche-tinta">
               Cuenta en Revisión
             </h2>
-            <p className="text-sm text-tinta-suave dark:text-noche-tinta-suave">
+            <p className="text-sm font-medium text-ambar-texto dark:text-noche-ambar-texto">
               Tu registro fue recibido correctamente. Un Administrador de la BUPC revisará tu
               solicitud, aprobará tu acceso y te asignará grupo y ayudantía.
             </p>
@@ -83,7 +83,7 @@ export function CuentaEnRevisionPage({ perfil }: CuentaEnRevisionPageProps) {
 
           <dl className="flex w-full flex-col divide-y divide-ambar/30 border-y border-ambar/35 py-1 text-left">
             <div className="flex items-center justify-between gap-2 py-2.5">
-              <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+              <dt className="text-xs font-semibold text-ambar-texto dark:text-noche-ambar-texto">
                 Solicitante
               </dt>
               <dd className="text-sm font-semibold text-tinta dark:text-noche-tinta">
@@ -91,7 +91,7 @@ export function CuentaEnRevisionPage({ perfil }: CuentaEnRevisionPageProps) {
               </dd>
             </div>
             <div className="flex items-center justify-between gap-2 py-2.5">
-              <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+              <dt className="text-xs font-semibold text-ambar-texto dark:text-noche-ambar-texto">
                 Grupo
               </dt>
               <dd className="text-sm font-semibold text-tinta dark:text-noche-tinta">
@@ -101,7 +101,7 @@ export function CuentaEnRevisionPage({ perfil }: CuentaEnRevisionPageProps) {
               </dd>
             </div>
             <div className="flex items-center justify-between gap-2 py-2.5">
-              <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+              <dt className="text-xs font-semibold text-ambar-texto dark:text-noche-ambar-texto">
                 Ayudantía
               </dt>
               <dd className="text-sm font-semibold text-tinta dark:text-noche-tinta">
@@ -109,7 +109,7 @@ export function CuentaEnRevisionPage({ perfil }: CuentaEnRevisionPageProps) {
               </dd>
             </div>
             <div className="flex items-center justify-between gap-2 py-2.5">
-              <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+              <dt className="text-xs font-semibold text-ambar-texto dark:text-noche-ambar-texto">
                 No. de Cuenta
               </dt>
               <dd className="text-sm font-bold tabular-nums text-tinta dark:text-noche-tinta">
@@ -117,7 +117,7 @@ export function CuentaEnRevisionPage({ perfil }: CuentaEnRevisionPageProps) {
               </dd>
             </div>
             <div className="flex items-center justify-between gap-2 py-2.5">
-              <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+              <dt className="text-xs font-semibold text-ambar-texto dark:text-noche-ambar-texto">
                 Celular
               </dt>
               <dd className="text-sm font-semibold tabular-nums text-tinta dark:text-noche-tinta">
@@ -129,7 +129,7 @@ export function CuentaEnRevisionPage({ perfil }: CuentaEnRevisionPageProps) {
           {avisoCorreccion && (
             <div
               role="status"
-              className="flex w-full items-start gap-2 rounded-lg border border-activo bg-activo-suave p-3 text-left text-xs font-semibold text-emerald-900 dark:bg-noche-campo dark:text-activo-claro"
+              className="flex w-full items-start gap-2 rounded-lg border border-activo bg-activo-suave p-3 text-left text-xs font-semibold text-activo-texto dark:bg-noche-campo dark:text-activo-claro"
             >
               <CheckCircle2 size={16} strokeWidth={2} className="mt-0.5 shrink-0" />
               <span>{avisoCorreccion}</span>

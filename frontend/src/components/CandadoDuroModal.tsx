@@ -39,7 +39,7 @@ export function CandadoDuroModal({
           </p>
 
           <div className="flex flex-col gap-2 rounded-lg border border-alerta bg-alerta-suave p-4 dark:bg-noche-rojo-suave">
-            <span className="text-xs font-bold text-tinta dark:text-noche-tinta">
+            <span className="text-xs font-bold tabular-nums text-tinta dark:text-noche-tinta">
               Material pendiente de devolución ({pendientes.length}):
             </span>
             <ul className="flex flex-col gap-1.5">

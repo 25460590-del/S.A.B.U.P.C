@@ -103,7 +103,7 @@ export function LoginPage({ correoInicial = '', alIrARegistro }: LoginPageProps)
           {error && (
             <div
               role="alert"
-              className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-3 text-sm text-red-900 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+              className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-3 text-sm text-alerta-texto dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
             >
               <AlertCircle size={18} strokeWidth={2} className="mt-0.5 shrink-0" />
               <span>{error}</span>
@@ -113,7 +113,7 @@ export function LoginPage({ correoInicial = '', alIrARegistro }: LoginPageProps)
           {aviso && (
             <div
               role="status"
-              className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-3 text-sm text-emerald-900 dark:bg-noche-campo dark:text-activo-claro"
+              className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-3 text-sm text-activo-texto dark:bg-noche-campo dark:text-activo-claro"
             >
               <CheckCircle2 size={18} strokeWidth={2} className="mt-0.5 shrink-0" />
               <span>{aviso}</span>

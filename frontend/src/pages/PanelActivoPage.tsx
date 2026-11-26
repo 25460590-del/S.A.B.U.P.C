@@ -97,10 +97,10 @@ interface GrupoMenu {
 
 const TITULOS_DESTINO: Record<DestinoNavegacion, string> = {
   credencial: 'Mi Credencial QR',
-  escaner: 'Mi Operativo',
+  escaner: 'Mi Turno',
   material: 'Mi Material',
   'mi-historial': 'Mi Historial',
-  operativos: 'Operativos',
+  operativos: 'Mando Operativo',
   resguardo: 'Resguardo Global de Material',
   radio: 'Consola de Radio',
   personal: 'Personal',
@@ -198,7 +198,7 @@ function FichaEmergenciaPerfilCard({ perfil }: { perfil: Usuario }) {
       {error && (
         <div
           role="alert"
-          className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-2.5 text-xs font-semibold text-red-900 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+          className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-2.5 text-xs font-semibold text-alerta-texto dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
         >
           <AlertCircle size={15} strokeWidth={2} className="mt-0.5 shrink-0" />
           <span>{error}</span>
@@ -208,7 +208,7 @@ function FichaEmergenciaPerfilCard({ perfil }: { perfil: Usuario }) {
       {aviso && (
         <div
           role="status"
-          className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-2.5 text-xs font-semibold text-emerald-900 dark:bg-noche-campo dark:text-activo-claro"
+          className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-2.5 text-xs font-semibold text-activo-texto dark:bg-noche-campo dark:text-activo-claro"
         >
           <CheckCircle2 size={15} strokeWidth={2} className="mt-0.5 shrink-0" />
           <span>{aviso}</span>
@@ -462,7 +462,7 @@ function TelefonoPropioPerfilCard({ perfil }: { perfil: Usuario }) {
       {error && (
         <div
           role="alert"
-          className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-2.5 text-xs font-semibold text-red-900 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+          className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-2.5 text-xs font-semibold text-alerta-texto dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
         >
           <AlertCircle size={15} strokeWidth={2} className="mt-0.5 shrink-0" />
           <span>{error}</span>
@@ -472,7 +472,7 @@ function TelefonoPropioPerfilCard({ perfil }: { perfil: Usuario }) {
       {aviso && (
         <div
           role="status"
-          className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-2.5 text-xs font-semibold text-emerald-900 dark:bg-noche-campo dark:text-activo-claro"
+          className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-2.5 text-xs font-semibold text-activo-texto dark:bg-noche-campo dark:text-activo-claro"
         >
           <CheckCircle2 size={15} strokeWidth={2} className="mt-0.5 shrink-0" />
           <span>{aviso}</span>
@@ -582,13 +582,18 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
   const tengoGruposACargo = (perfil.grupos_a_cargo?.length ?? 0) > 0
   const puedoPersonal = soyAdmin || soyJefeAyudantia || (soyEncargado && tengoGruposACargo)
 
-  const destinoInicial: DestinoNavegacion = soyAdmin
-    ? 'personal'
-    : soyJefeAyudantia
+  const esMovilInicial = typeof window !== 'undefined' && window.innerWidth < 1024
+  const destinoInicial: DestinoNavegacion = esMovilInicial
+    ? soyEncargado
+      ? 'operativos'
+      : 'escaner'
+    : soyAdmin
       ? 'personal'
-      : soyEncargado
-        ? 'operativos'
-        : 'escaner'
+      : soyJefeAyudantia
+        ? 'personal'
+        : soyEncargado
+          ? 'operativos'
+          : 'escaner'
 
   const [destino, setDestino] = useState<DestinoNavegacion>(destinoInicial)
   const [drawerAbierto, setDrawerAbierto] = useState(false)
@@ -627,7 +632,7 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
       titulo: 'Mi Espacio',
       items: [
         { id: 'credencial', etiqueta: 'Mi Credencial QR', icono: <IdCard size={17} strokeWidth={2} /> },
-        { id: 'escaner', etiqueta: 'Mi Operativo', icono: <CalendarCheck size={17} strokeWidth={2} /> },
+        { id: 'escaner', etiqueta: 'Mi Turno', icono: <CalendarCheck size={17} strokeWidth={2} /> },
         { id: 'material', etiqueta: 'Mi Material', icono: <Package size={17} strokeWidth={2} /> },
         { id: 'mi-historial', etiqueta: 'Mi Historial', icono: <History size={17} strokeWidth={2} /> },
       ],
@@ -637,7 +642,7 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
   const itemsOperacion: ItemMenu[] = []
   if (soyEncargado) {
     itemsOperacion.push(
-      { id: 'operativos', etiqueta: 'Operativos', icono: <Megaphone size={17} strokeWidth={2} /> },
+      { id: 'operativos', etiqueta: 'Mando Operativo', icono: <Megaphone size={17} strokeWidth={2} /> },
       { id: 'resguardo', etiqueta: 'Resguardo Global', icono: <Package size={17} strokeWidth={2} /> },
     )
   }
@@ -816,7 +821,11 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
   }
 
   return (
-    <div className="flex min-h-[100dvh] flex-col overflow-x-hidden bg-fondo lg:flex-row dark:bg-noche">
+    <div
+      className={`flex flex-col overflow-x-hidden bg-fondo lg:flex-row dark:bg-noche ${
+        destino === 'radio' ? 'h-[100dvh] overflow-hidden' : 'min-h-[100dvh]'
+      }`}
+    >
       {/* Barra lateral fija en escritorio (lg+) con menús desplegables */}
       <aside className="sticky top-0 hidden h-[100dvh] w-64 shrink-0 flex-col justify-between gap-4 bg-udec-oscuro p-4 text-white lg:flex dark:border-r dark:border-noche-borde dark:bg-noche-sidebar">
         <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -854,7 +863,7 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
                 <div className="flex items-center gap-2.5">
                   <BupcLogo tamano="sm" />
                   <div>
-                    <p className="text-[10px] font-semibold text-white/80">Universidad de Colima</p>
+                    <p className="text-[11px] font-semibold text-white/80">Universidad de Colima</p>
                     <span className="text-sm font-bold">S.A.B.U.P.C</span>
                   </div>
                 </div>
@@ -862,7 +871,7 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
                   type="button"
                   onClick={() => setDrawerAbierto(false)}
                   aria-label="Cerrar menú"
-                  className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-white/20 text-white hover:bg-white/10"
+                  className="inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-lg border border-white/20 text-white hover:bg-white/10"
                 >
                   <X size={18} strokeWidth={2} />
                 </button>
@@ -877,27 +886,31 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
       )}
 
       {/* Contenedor principal */}
-      <div className="flex min-w-0 flex-1 flex-col pb-18 lg:pb-0">
-        {/* Indicador de conexión silencioso (solo visible offline o sincronizando) */}
+      <div
+        className={`flex min-w-0 flex-1 flex-col pb-18 lg:pb-0 ${
+          destino === 'radio' ? 'min-h-0 overflow-hidden' : ''
+        }`}
+      >
+        {/* Indicador de conexión silencioso (solo visible offline, sincronizando o alertas) */}
         <BarraEstado />
 
-        {/* Encabezado móvil compacto (< lg) */}
-        <header className="flex shrink-0 items-center justify-between gap-2 border-b-3 border-naranja bg-udec px-3 py-2.5 text-white lg:hidden">
+        {/* Encabezado móvil compacto (< lg): sin cambio de tema accidental; Menú >= 44px */}
+        <header className="flex shrink-0 items-center justify-between gap-2 border-b-3 border-naranja bg-udec px-3 py-2 text-white lg:hidden">
           <div className="flex min-w-0 items-center gap-2.5">
             <BupcLogo tamano="sm" />
             <div className="min-w-0">
-              <p className="truncate text-[10px] font-semibold text-white/80">S.A.B.U.P.C</p>
+              <p className="truncate text-[11px] font-semibold text-white/80">S.A.B.U.P.C</p>
               <h1 className="truncate text-sm font-bold">{TITULOS_DESTINO[destino]}</h1>
             </div>
           </div>
 
-          <div className="flex shrink-0 items-center gap-1.5">
-            {fotoPropia?.imagen_webp_base64 && (
+          <div className="flex shrink-0 items-center gap-2">
+            {fotoPropia?.imagen_webp_base64 ? (
               <button
                 type="button"
                 onClick={() => seleccionarDestino('credencial')}
-                aria-label="Ver mi credencial"
-                className="inline-flex h-9 w-9 cursor-pointer items-center justify-center overflow-hidden rounded-full border border-white/40"
+                aria-label="Ver mi credencial y ficha de emergencia"
+                className="inline-flex h-11 w-11 cursor-pointer items-center justify-center overflow-hidden rounded-full border border-white/40"
               >
                 <img
                   src={fotoPropia.imagen_webp_base64}
@@ -905,29 +918,32 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
                   className="h-full w-full object-cover"
                 />
               </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => seleccionarDestino('credencial')}
+                aria-label="Ver mi credencial y ficha de emergencia"
+                className="inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-lg border border-white/25 bg-white/10 text-white hover:bg-white/20"
+              >
+                <IdCard size={20} strokeWidth={2} />
+              </button>
             )}
-            <button
-              type="button"
-              onClick={alternarTema}
-              aria-label={esOscuro ? 'Cambiar a modo día' : 'Cambiar a modo nocturno'}
-              className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-white/25 bg-white/10 text-white hover:bg-white/20"
-            >
-              {esOscuro ? <Sun size={16} strokeWidth={2} /> : <Moon size={16} strokeWidth={2} />}
-            </button>
             <button
               type="button"
               onClick={() => setDrawerAbierto(true)}
               aria-label="Abrir menú completo"
-              className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-white/25 bg-white/10 text-white hover:bg-white/20"
+              className="inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-lg border border-white/25 bg-white/10 text-white hover:bg-white/20"
             >
-              <Menu size={18} strokeWidth={2} />
+              <Menu size={20} strokeWidth={2} />
             </button>
           </div>
         </header>
 
         <main
           className={`flex min-w-0 flex-1 flex-col gap-5 ${
-            destino === 'radio' ? 'p-2.5 sm:p-4 lg:p-5' : 'p-4 lg:p-6'
+            destino === 'radio'
+              ? 'min-h-0 overflow-hidden p-2.5 sm:p-4 lg:p-5'
+              : 'p-4 lg:p-6'
           }`}
         >
           {destino === 'credencial' && <CredencialDigitalPage perfil={perfil} />}
@@ -1054,12 +1070,10 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
         </main>
       </div>
 
-      {/* Barra inferior limpia en móvil (< lg) con accesos rápidos prioritarios */}
+      {/* Barra inferior limpia en móvil (< lg): máximo estricto de 4 destinos */}
       <nav
         aria-label="Navegación rápida móvil"
-        className={`fixed right-0 bottom-0 left-0 z-30 grid border-t border-borde bg-tarjeta px-1 pt-1 pb-[max(0.25rem,env(safe-area-inset-bottom))] lg:hidden dark:border-noche-borde dark:bg-noche-tarjeta ${
-          puedoRadio ? 'grid-cols-5' : 'grid-cols-4'
-        }`}
+        className="fixed right-0 bottom-0 left-0 z-30 grid grid-cols-4 border-t border-borde bg-tarjeta px-1 pt-1 pb-[max(0.25rem,env(safe-area-inset-bottom))] lg:hidden dark:border-noche-borde dark:bg-noche-tarjeta"
       >
         <button
           type="button"
@@ -1071,7 +1085,7 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
           }`}
         >
           <CalendarCheck size={19} strokeWidth={2} />
-          <span>Mi Operativo</span>
+          <span>Mi Turno</span>
         </button>
 
         {soyEncargado ? (
@@ -1085,7 +1099,20 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
             }`}
           >
             <Megaphone size={19} strokeWidth={2} />
-            <span>Operativos</span>
+            <span>Mando</span>
+          </button>
+        ) : puedoRadio ? (
+          <button
+            type="button"
+            onClick={() => seleccionarDestino('radio')}
+            className={`flex min-h-12 cursor-pointer flex-col items-center justify-center gap-0.5 text-[11px] font-semibold ${
+              destino === 'radio'
+                ? 'text-udec dark:text-activo-claro'
+                : 'text-tinta-suave dark:text-noche-tinta-suave'
+            }`}
+          >
+            <Radio size={19} strokeWidth={2} />
+            <span>Radio</span>
           </button>
         ) : (
           <button
@@ -1102,7 +1129,7 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
           </button>
         )}
 
-        {puedoRadio && (
+        {soyEncargado && puedoRadio ? (
           <button
             type="button"
             onClick={() => seleccionarDestino('radio')}
@@ -1115,20 +1142,20 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
             <Radio size={19} strokeWidth={2} />
             <span>Radio</span>
           </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => seleccionarDestino('credencial')}
+            className={`flex min-h-12 cursor-pointer flex-col items-center justify-center gap-0.5 text-[11px] font-semibold ${
+              destino === 'credencial'
+                ? 'text-udec dark:text-activo-claro'
+                : 'text-tinta-suave dark:text-noche-tinta-suave'
+            }`}
+          >
+            <IdCard size={19} strokeWidth={2} />
+            <span>Credencial</span>
+          </button>
         )}
-
-        <button
-          type="button"
-          onClick={() => seleccionarDestino('credencial')}
-          className={`flex min-h-12 cursor-pointer flex-col items-center justify-center gap-0.5 text-[11px] font-semibold ${
-            destino === 'credencial'
-              ? 'text-udec dark:text-activo-claro'
-              : 'text-tinta-suave dark:text-noche-tinta-suave'
-          }`}
-        >
-          <IdCard size={19} strokeWidth={2} />
-          <span>Credencial</span>
-        </button>
 
         <button
           type="button"

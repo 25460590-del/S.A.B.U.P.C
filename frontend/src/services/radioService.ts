@@ -1,4 +1,6 @@
 import {
+  arrayRemove,
+  arrayUnion,
   collection,
   doc,
   getDoc,
@@ -87,12 +89,28 @@ export async function crearCanalRadio(actor: Usuario, datos: DatosNuevoCanal): P
   return nuevo.id
 }
 
-export function actualizarUnidadesCanal(canalId: string, unidades: string[]): Promise<void> {
-  const limpias = Array.from(new Set(unidades.map((u) => u.trim()).filter(Boolean))).slice(0, 50)
-  return updateDoc(doc(canalesRef, canalId), {
-    unidades_participantes: limpias,
-    actualizado_en: serverTimestamp(),
-  })
+export async function agregarUnidadCanal(canalId: string, unidad: string): Promise<void> {
+  const limpia = unidad.trim().slice(0, 40)
+  if (!limpia) return
+  await despacharEscrituraOffline(
+    updateDoc(doc(canalesRef, canalId), {
+      unidades_participantes: arrayUnion(limpia),
+      actualizado_en: serverTimestamp(),
+    }),
+    `Agregar unidad "${limpia}" al canal de radio`,
+  )
+}
+
+export async function quitarUnidadCanal(canalId: string, unidad: string): Promise<void> {
+  const limpia = unidad.trim()
+  if (!limpia) return
+  await despacharEscrituraOffline(
+    updateDoc(doc(canalesRef, canalId), {
+      unidades_participantes: arrayRemove(limpia),
+      actualizado_en: serverTimestamp(),
+    }),
+    `Quitar unidad "${limpia}" del canal de radio`,
+  )
 }
 
 export function escucharCanalesOperativo(
@@ -119,10 +137,16 @@ export interface DatosMensajeRadio {
   origen: string
   destinos: string[]
   actividades: string
+  /** ID determinista por borrador para garantizar idempotencia ante doble toque o reintentos. */
+  id_determinista?: string
+}
+
+export function generarIdBorradorRadio(): string {
+  return doc(registrosRef).id
 }
 
 /**
- * Captura rápida con sello `hora_original` (`HH:MM:SS`) inmutable y soporte offline-first.
+ * Captura rápida con sello `hora_original` (`HH:MM:SS`) inmutable, ID determinista y soporte offline-first.
  */
 export async function registrarMensajeRadio(
   actor: Usuario,
@@ -135,7 +159,8 @@ export async function registrarMensajeRadio(
   if (destinos.length === 0) throw new Error('Selecciona al menos una unidad de DESTINO.')
   if (!actividades) throw new Error('Escribe el mensaje o clave en Actividades.')
 
-  const nuevo = doc(registrosRef)
+  const idSeguro = datos.id_determinista?.trim()
+  const nuevo = idSeguro ? doc(registrosRef, idSeguro) : doc(registrosRef)
   await despacharEscrituraOffline(
     setDoc(nuevo, {
       id: nuevo.id,
@@ -167,6 +192,7 @@ export function escucharRegistrosCanal(
   alFallar: (error: FirestoreError) => void,
   limite = LIMITE_REGISTROS_RADIO,
 ): Unsubscribe {
+  let ultimaFirma = ''
   return onSnapshot(
     query(
       registrosRef,
@@ -185,6 +211,17 @@ export function escucharRegistrosCanal(
       })
       // Cronológico descendente (más reciente arriba; registros pendientes sin timestamp quedan primero)
       lista.sort((a, b) => (b.creado_en?.toMillis() ?? Date.now()) - (a.creado_en?.toMillis() ?? Date.now()))
+
+      // Evita re-renders redundantes cuando llegan metadatos sin cambios reales de contenido ni estado de sincronización
+      const firma = lista
+        .map(
+          (r) =>
+            `${r.id}|${r.actividades}|${r.fue_editado ? 1 : 0}|${r.sync_status ?? ''}|${r.creado_en?.toMillis() ?? 'p'}`,
+        )
+        .join('\n')
+      if (firma === ultimaFirma && snap.docs.length > 0) return
+      ultimaFirma = firma
+
       alCambiar(lista)
     },
     alFallar,

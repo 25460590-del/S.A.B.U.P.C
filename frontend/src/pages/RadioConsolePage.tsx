@@ -15,20 +15,21 @@ import {
   Sun,
   X,
 } from 'lucide-react'
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { RebacePanel } from '../components/RebacePanel'
 import { CANALES_SUGERIDOS } from '../constants/rebaceSeed'
 import { useWakeLock } from '../hooks/useWakeLock'
 import { mensajeDeError } from '../services/authService'
 import { escucharOperativosActivos } from '../services/operativosService'
 import {
-  actualizarUnidadesCanal,
+  agregarUnidadCanal,
   cargarCatalogoRebaceConCache,
   crearCanalRadio,
   editarRegistroBitacoraRadio,
   escucharCanalesOperativo,
   escucharRegistrosCanal,
   exportarBitacoraCsvLocal,
+  generarIdBorradorRadio,
   LIMITE_REGISTROS_RADIO,
   obtenerRegistrosCanalAnteriores,
   poblarCatalogoRebace,
@@ -46,8 +47,200 @@ interface RadioConsolePageProps {
   usuario: Usuario
 }
 
+const PREFIJO_PAR_RADIO = 'sabupc_radio_par_v1_'
+
+interface ParRadioGuardado {
+  origen: string
+  destinos: string[]
+}
+
+function leerParGuardado(canalId: string): ParRadioGuardado | null {
+  try {
+    const raw = window.sessionStorage.getItem(`${PREFIJO_PAR_RADIO}${canalId}`)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<ParRadioGuardado>
+    if (typeof parsed.origen !== 'string' || !Array.isArray(parsed.destinos)) return null
+    return {
+      origen: parsed.origen,
+      destinos: parsed.destinos.filter((d): d is string => typeof d === 'string' && d.trim().length > 0),
+    }
+  } catch {
+    return null
+  }
+}
+
+function guardarParRadio(canalId: string, origen: string, destinos: string[]): void {
+  try {
+    window.sessionStorage.setItem(
+      `${PREFIJO_PAR_RADIO}${canalId}`,
+      JSON.stringify({ origen, destinos }),
+    )
+  } catch {
+    // Sin acceso a sessionStorage en navegación restringida
+  }
+}
+
+/**
+ * Calcula un indicador discreto de desfase horario cuando la hora local capturada
+ * (`hora_original`) difiere en más de 60 s respecto a la recepción en servidor (`creado_en`).
+ */
+function etiquetaDesfaseHorario(r: RegistroBitacoraRadio): string | null {
+  if (!r.creado_en || !r.hora_original) return null
+  const partes = r.hora_original.split(':').map((n) => Number(n))
+  if (partes.length !== 3 || partes.some((n) => Number.isNaN(n))) return null
+
+  const fechaSrv = r.creado_en.toDate()
+  const fechaOrig = new Date(
+    fechaSrv.getFullYear(),
+    fechaSrv.getMonth(),
+    fechaSrv.getDate(),
+    partes[0],
+    partes[1],
+    partes[2],
+  )
+  let diffSeg = Math.round((fechaSrv.getTime() - fechaOrig.getTime()) / 1000)
+  // Ajuste ante cruce de medianoche (00:00)
+  if (diffSeg > 43200) diffSeg -= 86400
+  if (diffSeg < -43200) diffSeg += 86400
+
+  if (Math.abs(diffSeg) <= 60) return null
+  const mins = Math.max(1, Math.round(Math.abs(diffSeg) / 60))
+  const signo = diffSeg > 0 ? '+' : '−'
+  return `Desfase ${signo}${mins} min`
+}
+
+interface PropsFilaRadio {
+  registro: RegistroBitacoraRadio
+  alEditar: (r: RegistroBitacoraRadio) => void
+}
+
+const FilaRadioMovil = memo(function FilaRadioMovil({ registro: r, alEditar }: PropsFilaRadio) {
+  const desfase = etiquetaDesfaseHorario(r)
+  return (
+    <div className="flex flex-col gap-0.5 px-3 py-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 text-xs">
+          <span className="shrink-0 font-bold tabular-nums text-tinta-suave dark:text-noche-tinta-suave">
+            {r.hora_original}
+          </span>
+          <span className="truncate font-bold text-udec dark:text-activo-claro">{r.origen}</span>
+          <span className="shrink-0 text-tinta-suave">→</span>
+          <span className="truncate font-semibold text-tinta dark:text-noche-tinta">
+            {r.destinos.join(', ')}
+          </span>
+          {r.sync_status === 'pendiente' && (
+            <span
+              title="Pendiente de sincronizar"
+              className="inline-flex shrink-0 items-center gap-0.5 rounded bg-ambar-suave px-1.5 py-0.5 text-[11px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto"
+            >
+              <CloudOff size={11} strokeWidth={2} />
+              <span>Pendiente de sincronizar</span>
+            </span>
+          )}
+          {desfase && (
+            <span
+              title="Diferencia > 60 s entre la hora del dispositivo y la recepción en servidor"
+              className="shrink-0 rounded bg-superficie-suave px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave"
+            >
+              {desfase}
+            </span>
+          )}
+          {r.fue_editado && (
+            <span className="shrink-0 rounded bg-ambar-suave px-1.5 py-0.5 text-[11px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
+              Ed.
+            </span>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => alEditar(r)}
+          aria-label={`Editar actividad de ${r.hora_original}`}
+          className="inline-flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-borde bg-fondo text-tinta-suave hover:border-udec hover:text-udec dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta-suave"
+        >
+          <Pencil size={15} strokeWidth={2} />
+        </button>
+      </div>
+
+      <p className="text-[13px] leading-snug font-medium text-tinta dark:text-noche-tinta">
+        {r.actividades}
+      </p>
+      {r.fue_editado && r.actividad_original_respaldo && (
+        <p className="text-[11px] leading-tight text-tinta-suave dark:text-noche-tinta-suave">
+          Original: &ldquo;{r.actividad_original_respaldo}&rdquo;
+        </p>
+      )}
+    </div>
+  )
+})
+
+const FilaRadioEscritorio = memo(function FilaRadioEscritorio({
+  registro: r,
+  alEditar,
+}: PropsFilaRadio) {
+  const desfase = etiquetaDesfaseHorario(r)
+  return (
+    <tr className="align-top hover:bg-superficie-suave/60 dark:hover:bg-noche-campo/50">
+      <td className="px-3 py-1.5 whitespace-nowrap">
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="text-xs font-bold tabular-nums text-tinta dark:text-noche-tinta">
+            {r.hora_original}
+          </span>
+          {r.sync_status === 'pendiente' && (
+            <span
+              title="Guardado localmente; se sincronizará al recuperar señal"
+              className="inline-flex items-center gap-0.5 rounded bg-ambar-suave px-1.5 py-0.5 text-[11px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto"
+            >
+              <CloudOff size={11} strokeWidth={2} />
+              <span>Pendiente de sincronizar</span>
+            </span>
+          )}
+          {desfase && (
+            <span
+              title="Diferencia > 60 s entre la hora del dispositivo y la recepción en servidor"
+              className="rounded bg-superficie-suave px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave"
+            >
+              {desfase}
+            </span>
+          )}
+          {r.fue_editado && (
+            <span
+              title={`Original: ${r.actividad_original_respaldo ?? ''} · Editado por ${r.editado_por ?? ''}`}
+              className="rounded bg-ambar-suave px-1.5 py-0.5 text-[11px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto"
+            >
+              Editado
+            </span>
+          )}
+        </div>
+      </td>
+      <td className="px-3 py-1.5 text-xs font-bold text-tinta dark:text-noche-tinta">{r.origen}</td>
+      <td className="px-3 py-1.5 text-xs font-semibold text-tinta dark:text-noche-tinta">
+        {r.destinos.join(', ')}
+      </td>
+      <td className="px-3 py-1.5 text-[13px] leading-snug text-tinta dark:text-noche-tinta">
+        <p className="font-medium">{r.actividades}</p>
+        {r.fue_editado && r.actividad_original_respaldo && (
+          <p className="mt-0.5 text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
+            Original: &ldquo;{r.actividad_original_respaldo}&rdquo;
+          </p>
+        )}
+      </td>
+      <td className="px-2 py-1.5 text-center">
+        <button
+          type="button"
+          onClick={() => alEditar(r)}
+          aria-label={`Editar actividad de ${r.hora_original}`}
+          className="inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-lg border border-borde bg-fondo text-tinta-suave hover:border-udec hover:text-udec dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta-suave"
+        >
+          <Pencil size={14} strokeWidth={2} />
+        </button>
+      </td>
+    </tr>
+  )
+})
+
 export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
   const wakeLock = useWakeLock()
+  const claveOperador = (usuario.clave_radio || usuario.clave_personal_radio || '').trim()
 
   const [operativos, setOperativos] = useState<Operativo[]>([])
   const [operativoIdSel, setOperativoIdSel] = useState<string>('')
@@ -66,17 +259,29 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
   const [cargandoClaves, setCargandoClaves] = useState(true)
   const [poblandoClaves, setPoblandoClaves] = useState(false)
 
-  // Captura rápida
-  const [origen, setOrigen] = useState('CECOM')
-  const [destinos, setDestinos] = useState<string[]>([])
+  // Captura rápida con preselección inteligente y memoria por canal en sessionStorage
+  const parPorDefecto = useMemo<ParRadioGuardado>(
+    () => ({
+      origen: claveOperador || 'CECOM',
+      destinos: claveOperador ? ['CECOM'] : [],
+    }),
+    [claveOperador],
+  )
+  const [paresPorCanal, setParesPorCanal] = useState<Record<string, ParRadioGuardado>>({})
   const [destinoExtra, setDestinoExtra] = useState('')
   const [actividades, setActividades] = useState('')
   const [enviando, setEnviando] = useState(false)
+
+  // Idempotencia de envío: un ID determinista estable por borrador hasta que el envío sea exitoso
+  const borradorIdRef = useRef<string>(generarIdBorradorRadio())
+  const enviandoRef = useRef(false)
 
   // Colapso móvil de chips ORIGEN/DESTINO para dejar espacio al teclado virtual
   const [chipsColapsadosMovil, setChipsColapsadosMovil] = useState(true)
   const barraCapturaRef = useRef<HTMLDivElement>(null)
   const inputActividadesRef = useRef<HTMLInputElement>(null)
+  const listaMovilRef = useRef<HTMLDivElement>(null)
+  const ultimoIdRecienteRef = useRef<string | null>(null)
 
   // + Unidad en vivo
   const [mostrandoNuevaUnidad, setMostrandoNuevaUnidad] = useState(false)
@@ -163,6 +368,30 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
   const canalActivo = canales.find((c) => c.id === canalIdSel) ?? canales[0] ?? null
   const canalActivoId = canalActivo?.id ?? null
 
+  const parActual: ParRadioGuardado = canalActivoId
+    ? (paresPorCanal[canalActivoId] ?? leerParGuardado(canalActivoId) ?? parPorDefecto)
+    : parPorDefecto
+  const origen = parActual.origen
+  const destinos = parActual.destinos
+
+  function actualizarParCanal(nuevoOrigen: string, nuevosDestinos: string[]) {
+    if (!canalActivoId) return
+    const siguiente = { origen: nuevoOrigen, destinos: nuevosDestinos }
+    setParesPorCanal((prev) => ({ ...prev, [canalActivoId]: siguiente }))
+    guardarParRadio(canalActivoId, nuevoOrigen, nuevosDestinos)
+  }
+
+  function setOrigen(nuevoOrigen: string) {
+    actualizarParCanal(nuevoOrigen, destinos)
+  }
+
+  // Reiniciar ID de borrador y referencia de scroll al cambiar de canal
+  useEffect(() => {
+    if (!canalActivoId) return
+    borradorIdRef.current = generarIdBorradorRadio()
+    ultimoIdRecienteRef.current = null
+  }, [canalActivoId])
+
   useEffect(() => {
     if (!canalActivoId) return
     const cancelar = escucharRegistrosCanal(
@@ -183,7 +412,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
     return cancelar
   }, [canalActivoId])
 
-  const registros = (() => {
+  const registros = useMemo(() => {
     if (registrosPorCanal?.canalId !== canalActivoId) return []
     const mapa = new Map<string, RegistroBitacoraRadio>()
     for (const r of registrosPorCanal.lista) mapa.set(r.id, r)
@@ -195,7 +424,23 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
         (b.creado_en?.toMillis() ?? Number.MAX_SAFE_INTEGER) -
         (a.creado_en?.toMillis() ?? Number.MAX_SAFE_INTEGER),
     )
-  })()
+  }, [registrosPorCanal, canalActivoId])
+
+  // En móvil (< md) mostramos orden cronológico ascendente (último mensaje pegado a la barra de captura)
+  const registrosMovil = useMemo(() => [...registros].reverse(), [registros])
+
+  // Auto-scroll en móvil al último mensaje solo cuando cambia el mensaje más reciente o al abrir canal
+  const idMasReciente = registros[0]?.id ?? null
+  useEffect(() => {
+    if (!idMasReciente) return
+    if (ultimoIdRecienteRef.current === idMasReciente) return
+    ultimoIdRecienteRef.current = idMasReciente
+    const el = listaMovilRef.current
+    if (el) {
+      el.scrollTop = el.scrollHeight
+    }
+  }, [idMasReciente, canalActivoId])
+
   const hayMasRegistrosRadio =
     registrosPorCanal?.canalId === canalActivoId ? registrosPorCanal.hayMas : false
 
@@ -238,27 +483,27 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
   ]
 
   function alternarDestino(unidad: string) {
-    setDestinos((prev) =>
-      prev.includes(unidad) ? prev.filter((u) => u !== unidad) : [...prev, unidad],
-    )
+    const siguientes = destinos.includes(unidad)
+      ? destinos.filter((u) => u !== unidad)
+      : [...destinos, unidad]
+    actualizarParCanal(origen, siguientes)
   }
 
   function intercambiarOrigenDestino() {
     const primerDestino = destinos[0] || destinoExtra.trim()
     if (!primerDestino) return
     const origenAnterior = origen.trim()
-    setOrigen(primerDestino)
-    if (origenAnterior) {
-      setDestinos([origenAnterior])
-    } else {
-      setDestinos([])
-    }
+    actualizarParCanal(primerDestino, origenAnterior ? [origenAnterior] : [])
     setDestinoExtra('')
   }
 
   function alEnfocarActividades() {
-    // En móvil contraemos los chips para asegurar que el input y Enviar queden visibles sobre el teclado.
-    setChipsColapsadosMovil(true)
+    // Si aún no hay destino seleccionado, desplegamos chips en móvil para evitar enviar sin destino.
+    if (resumenDestinos.length === 0) {
+      setChipsColapsadosMovil(false)
+    } else {
+      setChipsColapsadosMovil(true)
+    }
     setMostrandoNuevaUnidad(false)
     window.setTimeout(() => {
       barraCapturaRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -267,11 +512,17 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
 
   async function manejarAgregarUnidad(e: FormEvent) {
     e.preventDefault()
-    if (!operativoActivo || operativoActivo.estatus === 'Finalizado' || operativoActivo.estatus === 'Cancelado') return
+    if (
+      !operativoActivo ||
+      operativoActivo.estatus === 'Finalizado' ||
+      operativoActivo.estatus === 'Cancelado'
+    ) {
+      return
+    }
     if (!canalActivo || !nuevaUnidad.trim()) return
     setError(null)
     try {
-      await actualizarUnidadesCanal(canalActivo.id, [...unidadesCanal, nuevaUnidad.trim()])
+      await agregarUnidadCanal(canalActivo.id, nuevaUnidad.trim())
       setNuevaUnidad('')
       setMostrandoNuevaUnidad(false)
     } catch (err) {
@@ -284,7 +535,14 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
     etiqueta: string,
     unidadesBase: string[] = ['CECOM', '58A', 'BUPC 1'],
   ) {
-    if (!operativoActivo || operativoActivo.estatus === 'Finalizado' || operativoActivo.estatus === 'Cancelado' || !nombre.trim()) return
+    if (
+      !operativoActivo ||
+      operativoActivo.estatus === 'Finalizado' ||
+      operativoActivo.estatus === 'Cancelado' ||
+      !nombre.trim()
+    ) {
+      return
+    }
     setError(null)
     setAviso(null)
     try {
@@ -306,7 +564,15 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
 
   async function manejarEnviarMensaje(e: FormEvent) {
     e.preventDefault()
-    if (!operativoActivo || operativoActivo.estatus === 'Finalizado' || operativoActivo.estatus === 'Cancelado' || !canalActivo) return
+    if (enviandoRef.current) return
+    if (
+      !operativoActivo ||
+      operativoActivo.estatus === 'Finalizado' ||
+      operativoActivo.estatus === 'Cancelado' ||
+      !canalActivo
+    ) {
+      return
+    }
     setError(null)
     setAviso(null)
 
@@ -318,6 +584,13 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
         .filter(Boolean),
     ]
 
+    if (listaDestinos.length === 0) {
+      setChipsColapsadosMovil(false)
+      setError('Selecciona al menos una unidad de DESTINO.')
+      return
+    }
+
+    enviandoRef.current = true
     setEnviando(true)
     try {
       await registrarMensajeRadio(usuario, {
@@ -326,20 +599,35 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
         origen,
         destinos: listaDestinos,
         actividades,
+        id_determinista: borradorIdRef.current,
       })
+      borradorIdRef.current = generarIdBorradorRadio()
       setActividades('')
       setDestinoExtra('')
     } catch (err) {
       const tieneCodigo = Boolean((err as { code?: string })?.code)
       setError(!tieneCodigo && err instanceof Error ? err.message : mensajeDeError(err))
     } finally {
+      enviandoRef.current = false
       setEnviando(false)
     }
   }
 
+  const abrirEdicionRegistro = useCallback((r: RegistroBitacoraRadio) => {
+    setRegistroEditando(r)
+    setTextoEditado(r.actividades)
+  }, [])
+
   async function manejarGuardarEdicion(e: FormEvent) {
     e.preventDefault()
-    if (!operativoActivo || operativoActivo.estatus === 'Finalizado' || operativoActivo.estatus === 'Cancelado' || !registroEditando) return
+    if (
+      !operativoActivo ||
+      operativoActivo.estatus === 'Finalizado' ||
+      operativoActivo.estatus === 'Cancelado' ||
+      !registroEditando
+    ) {
+      return
+    }
     setError(null)
     setAviso(null)
     setEnviando(true)
@@ -378,7 +666,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
   }
 
   return (
-    <div className="flex h-[calc(100dvh-8.25rem)] min-h-0 flex-col gap-2.5 lg:h-[calc(100dvh-3rem)] lg:gap-3">
+    <div className="flex min-h-0 flex-1 flex-col gap-2.5 lg:gap-3">
       {/* Cabecera compacta de Consola + Wake Lock + Exportar CSV Local */}
       <article className="tarjeta flex shrink-0 flex-col gap-2 p-2.5 sm:p-3.5">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -403,7 +691,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
                 setMostrandoNuevoCanal(false)
                 setMostrandoNuevaUnidad(false)
               }}
-              className="campo min-h-9 min-w-0 flex-1 text-xs font-semibold sm:w-52 sm:flex-none"
+              className="campo min-h-10 min-w-0 flex-1 text-xs font-semibold sm:w-52 sm:flex-none lg:min-h-9"
             >
               {operativosActivos.length === 0 ? (
                 <option value="">Sin operativos activos</option>
@@ -424,7 +712,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
                   ? 'Evita que la pantalla se apague durante la guardia'
                   : 'Tu navegador no permite mantener la pantalla encendida'
               }
-              className={`btn min-h-9 px-2.5 text-xs ${
+              className={`btn min-h-10 px-2.5 text-xs lg:min-h-9 ${
                 wakeLock.activo
                   ? 'border border-activo bg-activo-suave text-activo dark:border-activo-claro dark:bg-noche-campo dark:text-activo-claro'
                   : 'border border-borde bg-fondo text-tinta dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta'
@@ -450,7 +738,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
                 }
               }}
               aria-label="Exportar bitácora a CSV"
-              className="btn-salvia min-h-9 px-2.5 text-xs"
+              className="btn-salvia min-h-10 px-2.5 text-xs lg:min-h-9"
             >
               <Download size={14} strokeWidth={2} />
               <span className="hidden sm:inline">CSV</span>
@@ -459,7 +747,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
             <button
               type="button"
               onClick={() => setSheetClavesAbierto(true)}
-              className="btn-verde min-h-9 px-2.5 text-xs lg:hidden"
+              className="btn-verde min-h-10 px-3 text-xs lg:hidden"
             >
               <BookOpen size={14} strokeWidth={2} />
               <span>Claves</span>
@@ -473,7 +761,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
           </p>
         )}
 
-        {/* Pestañas de Canales Multi-Canal (scroll horizontal limpio en móvil) */}
+        {/* Pestañas de Canales Multi-Canal (>= 40px en móvil) */}
         {operativoActivo && (
           <div className="flex items-center gap-1.5 overflow-x-auto border-t border-borde pt-2 dark:border-noche-borde">
             {canales.map((c) => (
@@ -481,7 +769,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
                 key={c.id}
                 type="button"
                 onClick={() => setCanalIdSel(c.id)}
-                className={`min-h-8 shrink-0 cursor-pointer rounded-md px-3 text-xs font-bold whitespace-nowrap transition-colors ${
+                className={`min-h-10 shrink-0 cursor-pointer rounded-lg px-3.5 text-xs font-bold whitespace-nowrap transition-colors lg:min-h-8 lg:rounded-md lg:px-3 ${
                   canalActivo?.id === c.id
                     ? 'bg-udec text-white'
                     : 'bg-salvia text-udec-oscuro hover:bg-salvia-hover dark:bg-noche-campo dark:text-noche-tinta-suave'
@@ -494,7 +782,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
             <button
               type="button"
               onClick={() => setMostrandoNuevoCanal((v) => !v)}
-              className="btn-salvia min-h-8 shrink-0 px-2.5 text-xs whitespace-nowrap"
+              className="btn-salvia min-h-10 shrink-0 px-3 text-xs whitespace-nowrap lg:min-h-8 lg:px-2.5"
             >
               <Plus size={14} strokeWidth={2} />
               <span>Canal</span>
@@ -513,7 +801,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
                   key={sug.nombre}
                   type="button"
                   onClick={() => void manejarCrearCanal(sug.nombre, sug.etiqueta, sug.unidades)}
-                  className="cursor-pointer rounded-full border border-udec bg-salvia px-2.5 py-0.5 text-xs font-semibold text-udec-oscuro hover:bg-salvia-hover dark:border-activo-claro dark:bg-noche-tarjeta dark:text-noche-tinta"
+                  className="min-h-9 cursor-pointer rounded-full border border-udec bg-salvia px-3 text-xs font-semibold text-udec-oscuro hover:bg-salvia-hover dark:border-activo-claro dark:bg-noche-tarjeta dark:text-noche-tinta"
                 >
                   + {sug.nombre}
                 </button>
@@ -526,7 +814,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
                 placeholder="Nombre de canal personalizado"
                 value={nombreCanalNuevo}
                 onChange={(e) => setNombreCanalNuevo(e.target.value)}
-                className="campo min-h-9 flex-1 text-xs"
+                className="campo min-h-10 flex-1 text-xs"
               />
               <input
                 type="text"
@@ -534,12 +822,12 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
                 placeholder="Frecuencia / etiqueta"
                 value={etiquetaCanalNuevo}
                 onChange={(e) => setEtiquetaCanalNuevo(e.target.value)}
-                className="campo min-h-9 w-40 text-xs"
+                className="campo min-h-10 w-40 text-xs"
               />
               <button
                 type="button"
                 onClick={() => void manejarCrearCanal(nombreCanalNuevo, etiquetaCanalNuevo)}
-                className="btn-verde min-h-9 px-3 text-xs"
+                className="btn-verde min-h-10 px-3.5 text-xs"
               >
                 Crear
               </button>
@@ -551,7 +839,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
       {error && (
         <div
           role="alert"
-          className="flex shrink-0 items-start gap-2 rounded-lg border border-alerta bg-alerta-suave px-3 py-2 text-xs font-semibold text-red-900 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+          className="flex shrink-0 items-start gap-2 rounded-lg border border-alerta bg-alerta-suave px-3 py-2 text-xs font-semibold text-alerta-texto dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
         >
           <AlertCircle size={15} strokeWidth={2} className="mt-0.5 shrink-0" />
           <span>{error}</span>
@@ -561,7 +849,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
       {aviso && (
         <div
           role="status"
-          className="flex shrink-0 items-start gap-2 rounded-lg border border-activo bg-activo-suave px-3 py-2 text-xs font-semibold text-emerald-900 dark:bg-noche-campo dark:text-activo-claro"
+          className="flex shrink-0 items-start gap-2 rounded-lg border border-activo bg-activo-suave px-3 py-2 text-xs font-semibold text-activo-texto dark:bg-noche-campo dark:text-activo-claro"
         >
           <CheckCircle2 size={15} strokeWidth={2} className="mt-0.5 shrink-0" />
           <span>{aviso}</span>
@@ -613,30 +901,36 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
             </article>
           </div>
         ) : (
-          /* Columna izquierda: en móvil muestra tabla arriba y captura fija abajo sobre el teclado; en PC captura arriba y tabla compacta debajo */
+          /* Columna izquierda: en móvil muestra tabla arriba (ascendente) y captura fija abajo; en PC captura arriba y tabla descendente debajo */
           <div className="flex min-h-0 flex-col-reverse gap-2.5 lg:col-span-8 lg:flex-col">
             {/* Barra de captura rápida */}
             <article
               ref={barraCapturaRef}
-              className="tarjeta sticky bottom-0 z-20 flex shrink-0 flex-col gap-2 p-2.5 sm:p-3 lg:static"
+              className="tarjeta z-20 flex shrink-0 flex-col gap-2 p-2.5 sm:p-3"
             >
               <form onSubmit={manejarEnviarMensaje} className="flex flex-col gap-2">
-                {/* Barra resumida de 1 línea en móvil para colapsar/expandir chips ORIGEN -> DESTINO */}
+                {/* Barra resumida de 1 línea en móvil para colapsar/expandir chips ORIGEN -> DESTINO (>= 40px) */}
                 <div className="flex items-center justify-between gap-2 lg:hidden">
                   <button
                     type="button"
                     onClick={() => setChipsColapsadosMovil((v) => !v)}
-                    className="flex min-h-8 min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-lg border border-borde bg-fondo px-2.5 text-left text-xs font-bold text-tinta dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta"
+                    className="flex min-h-10 min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-lg border border-borde bg-fondo px-3 text-left text-xs font-bold text-tinta dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta"
                   >
                     <span className="truncate text-udec dark:text-activo-claro">
                       {origen.trim() || 'Origen'}
                     </span>
                     <span className="shrink-0 text-tinta-suave">→</span>
-                    <span className="truncate">
-                      {resumenDestinos.length > 0 ? resumenDestinos.join(', ') : 'Sin destino'}
+                    <span
+                      className={`truncate ${
+                        resumenDestinos.length === 0
+                          ? 'text-ambar-texto dark:text-noche-ambar-texto'
+                          : ''
+                      }`}
+                    >
+                      {resumenDestinos.length > 0 ? resumenDestinos.join(', ') : 'Elegir destino'}
                     </span>
                     <span className="ml-auto shrink-0 text-tinta-suave dark:text-noche-tinta-suave">
-                      {chipsColapsadosMovil ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                      {chipsColapsadosMovil ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                     </span>
                   </button>
 
@@ -645,40 +939,42 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
                     onClick={intercambiarOrigenDestino}
                     title="Invertir Origen y Destino"
                     aria-label="Invertir Origen y Destino"
-                    className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-borde bg-fondo text-tinta dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta"
+                    className="inline-flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-borde bg-fondo text-tinta dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta"
                   >
-                    <ArrowLeftRight size={14} strokeWidth={2} />
+                    <ArrowLeftRight size={16} strokeWidth={2} />
                   </button>
                 </div>
 
                 {/* Selector de chips ORIGEN / DESTINO (siempre visible en lg+, desplegable en móvil) */}
                 <div
                   className={`${
-                    chipsColapsadosMovil ? 'hidden lg:grid' : 'grid max-h-44 overflow-y-auto lg:max-h-none'
+                    chipsColapsadosMovil
+                      ? 'hidden lg:grid'
+                      : 'grid max-h-52 overflow-y-auto lg:max-h-none'
                   } grid-cols-1 items-start gap-2.5 md:grid-cols-11`}
                 >
                   {/* ORIGEN */}
-                  <div className="flex flex-col gap-1 md:col-span-5">
+                  <div className="flex flex-col gap-1.5 md:col-span-5">
                     <div className="flex items-center justify-between gap-2">
                       <span className="etiqueta">ORIGEN</span>
                       <button
                         type="button"
                         onClick={() => setMostrandoNuevaUnidad((v) => !v)}
-                        className="cursor-pointer text-[11px] font-bold text-udec underline dark:text-activo-claro"
+                        className="min-h-8 cursor-pointer px-1 text-xs font-bold text-udec underline dark:text-activo-claro"
                       >
                         + Unidad
                       </button>
                     </div>
-                    <div className="flex flex-wrap gap-1">
+                    <div className="flex flex-wrap gap-1.5">
                       {unidadesCanal.map((u) => (
                         <button
                           key={u}
                           type="button"
                           onClick={() => setOrigen(u)}
-                          className={`cursor-pointer rounded px-2 py-0.5 text-xs font-bold ${
+                          className={`min-h-10 cursor-pointer rounded-lg px-3 text-xs font-bold transition-colors lg:min-h-7 lg:rounded lg:px-2 ${
                             origen === u
                               ? 'bg-udec text-white'
-                              : 'bg-salvia text-udec-oscuro dark:bg-noche-campo dark:text-noche-tinta-suave'
+                              : 'bg-salvia text-udec-oscuro hover:bg-salvia-hover dark:bg-noche-campo dark:text-noche-tinta-suave'
                           }`}
                         >
                           {u}
@@ -691,7 +987,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
                       placeholder="Ej. CECOM, 58A, TESLA"
                       value={origen}
                       onChange={(e) => setOrigen(e.target.value)}
-                      className="campo min-h-9 text-xs font-semibold"
+                      className="campo min-h-10 text-xs font-semibold lg:min-h-9"
                     />
                   </div>
 
@@ -709,9 +1005,9 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
                   </div>
 
                   {/* DESTINO */}
-                  <div className="flex flex-col gap-1 md:col-span-5">
+                  <div className="flex flex-col gap-1.5 md:col-span-5">
                     <span className="etiqueta">DESTINO</span>
-                    <div className="flex flex-wrap gap-1">
+                    <div className="flex flex-wrap gap-1.5">
                       {unidadesCanal.map((u) => {
                         const activo = destinos.includes(u)
                         return (
@@ -719,10 +1015,10 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
                             key={u}
                             type="button"
                             onClick={() => alternarDestino(u)}
-                            className={`cursor-pointer rounded px-2 py-0.5 text-xs font-bold ${
+                            className={`min-h-10 cursor-pointer rounded-lg px-3 text-xs font-bold transition-colors lg:min-h-7 lg:rounded lg:px-2 ${
                               activo
                                 ? 'bg-udec text-white'
-                                : 'bg-salvia text-udec-oscuro dark:bg-noche-campo dark:text-noche-tinta-suave'
+                                : 'bg-salvia text-udec-oscuro hover:bg-salvia-hover dark:bg-noche-campo dark:text-noche-tinta-suave'
                             }`}
                           >
                             {u}
@@ -736,7 +1032,7 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
                       placeholder="Otros destinos (ej. UCOL-01, Lince)"
                       value={destinoExtra}
                       onChange={(e) => setDestinoExtra(e.target.value)}
-                      className="campo min-h-9 text-xs"
+                      className="campo min-h-10 text-xs lg:min-h-9"
                     />
                   </div>
                 </div>
@@ -750,19 +1046,19 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
                       placeholder="Nueva unidad / clave (ej. UCOL-01, Lince)"
                       value={nuevaUnidad}
                       onChange={(e) => setNuevaUnidad(e.target.value)}
-                      className="campo min-h-9 flex-1 text-xs"
+                      className="campo min-h-10 flex-1 text-xs"
                     />
                     <button
                       type="button"
                       onClick={(e) => void manejarAgregarUnidad(e)}
-                      className="btn-verde min-h-9 px-3 text-xs"
+                      className="btn-verde min-h-10 px-3.5 text-xs"
                     >
                       Agregar
                     </button>
                   </div>
                 )}
 
-                {/* Actividades + botón naranja Enviar (siempre visible en una sola fila) */}
+                {/* Actividades + botón naranja Enviar (>= 48px en móvil y escritorio) */}
                 <div className="flex items-center gap-2">
                   <input
                     ref={inputActividadesRef}
@@ -772,21 +1068,21 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
                     value={actividades}
                     onFocus={alEnfocarActividades}
                     onChange={(e) => setActividades(e.target.value)}
-                    className="campo min-h-10 min-w-0 flex-1 text-sm font-medium"
+                    className="campo min-h-12 min-w-0 flex-1 text-sm font-medium"
                   />
                   <button
                     type="submit"
                     disabled={enviando}
-                    className="btn-naranja min-h-10 shrink-0 px-3.5 sm:px-5"
+                    className="btn-naranja min-h-12 shrink-0 px-4 sm:px-5"
                   >
-                    <Send size={15} strokeWidth={2} />
+                    <Send size={16} strokeWidth={2} />
                     <span>{enviando ? '...' : 'Enviar'}</span>
                   </button>
                 </div>
               </form>
             </article>
 
-            {/* Registros cronológicos (denso en escritorio + tarjetas de 2 líneas en móvil sin scroll horizontal) */}
+            {/* Registros cronológicos: ascendente en móvil (reciente junto a captura) + tabla descendente en escritorio */}
             <article className="tarjeta flex min-h-0 flex-1 flex-col overflow-hidden">
               {registros.length === 0 ? (
                 <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
@@ -800,68 +1096,38 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
                 </div>
               ) : (
                 <>
-                  {/* Vista móvil: filas densas de 2 líneas sin scroll horizontal */}
-                  <div className="flex min-h-0 flex-1 flex-col divide-y divide-borde overflow-y-auto md:hidden dark:divide-noche-borde">
-                    {registros.map((r) => (
-                      <div key={r.id} className="flex flex-col gap-0.5 px-3 py-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex min-w-0 flex-1 items-center gap-1.5 text-xs">
-                            <span className="shrink-0 font-bold tabular-nums text-tinta-suave dark:text-noche-tinta-suave">
-                              {r.hora_original}
-                            </span>
-                            <span className="truncate font-bold text-udec dark:text-activo-claro">
-                              {r.origen}
-                            </span>
-                            <span className="shrink-0 text-tinta-suave">→</span>
-                            <span className="truncate font-semibold text-tinta dark:text-noche-tinta">
-                              {r.destinos.join(', ')}
-                            </span>
-                            {r.sync_status === 'pendiente' && (
-                              <span
-                                title="Pendiente de sincronizar"
-                                className="inline-flex shrink-0 items-center gap-0.5 rounded bg-ambar-suave px-1.5 py-0.5 text-[10px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto"
-                              >
-                                <CloudOff size={10} strokeWidth={2} />
-                                <span>Pendiente de sincronizar</span>
-                              </span>
-                            )}
-                            {r.fue_editado && (
-                              <span className="shrink-0 rounded bg-ambar-suave px-1 py-0.5 text-[10px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
-                                Ed.
-                              </span>
-                            )}
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setRegistroEditando(r)
-                              setTextoEditado(r.actividades)
-                            }}
-                            aria-label={`Editar actividad de ${r.hora_original}`}
-                            className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded border border-borde bg-fondo text-tinta-suave dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta-suave"
-                          >
-                            <Pencil size={12} strokeWidth={2} />
-                          </button>
-                        </div>
-
-                        <p className="text-[13px] leading-snug font-medium text-tinta dark:text-noche-tinta">
-                          {r.actividades}
-                        </p>
-                        {r.fue_editado && r.actividad_original_respaldo && (
-                          <p className="text-[11px] leading-tight text-tinta-suave dark:text-noche-tinta-suave">
-                            Original: &ldquo;{r.actividad_original_respaldo}&rdquo;
-                          </p>
-                        )}
+                  {/* Vista móvil (< md): orden cronológico ascendente con el último mensaje justo encima de la captura */}
+                  <div
+                    ref={listaMovilRef}
+                    className="flex min-h-0 flex-1 flex-col divide-y divide-borde overflow-y-auto md:hidden dark:divide-noche-borde"
+                  >
+                    {hayMasRegistrosRadio && (
+                      <div className="flex shrink-0 justify-center bg-superficie-suave px-3 py-2 dark:bg-noche-campo">
+                        <button
+                          type="button"
+                          disabled={cargandoMasRadio}
+                          onClick={() => void cargarMasRegistrosRadio()}
+                          className="btn-salvia min-h-10 px-4 text-xs"
+                        >
+                          {cargandoMasRadio ? 'Cargando...' : 'Cargar mensajes anteriores'}
+                        </button>
                       </div>
+                    )}
+                    {registrosMovil.map((r) => (
+                      <FilaRadioMovil
+                        key={r.id}
+                        registro={r}
+                        alEditar={abrirEdicionRegistro}
+                      />
                     ))}
                   </div>
 
-                  {/* Vista escritorio: tabla compacta */}
+                  {/* Vista escritorio (md+): tabla compacta en orden descendente */}
                   <div className="hidden min-h-0 flex-1 overflow-auto md:block">
                     <table className="w-full border-collapse text-left">
                       <thead className="sticky top-0 z-10 bg-udec-oscuro text-white">
                         <tr>
-                          <th scope="col" className="w-32 px-3 py-2 text-[11px] font-semibold">
+                          <th scope="col" className="w-36 px-3 py-2 text-[11px] font-semibold">
                             Hora
                           </th>
                           <th scope="col" className="w-24 px-3 py-2 text-[11px] font-semibold">
@@ -873,81 +1139,30 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
                           <th scope="col" className="px-3 py-2 text-[11px] font-semibold">
                             Actividades
                           </th>
-                          <th scope="col" className="w-14 px-2 py-2 text-center text-[11px] font-semibold">
+                          <th scope="col" className="w-16 px-2 py-2 text-center text-[11px] font-semibold">
                             Ed.
                           </th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-borde dark:divide-noche-borde">
                         {registros.map((r) => (
-                          <tr
+                          <FilaRadioEscritorio
                             key={r.id}
-                            className="align-top hover:bg-superficie-suave/60 dark:hover:bg-noche-campo/50"
-                          >
-                            <td className="px-3 py-1.5 whitespace-nowrap">
-                              <div className="flex flex-wrap items-center gap-1">
-                                <span className="text-xs font-bold tabular-nums text-tinta dark:text-noche-tinta">
-                                  {r.hora_original}
-                                </span>
-                                {r.sync_status === 'pendiente' && (
-                                  <span
-                                    title="Guardado localmente; se sincronizará al recuperar señal"
-                                    className="inline-flex items-center gap-0.5 rounded bg-ambar-suave px-1.5 py-0.5 text-[10px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto"
-                                  >
-                                    <CloudOff size={10} strokeWidth={2} />
-                                    <span>Pendiente de sincronizar</span>
-                                  </span>
-                                )}
-                                {r.fue_editado && (
-                                  <span
-                                    title={`Original: ${r.actividad_original_respaldo ?? ''} · Editado por ${r.editado_por ?? ''}`}
-                                    className="rounded bg-ambar-suave px-1 py-0.5 text-[10px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto"
-                                  >
-                                    Editado
-                                  </span>
-                                )}
-                              </div>
-                            </td>
-                            <td className="px-3 py-1.5 text-xs font-bold text-tinta dark:text-noche-tinta">
-                              {r.origen}
-                            </td>
-                            <td className="px-3 py-1.5 text-xs font-semibold text-tinta dark:text-noche-tinta">
-                              {r.destinos.join(', ')}
-                            </td>
-                            <td className="px-3 py-1.5 text-[13px] leading-snug text-tinta dark:text-noche-tinta">
-                              <p className="font-medium">{r.actividades}</p>
-                              {r.fue_editado && r.actividad_original_respaldo && (
-                                <p className="mt-0.5 text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
-                                  Original: &ldquo;{r.actividad_original_respaldo}&rdquo;
-                                </p>
-                              )}
-                            </td>
-                            <td className="px-2 py-1.5 text-center">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setRegistroEditando(r)
-                                  setTextoEditado(r.actividades)
-                                }}
-                                aria-label={`Editar actividad de ${r.hora_original}`}
-                                className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-borde bg-fondo text-tinta-suave hover:border-udec hover:text-udec dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta-suave"
-                              >
-                                <Pencil size={13} strokeWidth={2} />
-                              </button>
-                            </td>
-                          </tr>
+                            registro={r}
+                            alEditar={abrirEdicionRegistro}
+                          />
                         ))}
                       </tbody>
                     </table>
                   </div>
 
                   {hayMasRegistrosRadio && (
-                    <div className="flex shrink-0 justify-center border-t border-borde bg-superficie-suave px-3 py-2 dark:border-noche-borde dark:bg-noche-campo">
+                    <div className="hidden shrink-0 justify-center border-t border-borde bg-superficie-suave px-3 py-2 md:flex dark:border-noche-borde dark:bg-noche-campo">
                       <button
                         type="button"
                         disabled={cargandoMasRadio}
                         onClick={() => void cargarMasRegistrosRadio()}
-                        className="btn-salvia min-h-8 px-3.5 text-xs"
+                        className="btn-salvia min-h-9 px-3.5 text-xs"
                       >
                         {cargandoMasRadio ? 'Cargando...' : 'Cargar mensajes anteriores'}
                       </button>
@@ -995,59 +1210,62 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
       )}
 
       {/* Modal de edición de actividad (hora_original inmutable) */}
-      {registroEditando && operativoActivo && operativoActivo.estatus !== 'Finalizado' && operativoActivo.estatus !== 'Cancelado' && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Editar registro de radio"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
-        >
-          <article className="tarjeta flex w-full max-w-md flex-col gap-4 p-5">
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <h3 className="text-base font-bold text-tinta dark:text-noche-tinta">
-                  Editar actividad ·{' '}
-                  <span className="tabular-nums">{registroEditando.hora_original}</span>
-                </h3>
-                <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-                  La hora original se conserva y el texto anterior queda guardado como respaldo.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setRegistroEditando(null)}
-                aria-label="Cerrar"
-                className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-tinta-suave"
-              >
-                <X size={18} strokeWidth={2} />
-              </button>
-            </div>
-
-            <form onSubmit={manejarGuardarEdicion} className="flex flex-col gap-3">
-              <textarea
-                rows={3}
-                maxLength={1000}
-                value={textoEditado}
-                onChange={(e) => setTextoEditado(e.target.value)}
-                className="campo min-h-24 py-2 text-sm"
-                required
-              />
-              <div className="flex justify-end gap-2">
+      {registroEditando &&
+        operativoActivo &&
+        operativoActivo.estatus !== 'Finalizado' &&
+        operativoActivo.estatus !== 'Cancelado' && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Editar registro de radio"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
+          >
+            <article className="tarjeta flex w-full max-w-md flex-col gap-4 p-5">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-base font-bold text-tinta dark:text-noche-tinta">
+                    Editar actividad ·{' '}
+                    <span className="tabular-nums">{registroEditando.hora_original}</span>
+                  </h3>
+                  <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
+                    La hora original se conserva y el texto anterior queda guardado como respaldo.
+                  </p>
+                </div>
                 <button
                   type="button"
                   onClick={() => setRegistroEditando(null)}
-                  className="btn-salvia"
+                  aria-label="Cerrar"
+                  className="inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-lg text-tinta-suave hover:bg-superficie-suave dark:hover:bg-noche-campo"
                 >
-                  Cancelar
-                </button>
-                <button type="submit" disabled={enviando} className="btn-verde">
-                  {enviando ? 'Guardando...' : 'Guardar corrección'}
+                  <X size={18} strokeWidth={2} />
                 </button>
               </div>
-            </form>
-          </article>
-        </div>
-      )}
+
+              <form onSubmit={manejarGuardarEdicion} className="flex flex-col gap-3">
+                <textarea
+                  rows={3}
+                  maxLength={1000}
+                  value={textoEditado}
+                  onChange={(e) => setTextoEditado(e.target.value)}
+                  className="campo min-h-24 py-2 text-sm"
+                  required
+                />
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setRegistroEditando(null)}
+                    className="btn-salvia"
+                  >
+                    Cancelar
+                  </button>
+                  <button type="submit" disabled={enviando} className="btn-verde">
+                    {enviando ? 'Guardando...' : 'Guardar corrección'}
+                  </button>
+                </div>
+              </form>
+            </article>
+          </div>
+        )}
     </div>
   )
 }

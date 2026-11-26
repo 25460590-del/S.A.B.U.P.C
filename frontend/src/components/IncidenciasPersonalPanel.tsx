@@ -402,7 +402,7 @@ export function IncidenciasPersonalPanel({ actor }: IncidenciasPersonalPanelProp
       {error && (
         <div
           role="alert"
-          className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-3 text-xs font-semibold text-red-900 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+          className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-3 text-xs font-semibold text-alerta-texto dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
         >
           <AlertCircle size={16} strokeWidth={2} className="mt-0.5 shrink-0" />
           <span>{error}</span>
@@ -412,7 +412,7 @@ export function IncidenciasPersonalPanel({ actor }: IncidenciasPersonalPanelProp
       {aviso && (
         <div
           role="status"
-          className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-3 text-xs font-semibold text-emerald-900 dark:bg-noche-campo dark:text-activo-claro"
+          className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-3 text-xs font-semibold text-activo-texto dark:bg-noche-campo dark:text-activo-claro"
         >
           <CheckCircle2 size={16} strokeWidth={2} className="mt-0.5 shrink-0" />
           <span>{aviso}</span>
@@ -667,7 +667,7 @@ export function IncidenciasPersonalPanel({ actor }: IncidenciasPersonalPanelProp
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span
-                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${
                       item.origen === 'material'
                         ? 'bg-naranja-suave text-naranja-oscuro dark:bg-noche-campo dark:text-naranja'
                         : 'bg-salvia text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro'
@@ -687,12 +687,12 @@ export function IncidenciasPersonalPanel({ actor }: IncidenciasPersonalPanelProp
                   <span className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
                     ({item.subgrupo})
                   </span>
-                  <span className="rounded bg-superficie-suave px-1.5 py-0.5 text-[10px] font-semibold text-tinta dark:bg-noche-campo dark:text-noche-tinta">
+                  <span className="rounded bg-superficie-suave px-1.5 py-0.5 text-[11px] font-semibold text-tinta dark:bg-noche-campo dark:text-noche-tinta">
                     {item.etiquetaTipo}
                   </span>
                   {item.origen === 'personal' && (
                     <span
-                      className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                      className={`rounded px-1.5 py-0.5 text-[11px] font-bold ${
                         item.severidad === 'Alta'
                           ? 'bg-alerta-suave text-alerta dark:bg-noche-rojo-suave dark:text-noche-rojo-texto'
                           : item.severidad === 'Media'

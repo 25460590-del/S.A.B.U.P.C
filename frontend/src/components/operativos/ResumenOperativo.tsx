@@ -269,7 +269,7 @@ export function ResumenOperativo({
                   disabled={cambiandoEstado}
                   className={`btn min-h-10 px-4 text-xs ${
                     opRecepcionAbierta
-                      ? 'border border-ambar bg-ambar-suave text-ambar-texto hover:bg-amber-100 dark:bg-noche-ambar dark:text-noche-ambar-texto'
+                      ? 'border border-ambar bg-ambar-suave text-ambar-texto hover:bg-ambar-hover dark:bg-noche-ambar dark:text-noche-ambar-texto'
                       : 'btn-verde'
                   }`}
                 >
@@ -292,7 +292,7 @@ export function ResumenOperativo({
                   type="button"
                   disabled={verificandoCierre}
                   onClick={alIniciarFinalizar}
-                  className="btn-naranja min-h-10 px-4 text-xs"
+                  className="btn min-h-10 border border-alerta bg-tarjeta px-4 text-xs text-alerta hover:bg-alerta-suave dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
                 >
                   <ShieldAlert size={15} strokeWidth={2} />
                   <span>

@@ -18,10 +18,7 @@ export function IndicadorAlcanceAyudantia({
 }: IndicadorAlcanceAyudantiaProps) {
   if (compacto) {
     return (
-      <div
-        role="status"
-        className="inline-flex flex-wrap items-center gap-1.5 rounded-full border border-udec/35 bg-salvia px-3 py-1 text-xs font-bold text-udec-oscuro dark:border-activo-claro/35 dark:bg-noche-campo dark:text-activo-claro"
-      >
+      <div role="status" className="badge-ayudantia px-3 py-1 text-xs">
         <ShieldCheck size={14} strokeWidth={2} className="shrink-0" />
         <span>Jefatura · {ayudantia}</span>
       </div>
@@ -32,7 +29,7 @@ export function IndicadorAlcanceAyudantia({
     <div
       role="status"
       aria-label={`Viendo ayudantía ${ayudantia}`}
-      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-udec/35 bg-salvia px-3.5 py-2.5 text-udec-oscuro dark:border-activo-claro/35 dark:bg-noche-campo dark:text-noche-tinta"
+      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-salvia-borde bg-salvia px-3.5 py-2.5 text-udec-oscuro dark:border-activo-claro/35 dark:bg-noche-campo dark:text-noche-tinta"
     >
       <div className="flex min-w-0 items-center gap-2.5">
         <ShieldCheck
@@ -51,9 +48,7 @@ export function IndicadorAlcanceAyudantia({
         </div>
       </div>
 
-      <span className="shrink-0 rounded-full bg-udec px-2.5 py-0.5 text-[11px] font-bold text-white">
-        {ayudantia}
-      </span>
+      <span className="badge-ayudantia shrink-0 bg-tarjeta dark:bg-noche-tarjeta">{ayudantia}</span>
     </div>
   )
 }

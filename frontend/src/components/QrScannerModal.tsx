@@ -185,7 +185,7 @@ export function QrScannerModal({
               type="button"
               onClick={() => void alternarLinterna()}
               disabled={!soportaLinterna || procesando}
-              className="btn bg-salvia text-udec-oscuro hover:bg-emerald-100 disabled:opacity-45"
+              className="btn bg-salvia text-udec-oscuro hover:bg-salvia-hover disabled:opacity-45"
             >
               {linternaActiva ? (
                 <FlashlightOff size={20} strokeWidth={2} />

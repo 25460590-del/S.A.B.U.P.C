@@ -437,12 +437,12 @@ export function AdminConsolePage({
                 : 'Mi Personal a Cargo'}
           </h2>
           {soyAdmin ? (
-            <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
+            <p className="text-xs tabular-nums text-tinta-suave dark:text-noche-tinta-suave">
               Directorio completo ({usuarios.length} registros) · Asignar rol Encargado en Grupo
               Operativo con ayudantía activa automáticamente el mando como Jefe de Ayudantía.
             </p>
           ) : ayJefe ? (
-            <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
+            <p className="text-xs tabular-nums text-tinta-suave dark:text-noche-tinta-suave">
               Padrón operativo de {ayJefe} ({usuarios.length} integrante
               {usuarios.length === 1 ? '' : 's'}) · Consulta de Ficha de Emergencia, material propio
               y edición operativa.
@@ -469,7 +469,7 @@ export function AdminConsolePage({
           <button
             type="button"
             onClick={() => setPestana('directorio')}
-            className={`min-h-9 cursor-pointer rounded-lg px-3 text-xs font-semibold transition-colors ${
+            className={`min-h-9 cursor-pointer rounded-lg px-3 text-xs font-semibold tabular-nums transition-colors ${
               pestana === 'directorio'
                 ? 'bg-udec text-white'
                 : 'text-tinta-suave hover:bg-tarjeta dark:text-noche-tinta-suave dark:hover:bg-noche-tarjeta'
@@ -501,7 +501,7 @@ export function AdminConsolePage({
             >
               <span>Pendientes</span>
               {pendientes.length > 0 && (
-                <span className="rounded-full bg-naranja px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-tinta">
+                <span className="rounded-full bg-naranja px-1.5 py-0.5 text-[11px] font-bold tabular-nums text-tinta">
                   {pendientes.length}
                 </span>
               )}
@@ -533,7 +533,7 @@ export function AdminConsolePage({
       {error && (
         <div
           role="alert"
-          className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-3 text-xs font-semibold text-red-900 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+          className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-3 text-xs font-semibold text-alerta-texto dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
         >
           <AlertCircle size={16} strokeWidth={2} className="mt-0.5 shrink-0" />
           <span>{error}</span>
@@ -543,7 +543,7 @@ export function AdminConsolePage({
       {aviso && (
         <div
           role="status"
-          className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-3 text-xs font-semibold text-emerald-900 dark:bg-noche-campo dark:text-activo-claro"
+          className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-3 text-xs font-semibold text-activo-texto dark:bg-noche-campo dark:text-activo-claro"
         >
           <CheckCircle2 size={16} strokeWidth={2} className="mt-0.5 shrink-0" />
           <span>{aviso}</span>
@@ -717,7 +717,7 @@ export function AdminConsolePage({
                             {nombreCompleto(u)}
                           </span>
                           <span
-                            className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                            className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold ${
                               u.estatus === 'Activo'
                                 ? 'bg-activo-suave text-activo dark:bg-noche-campo dark:text-activo-claro'
                                 : u.estatus === 'Pendiente'
@@ -737,8 +737,8 @@ export function AdminConsolePage({
                           {clave ? ` · ${clave}` : ''}
                         </p>
                         {sinAyuOp && (
-                          <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-ambar-suave px-2 py-0.5 text-[10px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
-                            <AlertTriangle size={10} strokeWidth={2} />
+                          <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-ambar-suave px-2 py-0.5 text-[11px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
+                            <AlertTriangle size={11} strokeWidth={2} />
                             <span>Falta asignar ayudantía</span>
                           </span>
                         )}
@@ -804,16 +804,20 @@ export function AdminConsolePage({
                           <td className="px-3 py-2 text-xs text-tinta dark:text-noche-tinta">
                             <span className="font-semibold">{u.etapa}</span>
                             {u.subgrupo && (
-                              <span className="ml-1 rounded bg-salvia px-1.5 py-0.5 text-[10px] font-bold text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
+                              <span className="ml-1 rounded bg-salvia px-1.5 py-0.5 text-[11px] font-bold text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
                                 {u.subgrupo}
                               </span>
                             )}
                           </td>
                           <td className="px-3 py-2 text-xs text-tinta-suave dark:text-noche-tinta-suave">
                             {sinAyuOp ? (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-ambar-suave px-2 py-0.5 text-[10px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
+                              <span className="inline-flex items-center gap-1 rounded-full bg-ambar-suave px-2 py-0.5 text-[11px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
                                 <AlertTriangle size={11} strokeWidth={2} />
                                 <span>Falta asignar ayudantía</span>
+                              </span>
+                            ) : u.ayudantia !== 'Ninguna' ? (
+                              <span className="badge-ayudantia">
+                                {etiquetaAyudantia(u.ayudantia)}
                               </span>
                             ) : (
                               etiquetaAyudantia(u.ayudantia)
@@ -823,7 +827,7 @@ export function AdminConsolePage({
                             <div className="flex flex-wrap items-center gap-1">
                               <span>{u.rol_sistema}</span>
                               {esConfiguracionJefeAyudantia(u.rol_sistema, u.etapa, u.ayudantia) && (
-                                <span className="rounded-full bg-salvia px-2 py-0.5 text-[10px] font-bold text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
+                                <span className="rounded-full bg-salvia px-2 py-0.5 text-[11px] font-bold text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
                                   Jefe de Ayudantía
                                 </span>
                               )}
@@ -843,7 +847,7 @@ export function AdminConsolePage({
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap">
                             <span
-                              className={`inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                              className={`inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
                                 u.estatus === 'Activo'
                                   ? 'bg-activo-suave text-activo dark:bg-noche-campo dark:text-activo-claro'
                                   : u.estatus === 'Pendiente'

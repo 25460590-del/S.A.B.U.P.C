@@ -254,7 +254,7 @@ function BitacoraRadioArchivoModal({
         {error && (
           <div
             role="alert"
-            className="mx-4 mt-3 flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-2.5 text-xs font-semibold text-red-900 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+            className="mx-4 mt-3 flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-2.5 text-xs font-semibold text-alerta-texto dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
           >
             <AlertCircle size={15} strokeWidth={2} className="mt-0.5 shrink-0" />
             <span>{error}</span>
@@ -297,7 +297,7 @@ function BitacoraRadioArchivoModal({
                         {r.destinos.join(', ')}
                       </span>
                       {r.fue_editado && (
-                        <span className="rounded bg-ambar-suave px-1 py-0.5 text-[10px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
+                        <span className="rounded bg-ambar-suave px-1.5 py-0.5 text-[11px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
                           Editado
                         </span>
                       )}
@@ -310,7 +310,7 @@ function BitacoraRadioArchivoModal({
                         Original: &ldquo;{r.actividad_original_respaldo}&rdquo;
                       </p>
                     )}
-                    <p className="text-[10px] text-tinta-suave dark:text-noche-tinta-suave">
+                    <p className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
                       Registrado por: {r.registrado_por}
                     </p>
                   </div>
@@ -350,7 +350,7 @@ function BitacoraRadioArchivoModal({
                             {r.fue_editado && (
                               <span
                                 title={`Original: ${r.actividad_original_respaldo ?? ''} · Editado por ${r.editado_por ?? ''}`}
-                                className="rounded bg-ambar-suave px-1 py-0.5 text-[10px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto"
+                                className="rounded bg-ambar-suave px-1.5 py-0.5 text-[11px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto"
                               >
                                 Editado
                               </span>
@@ -661,7 +661,7 @@ export function HistorialDualPage({
       {error && (
         <div
           role="alert"
-          className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-3 text-xs font-semibold text-red-900 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+          className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-3 text-xs font-semibold text-alerta-texto dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
         >
           <AlertCircle size={16} strokeWidth={2} className="mt-0.5 shrink-0" />
           <span>{error}</span>
@@ -671,7 +671,7 @@ export function HistorialDualPage({
       {aviso && (
         <div
           role="status"
-          className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-3 text-xs font-semibold text-emerald-900 dark:bg-noche-campo dark:text-activo-claro"
+          className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-3 text-xs font-semibold text-activo-texto dark:bg-noche-campo dark:text-activo-claro"
         >
           <CheckCircle2 size={16} strokeWidth={2} className="mt-0.5 shrink-0" />
           <span>{aviso}</span>

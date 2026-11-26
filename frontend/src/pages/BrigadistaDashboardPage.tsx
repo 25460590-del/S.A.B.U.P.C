@@ -386,7 +386,7 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
             <span className="rounded-full bg-white px-2.5 py-0.5 text-xs font-bold text-udec-oscuro">
               {perfil.subgrupo || perfil.etapa}
             </span>
-            <span className="rounded-full bg-naranja px-2.5 py-0.5 text-xs font-bold text-tinta">
+            <span className="badge-ayudantia bg-salvia text-udec-oscuro">
               {etiquetaAyudantia(perfil.ayudantia)}
             </span>
           </div>
@@ -399,7 +399,7 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
       {error && (
         <div
           role="alert"
-          className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-3 text-sm font-semibold text-red-900 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+          className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-3 text-sm font-semibold text-alerta-texto dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
         >
           <AlertCircle size={18} strokeWidth={2} className="mt-0.5 shrink-0" />
           <span>{error}</span>
@@ -409,17 +409,17 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
       {aviso && (
         <div
           role="status"
-          className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-3 text-sm font-semibold text-emerald-900 dark:bg-noche-campo dark:text-activo-claro"
+          className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-3 text-sm font-semibold text-activo-texto dark:bg-noche-campo dark:text-activo-claro"
         >
           <CheckCircle2 size={18} strokeWidth={2} className="mt-0.5 shrink-0" />
           <span>{aviso}</span>
         </div>
       )}
 
-      {/* Encabezado de sección: Mi Operativo */}
+      {/* Encabezado de sección: Mi Turno */}
       <div className="flex flex-col gap-0.5">
         <h2 className="text-lg font-bold text-tinta dark:text-noche-tinta">
-          {turnoAbierto ? 'Operativo Activo' : 'Mi Operativo'}
+          {turnoAbierto ? 'Operativo Activo' : 'Mi Turno'}
         </h2>
         <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
           {turnoAbierto
@@ -428,7 +428,7 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
         </p>
       </div>
 
-      {/* CTA principal Naranja Protección Civil (#EA580C): acción directa de escaneo */}
+      {/* CTA principal Naranja Protección Civil: acción directa de escaneo */}
       <button
         type="button"
         onClick={() => {
@@ -446,13 +446,13 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
         </span>
       </button>
 
-      {/* Próximos operativos (convocatoria abierta + inscritos aunque la convocatoria ya haya cerrado) */}
+      {/* Próximos operativos (sin card-in-card: filas separadas por divide-y) */}
       {operativosVisibles.length > 0 && (
         <section
           aria-label="Próximos operativos"
-          className="tarjeta flex flex-col gap-3 p-4"
+          className="tarjeta flex flex-col overflow-hidden"
         >
-          <div className="flex items-center justify-between gap-2 border-b border-borde pb-2.5 dark:border-noche-borde">
+          <div className="flex items-center justify-between gap-2 border-b border-borde px-4 py-3 dark:border-noche-borde">
             <div className="flex items-center gap-2">
               <Megaphone size={16} strokeWidth={2} className="shrink-0 text-udec dark:text-activo-claro" />
               <h3 className="text-sm font-bold text-tinta dark:text-noche-tinta">
@@ -464,7 +464,7 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
             </span>
           </div>
 
-          <div className="flex flex-col gap-2.5">
+          <div className="divide-y divide-borde dark:divide-noche-borde">
             {operativosVisibles.map((op) => {
               const asistenciaPropia = asistenciaPorOperativo.get(op.id) ?? null
               const miPre = misPrerregistros[op.id] ?? null
@@ -477,10 +477,7 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
               const ocupado = ocupadoConvocatoriaId === op.id
 
               return (
-                <div
-                  key={op.id}
-                  className="flex flex-col gap-2.5 rounded-lg border border-borde bg-superficie-suave p-3 transition-colors hover:border-udec dark:border-noche-borde dark:bg-noche-campo dark:hover:border-activo-claro"
-                >
+                <div key={op.id} className="flex flex-col gap-2.5 px-4 py-3">
                   <button
                     type="button"
                     onClick={() => setOperativoDetalleId(op.id)}
@@ -493,7 +490,7 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
                         </h4>
                         {cupo !== null && (
                           <span
-                            className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold tabular-nums ${
+                            className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold tabular-nums ${
                               cupoLleno
                                 ? 'bg-ambar-suave text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto'
                                 : 'bg-salvia text-udec-oscuro dark:bg-noche-tarjeta dark:text-activo-claro'
@@ -520,15 +517,15 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
                     </span>
                   </button>
 
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-borde/70 pt-2 dark:border-noche-borde/70">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     {yaAsistio ? (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-activo-suave px-2.5 py-1 text-[11px] font-bold text-activo dark:bg-noche-tarjeta dark:text-activo-claro">
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-activo-suave px-2.5 py-1 text-[11px] font-bold text-activo-texto dark:bg-noche-campo dark:text-activo-claro">
                         <UserCheck size={13} strokeWidth={2} />
                         <span>Asistencia confirmada con QR</span>
                       </span>
                     ) : prerregistrado ? (
                       <>
-                        <span className="inline-flex items-center gap-1.5 rounded-full bg-salvia px-2.5 py-1 text-[11px] font-bold text-udec-oscuro dark:bg-noche-tarjeta dark:text-activo-claro">
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-salvia px-2.5 py-1 text-[11px] font-bold text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
                           <CheckCircle2 size={13} strokeWidth={2} />
                           <span>
                             {convocatoriaAbierta
@@ -544,7 +541,7 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
                               e.stopPropagation()
                               void manejarCancelarPrerregistro(op)
                             }}
-                            className="inline-flex min-h-8 cursor-pointer items-center gap-1 rounded-lg border border-borde-fuerte bg-tarjeta px-2.5 text-[11px] font-semibold text-tinta-suave hover:border-alerta hover:text-alerta disabled:opacity-50 dark:border-noche-borde dark:bg-noche-tarjeta dark:text-noche-tinta-suave dark:hover:text-noche-rojo-texto"
+                            className="inline-flex min-h-9 cursor-pointer items-center gap-1 rounded-lg border border-borde-fuerte bg-tarjeta px-2.5 text-[11px] font-semibold text-tinta-suave hover:border-alerta hover:text-alerta disabled:opacity-50 dark:border-noche-borde dark:bg-noche-tarjeta dark:text-noche-tinta-suave dark:hover:text-noche-rojo-texto"
                           >
                             <UserMinus size={12} strokeWidth={2} />
                             <span>{ocupado ? 'Cancelando...' : 'Cancelar registro'}</span>
@@ -561,7 +558,7 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
                           <button
                             type="button"
                             disabled
-                            className="btn-salvia min-h-8 px-3 text-[11px] opacity-55"
+                            className="btn-salvia min-h-9 px-3 text-[11px] opacity-55"
                           >
                             Cupo lleno
                           </button>
@@ -573,7 +570,7 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
                               e.stopPropagation()
                               void manejarApuntarme(op)
                             }}
-                            className="btn-verde min-h-8 px-3.5 text-xs"
+                            className="btn-verde min-h-9 px-3.5 text-xs"
                           >
                             <UserPlus size={14} strokeWidth={2} />
                             <span>{ocupado ? 'Apuntando...' : 'Apuntarme'}</span>

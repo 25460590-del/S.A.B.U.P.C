@@ -191,7 +191,7 @@ export function RebacePanel({
                 alInsertarCodigo ? 'cursor-pointer' : 'cursor-default'
               } ${
                 c.es_basico
-                  ? 'border-ambar/70 bg-ambar-suave/70 hover:bg-amber-100/70 dark:border-ambar/70 dark:bg-noche-ambar dark:hover:bg-amber-950/60'
+                  ? 'border-ambar/70 bg-ambar-suave/70 hover:bg-ambar-hover/70 dark:border-ambar/70 dark:bg-noche-ambar dark:hover:bg-noche-ambar/80'
                   : 'border-borde bg-fondo hover:border-udec dark:border-noche-borde dark:bg-noche-campo'
               }`}
             >
@@ -202,7 +202,7 @@ export function RebacePanel({
                   </span>
                   {c.tabla === 'claves_personales' && (
                     <span
-                      className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                      className={`rounded px-1.5 py-0.5 text-[11px] font-bold ${
                         c.categoria === 'Unidad'
                           ? 'bg-naranja-suave text-naranja-oscuro dark:bg-noche-tarjeta dark:text-naranja'
                           : 'bg-salvia text-udec-oscuro dark:bg-noche-tarjeta dark:text-activo-claro'
