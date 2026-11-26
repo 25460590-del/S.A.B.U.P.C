@@ -39,6 +39,7 @@ import {
   esEncargado,
   esEncargadoAP,
   esEncargadoTesla,
+  etiquetaAyudantia,
   puedeUsarRadio,
 } from '../lib/permisos'
 import {
@@ -788,7 +789,7 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
                   </div>
                   <div className="flex items-center justify-between gap-2 border-t border-borde pt-2.5 dark:border-noche-borde">
                     <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
-                      Etapa / Subgrupo
+                      Etapa / Grupo
                     </dt>
                     <dd className="font-semibold text-tinta dark:text-noche-tinta">
                       {perfil.etapa}
@@ -800,7 +801,7 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
                       Ayudantía
                     </dt>
                     <dd className="font-semibold text-tinta dark:text-noche-tinta">
-                      {perfil.ayudantia}
+                      {etiquetaAyudantia(perfil.ayudantia)}
                     </dd>
                   </div>
                   <div className="flex items-center justify-between gap-2 border-t border-borde pt-2.5 dark:border-noche-borde">

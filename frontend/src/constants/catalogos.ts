@@ -3,6 +3,7 @@ import type {
   CategoriaOperativo,
   EstadoOperativo,
   EtapaBrigadista,
+  EtapaFormativa,
   GravedadIncidencia,
   GrupoOperativo,
   NivelAcademico,
@@ -47,7 +48,9 @@ export const CATEGORIAS_OPERATIVO: CategoriaOperativo[] = [
 
 export const GRUPOS_OPERATIVOS: GrupoOperativo[] = ['Alfa', 'Omega', 'Ninguno']
 
-export const ETAPAS_BRIGADISTA: EtapaBrigadista[] = ['Alfa', 'Omega', 'Grupo Operativo']
+export const ETAPAS_FORMATIVAS: EtapaFormativa[] = ['Alfa', 'Omega', 'SIERRA']
+
+export const ETAPAS_BRIGADISTA: EtapaBrigadista[] = ['Alfa', 'Omega', 'SIERRA', 'Grupo Operativo']
 
 /** Semilla inicial para `catalogos/subgrupos` (respaldo si aún no existe en Firestore). */
 export const SUBGRUPOS_POR_DEFECTO: string[] = [
@@ -57,6 +60,7 @@ export const SUBGRUPOS_POR_DEFECTO: string[] = [
   'Alfa 4',
   'Omega 1',
   'Omega 2',
+  'Sierra 1',
 ]
 
 export const TIPOS_INCIDENCIA_PERSONAL: TipoIncidenciaPersonal[] = [
@@ -70,14 +74,15 @@ export const TIPOS_INCIDENCIA_PERSONAL: TipoIncidenciaPersonal[] = [
 
 export const GRAVEDADES_INCIDENCIA: GravedadIncidencia[] = ['Baja', 'Media', 'Alta']
 
-export const AYUDANTIAS: AyudantiaSlot[] = [
+export const AYUDANTIAS_ACTIVAS: Exclude<AyudantiaSlot, 'Ninguna'>[] = [
   'Capacitación',
   'Administración de Personal',
   'Tesla',
   'Socorros',
   'Logística',
-  'Ninguna',
 ]
+
+export const AYUDANTIAS: AyudantiaSlot[] = [...AYUDANTIAS_ACTIVAS, 'Ninguna']
 
 export const ROLES: RolSistema[] = ['Brigadista', 'Encargado', 'Administrador']
 

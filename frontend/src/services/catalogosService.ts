@@ -8,12 +8,41 @@ import {
 } from 'firebase/firestore'
 import { SUBGRUPOS_POR_DEFECTO } from '../constants/catalogos'
 import { db } from '../lib/firebase'
-import { puedeAdministrarCatalogos } from '../lib/permisos'
-import type { CatalogoDinamico, Usuario } from '../types'
+import {
+  etapaDeSubgrupo,
+  prefijoGrupoDeEtapa,
+  puedeAdministrarCatalogos,
+} from '../lib/permisos'
+import type { CatalogoDinamico, EtapaFormativa, Usuario } from '../types'
 import { nombreCompleto } from './authService'
 
 const SUBGRUPOS_DOC_ID = 'subgrupos'
 const SUBGRUPOS_ARCHIVADOS_DOC_ID = 'subgrupos_archivados'
+
+/**
+ * Garantiza que exista 'Sierra 1' disponible por defecto cuando el catálogo
+ * aún no tiene ninguna generación de SIERRA activa ni archivada.
+ */
+export function combinarSubgruposConSierraInicial(
+  activos: string[],
+  archivados: string[] = [],
+): string[] {
+  const tieneSierra =
+    activos.some((s) => etapaDeSubgrupo(s) === 'SIERRA') ||
+    archivados.some((s) => etapaDeSubgrupo(s) === 'SIERRA')
+  return tieneSierra ? activos : [...activos, 'Sierra 1']
+}
+
+/** Formatea el nombre de un nuevo grupo/generación (ej. etapa 'SIERRA' + '2' → 'Sierra 2'). */
+export function formatearNombreGrupoFormativo(etapa: EtapaFormativa, entrada: string): string {
+  const limpio = entrada.trim()
+  if (!limpio) return ''
+  const prefijo = prefijoGrupoDeEtapa(etapa)
+  if (limpio.toLowerCase().startsWith(prefijo.toLowerCase())) {
+    return `${prefijo}${limpio.slice(prefijo.length)}`
+  }
+  return `${prefijo} ${limpio}`
+}
 
 /**
  * Escucha el catálogo dinámico de subgrupos activos (`catalogos/subgrupos`).

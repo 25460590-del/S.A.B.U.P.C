@@ -1,7 +1,9 @@
 import {
   AlertCircle,
+  AlertTriangle,
   CheckCircle2,
   Eye,
+  Layers,
   Radio,
   Search,
   ShieldCheck,
@@ -11,12 +13,22 @@ import {
 import { useEffect, useMemo, useState } from 'react'
 import { CatalogosAuditoriaTab } from '../components/CatalogosAuditoriaTab'
 import { ExpedienteUnificadoModal } from '../components/ExpedienteUnificadoModal'
-import { AYUDANTIAS, ETAPAS_BRIGADISTA, ROLES } from '../constants/catalogos'
+import { GruposVivosPanel } from '../components/GruposVivosPanel'
+import {
+  AYUDANTIAS,
+  AYUDANTIAS_ACTIVAS,
+  ETAPAS_BRIGADISTA,
+  ROLES,
+} from '../constants/catalogos'
 import {
   esAdmin,
+  esAyudantiaValidaParaEtapa,
   esEncargadoAP,
+  etiquetaAyudantia,
+  faltaAyudantiaOperativo,
   grupoDesdeEtapa,
   puedeAsignarRadio,
+  subgruposDeEtapa,
 } from '../lib/permisos'
 import {
   aprobarUsuario,
@@ -26,7 +38,11 @@ import {
   rechazarUsuario,
   type AsignacionAlta,
 } from '../services/authService'
-import { escucharCatalogoSubgrupos } from '../services/catalogosService'
+import {
+  combinarSubgruposConSierraInicial,
+  escucharCatalogoSubgrupos,
+  escucharSubgruposArchivados,
+} from '../services/catalogosService'
 import type {
   AyudantiaSlot,
   EstatusUsuario,
@@ -38,10 +54,10 @@ import type {
 interface AdminConsolePageProps {
   admin: Usuario
   embebido?: boolean
-  pestanaInicial?: 'directorio' | 'pendientes' | 'catalogos'
+  pestanaInicial?: 'directorio' | 'grupos' | 'pendientes' | 'catalogos'
 }
 
-type PestanaPersonal = 'directorio' | 'pendientes' | 'catalogos'
+type PestanaPersonal = 'directorio' | 'grupos' | 'pendientes' | 'catalogos'
 
 function iniciales(u: Usuario): string {
   const n = (u.nombres.trim()[0] ?? '').toUpperCase()
@@ -64,14 +80,39 @@ function TarjetaPendiente({
 }) {
   const puedoRadio = puedeAsignarRadio(actor, usuario)
   const [etapa, setEtapa] = useState<EtapaBrigadista>('Alfa')
-  const [subgrupo, setSubgrupo] = useState<string>(subgruposActivos[0] ?? 'Alfa 1')
+  const [subgrupo, setSubgrupo] = useState<string>(
+    () => subgruposDeEtapa(subgruposActivos, 'Alfa')[0] ?? '',
+  )
   const [ayudantia, setAyudantia] = useState<AyudantiaSlot>('Ninguna')
   const [claveRadio, setClaveRadio] = useState('')
   const [autorizadoRadio, setAutorizadoRadio] = useState(false)
   const [confirmandoRechazo, setConfirmandoRechazo] = useState(false)
   const [ocupado, setOcupado] = useState(false)
 
+  const esOperativo = etapa === 'Grupo Operativo'
+  const opcionesGrupo = subgruposDeEtapa(subgruposActivos, etapa)
+  const grupoEfectivo = esOperativo
+    ? ''
+    : opcionesGrupo.includes(subgrupo)
+      ? subgrupo
+      : (opcionesGrupo[0] ?? '')
+  const ayudantiaInvalida = !esAyudantiaValidaParaEtapa(etapa, ayudantia)
+
+  function manejarCambioEtapa(nueva: EtapaBrigadista) {
+    setEtapa(nueva)
+    if (nueva === 'Grupo Operativo') {
+      setSubgrupo('')
+    } else {
+      const opciones = subgruposDeEtapa(subgruposActivos, nueva)
+      setSubgrupo(opciones[0] ?? '')
+    }
+  }
+
   async function manejarAprobar() {
+    if (ayudantiaInvalida) {
+      alError('Para asignar a Grupo Operativo es obligatorio seleccionar una ayudantía.')
+      return
+    }
     setOcupado(true)
     alError('')
     try {
@@ -80,7 +121,7 @@ function TarjetaPendiente({
         grupo_operativo: grupoDesdeEtapa(etapa),
         ayudantia_slot: ayudantia,
         etapa,
-        subgrupo: etapa === 'Grupo Operativo' ? '' : subgrupo,
+        subgrupo: grupoEfectivo,
         ayudantia,
         ...(puedoRadio
           ? {
@@ -93,7 +134,7 @@ function TarjetaPendiente({
       await aprobarUsuario(actor, usuario, asignacion)
       alNotificar(`Alta aprobada para ${nombreCompleto(usuario)}.`)
     } catch (err) {
-      alError(mensajeDeError(err))
+      alError(err instanceof Error ? err.message : mensajeDeError(err))
     } finally {
       setOcupado(false)
     }
@@ -143,11 +184,7 @@ function TarjetaPendiente({
           <select
             id={`etapa-${usuario.uid}`}
             value={etapa}
-            onChange={(e) => {
-              const nueva = e.target.value as EtapaBrigadista
-              setEtapa(nueva)
-              if (nueva === 'Grupo Operativo') setSubgrupo('')
-            }}
+            onChange={(e) => manejarCambioEtapa(e.target.value as EtapaBrigadista)}
             className="campo min-h-10 text-xs"
             disabled={ocupado}
           >
@@ -159,44 +196,62 @@ function TarjetaPendiente({
           </select>
         </div>
 
-        <div className="flex flex-col gap-1">
-          <label htmlFor={`sub-${usuario.uid}`} className="etiqueta">
-            Subgrupo
-          </label>
-          <select
-            id={`sub-${usuario.uid}`}
-            value={etapa === 'Grupo Operativo' ? '' : subgrupo}
-            onChange={(e) => setSubgrupo(e.target.value)}
-            className="campo min-h-10 text-xs"
-            disabled={ocupado || etapa === 'Grupo Operativo'}
-          >
-            <option value="">
-              {etapa === 'Grupo Operativo' ? 'No aplica' : 'Sin subgrupo'}
-            </option>
-            {subgruposActivos.map((sg) => (
-              <option key={sg} value={sg}>
-                {sg}
-              </option>
-            ))}
-          </select>
-        </div>
+        {!esOperativo && (
+          <div className="flex flex-col gap-1">
+            <label htmlFor={`sub-${usuario.uid}`} className="etiqueta">
+              Grupo formativo
+            </label>
+            <select
+              id={`sub-${usuario.uid}`}
+              value={grupoEfectivo}
+              onChange={(e) => setSubgrupo(e.target.value)}
+              className="campo min-h-10 text-xs"
+              disabled={ocupado}
+            >
+              <option value="">Sin grupo</option>
+              {opcionesGrupo.map((sg) => (
+                <option key={sg} value={sg}>
+                  {sg}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div className="flex flex-col gap-1">
           <label htmlFor={`ayu-${usuario.uid}`} className="etiqueta">
-            Ayudantía
+            {esOperativo ? 'Ayudantía (obligatoria)' : 'Ayudantía (opcional)'}
           </label>
           <select
             id={`ayu-${usuario.uid}`}
             value={ayudantia}
             onChange={(e) => setAyudantia(e.target.value as AyudantiaSlot)}
-            className="campo min-h-10 text-xs"
+            className={`campo min-h-10 text-xs ${
+              ayudantiaInvalida ? 'border-ambar dark:border-noche-ambar-texto' : ''
+            }`}
             disabled={ocupado}
           >
-            {AYUDANTIAS.map((a) => (
-              <option key={a} value={a}>
-                {a}
-              </option>
-            ))}
+            {esOperativo ? (
+              <>
+                {ayudantia === 'Ninguna' && (
+                  <option value="Ninguna">Selecciona una ayudantía...</option>
+                )}
+                {AYUDANTIAS_ACTIVAS.map((a) => (
+                  <option key={a} value={a}>
+                    {a}
+                  </option>
+                ))}
+              </>
+            ) : (
+              <>
+                <option value="Ninguna">Sin ayudantía</option>
+                {AYUDANTIAS_ACTIVAS.map((a) => (
+                  <option key={a} value={a}>
+                    {a}
+                  </option>
+                ))}
+              </>
+            )}
           </select>
         </div>
 
@@ -234,6 +289,12 @@ function TarjetaPendiente({
         )}
       </div>
 
+      {ayudantiaInvalida && (
+        <p className="text-[11px] font-semibold text-ambar-texto dark:text-noche-ambar-texto">
+          Selecciona una ayudantía para aprobar el ingreso directo a Grupo Operativo.
+        </p>
+      )}
+
       <div className="flex flex-wrap items-center justify-end gap-2">
         {confirmandoRechazo ? (
           <>
@@ -270,8 +331,8 @@ function TarjetaPendiente({
             <button
               type="button"
               onClick={manejarAprobar}
-              disabled={ocupado}
-              className="btn-verde min-h-9 px-4 text-xs"
+              disabled={ocupado || ayudantiaInvalida}
+              className="btn-verde min-h-9 px-4 text-xs disabled:opacity-55"
             >
               <UserCheck size={15} strokeWidth={2} />
               <span>{ocupado ? 'Aprobando...' : 'Aprobar Alta'}</span>
@@ -295,7 +356,8 @@ export function AdminConsolePage({
     pestanaInicial === 'pendientes' && !puedeVerPendientes ? 'directorio' : pestanaInicial,
   )
   const [usuarios, setUsuarios] = useState<Usuario[]>([])
-  const [subgruposActivos, setSubgruposActivos] = useState<string[]>([])
+  const [subgruposActivosRaw, setSubgruposActivosRaw] = useState<string[]>([])
+  const [subgruposArchivados, setSubgruposArchivados] = useState<string[]>([])
   const [cargando, setCargando] = useState(true)
 
   // Filtros 100% en cliente (cero lecturas extra en Firestore)
@@ -324,12 +386,19 @@ export function AdminConsolePage({
         setCargando(false)
       },
     )
-    const cSub = escucharCatalogoSubgrupos(setSubgruposActivos)
+    const cSub = escucharCatalogoSubgrupos(setSubgruposActivosRaw)
+    const cArch = escucharSubgruposArchivados(setSubgruposArchivados, () => undefined)
     return () => {
       cDir()
       cSub()
+      cArch()
     }
   }, [admin])
+
+  const subgruposActivos = useMemo(
+    () => combinarSubgruposConSierraInicial(subgruposActivosRaw, subgruposArchivados),
+    [subgruposActivosRaw, subgruposArchivados],
+  )
 
   const pendientes = useMemo(() => usuarios.filter((u) => u.estatus === 'Pendiente'), [usuarios])
 
@@ -338,8 +407,10 @@ export function AdminConsolePage({
     for (const u of usuarios) {
       if (u.subgrupo) set.add(u.subgrupo)
     }
-    return Array.from(set).sort((a, b) => a.localeCompare(b, 'es-MX'))
-  }, [usuarios, subgruposActivos])
+    const lista = Array.from(set).sort((a, b) => a.localeCompare(b, 'es-MX'))
+    if (filtroEtapa === 'Todas') return lista
+    return subgruposDeEtapa(lista, filtroEtapa)
+  }, [usuarios, subgruposActivos, filtroEtapa])
 
   const directorioFiltrado = useMemo(() => {
     const q = busqueda.trim().toLowerCase()
@@ -355,7 +426,8 @@ export function AdminConsolePage({
         u.numero_cuenta.toLowerCase().includes(q) ||
         u.correo.toLowerCase().includes(q) ||
         (u.clave_radio || u.clave_personal_radio || '').toLowerCase().includes(q) ||
-        (u.subgrupo || '').toLowerCase().includes(q)
+        (u.subgrupo || '').toLowerCase().includes(q) ||
+        u.etapa.toLowerCase().includes(q)
       )
     })
   }, [usuarios, busqueda, filtroEstatus, filtroEtapa, filtroSubgrupo, filtroAyudantia, filtroRol])
@@ -372,8 +444,8 @@ export function AdminConsolePage({
           </h2>
           {soyAdmin || soyAP ? (
             <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-              Directorio completo ({usuarios.length} registros) · Aprobaciones, adscripciones y
-              expedientes unificados.
+              Directorio completo ({usuarios.length} registros) · Grupos activos, progresión,
+              aprobaciones y expedientes.
             </p>
           ) : (
             <div className="mt-1 flex flex-wrap items-center gap-1.5">
@@ -393,19 +465,31 @@ export function AdminConsolePage({
         </div>
 
         {/* Pestañas internas */}
-        {puedeVerPendientes && (
-          <div className="inline-flex flex-wrap gap-1 rounded-xl border border-borde bg-superficie-suave p-1 dark:border-noche-borde dark:bg-noche-campo">
-            <button
-              type="button"
-              onClick={() => setPestana('directorio')}
-              className={`min-h-9 cursor-pointer rounded-lg px-3 text-xs font-semibold transition-colors ${
-                pestana === 'directorio'
-                  ? 'bg-udec text-white'
-                  : 'text-tinta-suave hover:bg-tarjeta dark:text-noche-tinta-suave dark:hover:bg-noche-tarjeta'
-              }`}
-            >
-              Directorio ({usuarios.length})
-            </button>
+        <div className="inline-flex flex-wrap gap-1 rounded-xl border border-borde bg-superficie-suave p-1 dark:border-noche-borde dark:bg-noche-campo">
+          <button
+            type="button"
+            onClick={() => setPestana('directorio')}
+            className={`min-h-9 cursor-pointer rounded-lg px-3 text-xs font-semibold transition-colors ${
+              pestana === 'directorio'
+                ? 'bg-udec text-white'
+                : 'text-tinta-suave hover:bg-tarjeta dark:text-noche-tinta-suave dark:hover:bg-noche-tarjeta'
+            }`}
+          >
+            Directorio ({usuarios.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setPestana('grupos')}
+            className={`inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition-colors ${
+              pestana === 'grupos'
+                ? 'bg-udec text-white'
+                : 'text-tinta-suave hover:bg-tarjeta dark:text-noche-tinta-suave dark:hover:bg-noche-tarjeta'
+            }`}
+          >
+            <Layers size={13} strokeWidth={2} />
+            <span>Grupos</span>
+          </button>
+          {puedeVerPendientes && (
             <button
               type="button"
               onClick={() => setPestana('pendientes')}
@@ -422,21 +506,21 @@ export function AdminConsolePage({
                 </span>
               )}
             </button>
-            {soyAdmin && (
-              <button
-                type="button"
-                onClick={() => setPestana('catalogos')}
-                className={`min-h-9 cursor-pointer rounded-lg px-3 text-xs font-semibold transition-colors ${
-                  pestana === 'catalogos'
-                    ? 'bg-udec text-white'
-                    : 'text-tinta-suave hover:bg-tarjeta dark:text-noche-tinta-suave dark:hover:bg-noche-tarjeta'
-                }`}
-              >
-                Catálogos y Auditoría
-              </button>
-            )}
-          </div>
-        )}
+          )}
+          {soyAdmin && (
+            <button
+              type="button"
+              onClick={() => setPestana('catalogos')}
+              className={`min-h-9 cursor-pointer rounded-lg px-3 text-xs font-semibold transition-colors ${
+                pestana === 'catalogos'
+                  ? 'bg-udec text-white'
+                  : 'text-tinta-suave hover:bg-tarjeta dark:text-noche-tinta-suave dark:hover:bg-noche-tarjeta'
+              }`}
+            >
+              Catálogos y Auditoría
+            </button>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -457,6 +541,19 @@ export function AdminConsolePage({
           <CheckCircle2 size={16} strokeWidth={2} className="mt-0.5 shrink-0" />
           <span>{aviso}</span>
         </div>
+      )}
+
+      {/* PESTAÑA: GRUPOS VIVOS Y PROMOCIÓN EN LOTE */}
+      {pestana === 'grupos' && (
+        <GruposVivosPanel
+          actor={admin}
+          usuarios={usuarios}
+          subgruposActivos={subgruposActivos}
+          subgruposArchivados={subgruposArchivados}
+          alAbrirExpediente={(uid) => setExpedienteUid(uid)}
+          alNotificar={(msg) => setAviso(msg)}
+          alError={(msg) => setError(msg || null)}
+        />
       )}
 
       {/* PESTAÑA 1: DIRECTORIO DE ALTA DENSIDAD (150 -> 300 personas, sin fotos en listado) */}
@@ -504,7 +601,10 @@ export function AdminConsolePage({
                   <button
                     key={et}
                     type="button"
-                    onClick={() => setFiltroEtapa(et)}
+                    onClick={() => {
+                      setFiltroEtapa(et)
+                      setFiltroSubgrupo('TODOS')
+                    }}
                     className={`min-h-8 cursor-pointer rounded-md px-2.5 text-[11px] font-semibold ${
                       filtroEtapa === et
                         ? 'bg-udec-oscuro text-white'
@@ -516,19 +616,21 @@ export function AdminConsolePage({
                 ))}
               </div>
 
-              <select
-                aria-label="Filtrar por subgrupo"
-                value={filtroSubgrupo}
-                onChange={(e) => setFiltroSubgrupo(e.target.value)}
-                className="campo min-h-8 w-auto py-0.5 text-[11px] font-semibold"
-              >
-                <option value="TODOS">Todos los subgrupos</option>
-                {subgruposEnDirectorio.map((sg) => (
-                  <option key={sg} value={sg}>
-                    {sg}
-                  </option>
-                ))}
-              </select>
+              {filtroEtapa !== 'Grupo Operativo' && (
+                <select
+                  aria-label="Filtrar por grupo"
+                  value={filtroSubgrupo}
+                  onChange={(e) => setFiltroSubgrupo(e.target.value)}
+                  className="campo min-h-8 w-auto py-0.5 text-[11px] font-semibold"
+                >
+                  <option value="TODOS">Todos los grupos</option>
+                  {subgruposEnDirectorio.map((sg) => (
+                    <option key={sg} value={sg}>
+                      {sg}
+                    </option>
+                  ))}
+                </select>
+              )}
 
               <select
                 aria-label="Filtrar por ayudantía"
@@ -539,7 +641,7 @@ export function AdminConsolePage({
                 <option value="Todas">Todas las ayudantías</option>
                 {AYUDANTIAS.map((ay) => (
                   <option key={ay} value={ay}>
-                    {ay}
+                    {etiquetaAyudantia(ay)}
                   </option>
                 ))}
               </select>
@@ -580,7 +682,7 @@ export function AdminConsolePage({
                 Sin integrantes encontrados
               </h3>
               <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
-                Ajusta los filtros de etapa, subgrupo, ayudantía o búsqueda.
+                Ajusta los filtros de etapa, grupo, ayudantía o búsqueda.
               </p>
             </article>
           ) : (
@@ -589,6 +691,7 @@ export function AdminConsolePage({
               <div className="divide-y divide-borde md:hidden dark:divide-noche-borde">
                 {directorioFiltrado.map((u) => {
                   const clave = u.clave_radio || u.clave_personal_radio || ''
+                  const sinAyuOp = faltaAyudantiaOperativo(u)
                   return (
                     <button
                       key={u.uid}
@@ -618,9 +721,16 @@ export function AdminConsolePage({
                         </div>
                         <p className="truncate text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
                           {u.etapa}
-                          {u.subgrupo ? ` · ${u.subgrupo}` : ''} · {u.ayudantia} · {u.rol_sistema}
+                          {u.subgrupo ? ` · ${u.subgrupo}` : ''} · {etiquetaAyudantia(u.ayudantia)} ·{' '}
+                          {u.rol_sistema}
                           {clave ? ` · ${clave}` : ''}
                         </p>
+                        {sinAyuOp && (
+                          <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-ambar-suave px-2 py-0.5 text-[10px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
+                            <AlertTriangle size={10} strokeWidth={2} />
+                            <span>Falta asignar ayudantía</span>
+                          </span>
+                        )}
                       </div>
                     </button>
                   )
@@ -636,7 +746,7 @@ export function AdminConsolePage({
                         Integrante
                       </th>
                       <th scope="col" className="px-3 py-2 text-[11px] font-semibold">
-                        Etapa / Subgrupo
+                        Etapa / Grupo
                       </th>
                       <th scope="col" className="px-3 py-2 text-[11px] font-semibold">
                         Ayudantía
@@ -658,6 +768,7 @@ export function AdminConsolePage({
                   <tbody className="divide-y divide-borde dark:divide-noche-borde">
                     {directorioFiltrado.map((u) => {
                       const clave = u.clave_radio || u.clave_personal_radio || ''
+                      const sinAyuOp = faltaAyudantiaOperativo(u)
                       return (
                         <tr
                           key={u.uid}
@@ -688,7 +799,14 @@ export function AdminConsolePage({
                             )}
                           </td>
                           <td className="px-3 py-2 text-xs text-tinta-suave dark:text-noche-tinta-suave">
-                            {u.ayudantia}
+                            {sinAyuOp ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-ambar-suave px-2 py-0.5 text-[10px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
+                                <AlertTriangle size={11} strokeWidth={2} />
+                                <span>Falta asignar ayudantía</span>
+                              </span>
+                            ) : (
+                              etiquetaAyudantia(u.ayudantia)
+                            )}
                           </td>
                           <td className="px-3 py-2 text-xs font-semibold text-tinta dark:text-noche-tinta">
                             {u.rol_sistema}

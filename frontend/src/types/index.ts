@@ -4,7 +4,9 @@ import type { Timestamp } from 'firebase/firestore'
 
 export type GrupoOperativo = 'Alfa' | 'Omega' | 'Ninguno'
 
-export type EtapaBrigadista = 'Alfa' | 'Omega' | 'Grupo Operativo'
+export type EtapaFormativa = 'Alfa' | 'Omega' | 'SIERRA'
+
+export type EtapaBrigadista = EtapaFormativa | 'Grupo Operativo'
 
 export type AyudantiaSlot =
   | 'Capacitación'
@@ -62,9 +64,9 @@ export interface DatosMedicos {
 export interface CamposPrivilegiados {
   grupo_operativo: GrupoOperativo
   ayudantia_slot: AyudantiaSlot
-  /** Etapa jerárquica v1.1 ('Alfa' | 'Omega' | 'Grupo Operativo'). */
+  /** Etapa jerárquica v1.1 ('Alfa' | 'Omega' | 'SIERRA' | 'Grupo Operativo'). */
   etapa: EtapaBrigadista
-  /** Subgrupo dinámico del catálogo (ej. 'Alfa 1', 'Omega 2', o '' en Grupo Operativo). */
+  /** Grupo formativo del catálogo (ej. 'Alfa 1', 'Omega 2', 'Sierra 1', o '' en Grupo Operativo). */
   subgrupo: string
   /** Ayudantía asignada (espejo normalizado de `ayudantia_slot`). */
   ayudantia: AyudantiaSlot
@@ -364,6 +366,7 @@ export type TipoEventoAuditoria =
   | 'SEED_CLAVES_REBACE'
   | 'EDICION_CATALOGO_CLAVES'
   | 'EDICION_CATALOGO_SUBGRUPOS'
+  | 'PROMOCION_LOTE'
 
 export interface AuditoriaEvento {
   id: string

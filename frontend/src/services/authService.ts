@@ -28,10 +28,13 @@ import { auth, db } from '../lib/firebase'
 import { AYUDANTIAS, ETAPAS_BRIGADISTA } from '../constants/catalogos'
 import { normalizarNombrePropio, normalizarParentesco } from '../lib/nombres'
 import {
+  ayudantiaEfectiva,
   esAdmin,
+  esAyudantiaValidaParaEtapa,
   esEncargadoAP,
   esEncargadoTesla,
   etapaDesdeGrupo,
+  etiquetaAyudantia,
   grupoDesdeEtapa,
   normalizarClaveRadio,
   normalizarUsuario,
@@ -45,6 +48,7 @@ import type {
   DatosPersonales,
   EstatusUsuario,
   EtapaBrigadista,
+  EtapaFormativa,
   GrupoOperativo,
   RolSistema,
   TipoEventoAuditoria,
@@ -450,10 +454,15 @@ export interface AsignacionAlta {
 
 export function aprobarUsuario(admin: Usuario, objetivo: Usuario, asignacion: AsignacionAlta): Promise<void> {
   const etapa = asignacion.etapa ?? etapaDesdeGrupo(asignacion.grupo_operativo)
-  const subgrupo = (asignacion.subgrupo ?? '').trim()
+  const subgrupo = etapa === 'Grupo Operativo' ? '' : (asignacion.subgrupo ?? '').trim()
   const ayudantia = asignacion.ayudantia ?? asignacion.ayudantia_slot
+  if (!esAyudantiaValidaParaEtapa(etapa, ayudantia)) {
+    return Promise.reject(
+      new Error('Para asignar a Grupo Operativo es obligatorio seleccionar una ayudantía.'),
+    )
+  }
   const cambios: Record<string, unknown> = {
-    grupo_operativo: asignacion.grupo_operativo,
+    grupo_operativo: grupoDesdeEtapa(etapa),
     ayudantia_slot: ayudantia,
     etapa,
     subgrupo,
@@ -473,7 +482,7 @@ export function aprobarUsuario(admin: Usuario, objetivo: Usuario, asignacion: As
     }
   }
 
-  const detalle = `Alta aprobada · Etapa ${etapa}${subgrupo ? ` (${subgrupo})` : ''} · Ayudantía ${ayudantia}${detalleRadio}`
+  const detalle = `Alta aprobada · Etapa ${etapa}${subgrupo ? ` (${subgrupo})` : ''} · Ayudantía ${etiquetaAyudantia(ayudantia)}${detalleRadio}`
   return nuevoLoteConAuditoria(admin, objetivo, 'APROBACION_USUARIO', detalle, cambios)
 }
 
@@ -552,22 +561,43 @@ export function guardarEdicionExpediente(
   const payload: Record<string, unknown> = {}
   const diffs: string[] = []
 
+  const etapaFinal = cambios.etapa ?? objetivo.etapa
+  const ayudantiaFinal = cambios.ayudantia ?? ayudantiaEfectiva(objetivo)
+  const tocaAdscripcion =
+    cambios.etapa !== undefined ||
+    cambios.subgrupo !== undefined ||
+    cambios.ayudantia !== undefined
+
+  if (tocaAdscripcion && !esAyudantiaValidaParaEtapa(etapaFinal, ayudantiaFinal)) {
+    return Promise.reject(
+      new Error('Para asignar a Grupo Operativo es obligatorio seleccionar una ayudantía.'),
+    )
+  }
+
   if (cambios.etapa !== undefined && cambios.etapa !== objetivo.etapa) {
     payload.etapa = cambios.etapa
     payload.grupo_operativo = grupoDesdeEtapa(cambios.etapa)
     diffs.push(`Etapa: ${objetivo.etapa} → ${cambios.etapa}`)
   }
-  if (cambios.subgrupo !== undefined) {
-    const sg = cambios.subgrupo.trim()
-    if (sg !== (objetivo.subgrupo || '')) {
-      payload.subgrupo = sg
-      diffs.push(`Subgrupo: ${objetivo.subgrupo || 'Ninguno'} → ${sg || 'Ninguno'}`)
-    }
+
+  const subgrupoSolicitado =
+    etapaFinal === 'Grupo Operativo'
+      ? ''
+      : cambios.subgrupo !== undefined
+        ? cambios.subgrupo.trim()
+        : undefined
+
+  if (subgrupoSolicitado !== undefined && subgrupoSolicitado !== (objetivo.subgrupo || '')) {
+    payload.subgrupo = subgrupoSolicitado
+    diffs.push(`Grupo: ${objetivo.subgrupo || 'Ninguno'} → ${subgrupoSolicitado || 'Ninguno'}`)
   }
+
   if (cambios.ayudantia !== undefined && cambios.ayudantia !== objetivo.ayudantia) {
     payload.ayudantia = cambios.ayudantia
     payload.ayudantia_slot = cambios.ayudantia
-    diffs.push(`Ayudantía: ${objetivo.ayudantia} → ${cambios.ayudantia}`)
+    diffs.push(
+      `Ayudantía: ${etiquetaAyudantia(objetivo.ayudantia)} → ${etiquetaAyudantia(cambios.ayudantia)}`,
+    )
   }
   if (
     (soyAdmin || soyAP) &&
@@ -654,6 +684,14 @@ export function actualizarPersonalOperativo(
   if (!puedeGestionarBrigadista(actor, objetivo)) {
     return Promise.reject(new Error('No tienes permiso para editar el perfil de este brigadista.'))
   }
+  const etapaFinal = cambios.etapa ?? objetivo.etapa
+  const ayudantiaFinal = cambios.ayudantia ?? ayudantiaEfectiva(objetivo)
+  if (!esAyudantiaValidaParaEtapa(etapaFinal, ayudantiaFinal)) {
+    return Promise.reject(
+      new Error('Para asignar a Grupo Operativo es obligatorio seleccionar una ayudantía.'),
+    )
+  }
+
   const payload: Record<string, unknown> = {}
   const resumen: string[] = []
 
@@ -662,15 +700,19 @@ export function actualizarPersonalOperativo(
     payload.grupo_operativo = grupoDesdeEtapa(cambios.etapa)
     resumen.push(`Etapa: ${cambios.etapa}`)
   }
-  if (cambios.subgrupo !== undefined) {
+  if (etapaFinal === 'Grupo Operativo') {
+    if (objetivo.subgrupo || cambios.subgrupo !== undefined) {
+      payload.subgrupo = ''
+    }
+  } else if (cambios.subgrupo !== undefined) {
     const sg = cambios.subgrupo.trim()
     payload.subgrupo = sg
-    resumen.push(`Subgrupo: ${sg || 'Ninguno'}`)
+    resumen.push(`Grupo: ${sg || 'Ninguno'}`)
   }
   if (cambios.ayudantia !== undefined) {
     payload.ayudantia = cambios.ayudantia
     payload.ayudantia_slot = cambios.ayudantia
-    resumen.push(`Ayudantía: ${cambios.ayudantia}`)
+    resumen.push(`Ayudantía: ${etiquetaAyudantia(cambios.ayudantia)}`)
   }
   if (cambios.estatus !== undefined) {
     payload.estatus = cambios.estatus
@@ -684,6 +726,117 @@ export function actualizarPersonalOperativo(
     resumen.join(' · ') || 'Actualización operativa',
     payload,
   )
+}
+
+export interface DestinoPromocionLote {
+  etapaOrigen: EtapaFormativa
+  grupoOrigen: string
+  etapaDestino: 'Omega' | 'Grupo Operativo'
+  /** Obligatorio cuando etapaDestino === 'Omega' */
+  subgrupoDestino?: string
+  /** Ayudantía a asignar por UID para quienes estaban sin ayudantía al graduarse a Grupo Operativo */
+  ayudantiasPorUid?: Record<string, AyudantiaSlot>
+}
+
+const MAX_OPS_LOTE_PROMOCION = 400
+
+/**
+ * Promoción o graduación en lote (Plan Spark 100%, writeBatch dividido en bloques ≤ 400):
+ * - Alfa → Omega (asigna grupo activo de Omega y conserva la ayudantía actual)
+ * - Omega → Grupo Operativo (limpia grupo formativo y exige ayudantía válida)
+ * - SIERRA → Grupo Operativo (graduación directa del Diplomado de Socorrismo; exige ayudantía)
+ */
+export async function promoverIntegrantesEnLote(
+  actor: Usuario,
+  objetivos: Usuario[],
+  destino: DestinoPromocionLote,
+): Promise<number> {
+  if (objetivos.length === 0) {
+    throw new Error('Selecciona al menos un integrante para promover.')
+  }
+
+  const subgrupoOmega = (destino.subgrupoDestino ?? '').trim()
+  if (destino.etapaDestino === 'Omega' && !subgrupoOmega) {
+    throw new Error('Selecciona un grupo activo de Omega como destino.')
+  }
+
+  // Validar permisos y reglas de negocio antes de escribir un solo documento
+  const actualizaciones: { uid: string; nombre: string; cambios: Record<string, unknown> }[] = []
+
+  for (const u of objetivos) {
+    if (!puedeGestionarBrigadista(actor, u)) {
+      throw new Error(`No tienes permiso para promover a ${nombreCompleto(u)}.`)
+    }
+    if (destino.etapaDestino === 'Omega') {
+      actualizaciones.push({
+        uid: u.uid,
+        nombre: nombreCompleto(u),
+        cambios: {
+          etapa: 'Omega',
+          grupo_operativo: 'Omega',
+          subgrupo: subgrupoOmega,
+          actualizado_en: serverTimestamp(),
+        },
+      })
+    } else {
+      const actual = ayudantiaEfectiva(u)
+      const ayudantiaFinal: AyudantiaSlot =
+        actual !== 'Ninguna' ? actual : (destino.ayudantiasPorUid?.[u.uid] ?? 'Ninguna')
+      if (!esAyudantiaValidaParaEtapa('Grupo Operativo', ayudantiaFinal)) {
+        throw new Error(
+          `Para promover a ${nombreCompleto(u)} a Grupo Operativo es obligatorio asignar una ayudantía.`,
+        )
+      }
+      actualizaciones.push({
+        uid: u.uid,
+        nombre: nombreCompleto(u),
+        cambios: {
+          etapa: 'Grupo Operativo',
+          grupo_operativo: 'Ninguno',
+          subgrupo: '',
+          ayudantia: ayudantiaFinal,
+          ayudantia_slot: ayudantiaFinal,
+          actualizado_en: serverTimestamp(),
+        },
+      })
+    }
+  }
+
+  const etiquetaDestino =
+    destino.etapaDestino === 'Omega' ? subgrupoOmega : 'Grupo Operativo'
+  const nombresResumen = actualizaciones
+    .slice(0, 6)
+    .map((a) => a.nombre)
+    .join(', ')
+  const sufijoExtra =
+    actualizaciones.length > 6 ? ` y ${actualizaciones.length - 6} más` : ''
+  const detalleAuditoria = `Promoción en lote (${actualizaciones.length}): ${destino.grupoOrigen} (${destino.etapaOrigen}) → ${etiquetaDestino} · ${nombresResumen}${sufijoExtra}`.slice(
+    0,
+    500,
+  )
+
+  for (let i = 0; i < actualizaciones.length; i += MAX_OPS_LOTE_PROMOCION) {
+    const bloque = actualizaciones.slice(i, i + MAX_OPS_LOTE_PROMOCION)
+    const esUltimo = i + MAX_OPS_LOTE_PROMOCION >= actualizaciones.length
+    const lote = writeBatch(db)
+    for (const item of bloque) {
+      lote.update(doc(usuariosRef, item.uid), item.cambios)
+    }
+    if (esUltimo) {
+      lote.set(doc(auditoriaRef), {
+        tipo: 'PROMOCION_LOTE' as TipoEventoAuditoria,
+        actor_uid: actor.uid,
+        actor_nombre: nombreCompleto(actor),
+        objetivo_uid: destino.grupoOrigen.slice(0, 128),
+        objetivo_nombre: `${destino.grupoOrigen} → ${etiquetaDestino}`.slice(0, 200),
+        detalle: detalleAuditoria,
+        creado_en: serverTimestamp(),
+      })
+    }
+    await lote.commit()
+  }
+
+  return actualizaciones.length
 }
 
 /** Exclusivo Administrador: asigna los subgrupos/ayudantías a cargo de un Encargado. */

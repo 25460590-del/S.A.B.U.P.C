@@ -11,12 +11,14 @@ import {
   ShieldAlert,
   Trash2,
 } from 'lucide-react'
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { ETAPAS_FORMATIVAS } from '../constants/catalogos'
 import {
   combinarCatalogoRebaceConOffline,
   ETIQUETAS_TABLAS_REBACE,
   TABLAS_REBACE_ORDEN,
 } from '../constants/rebaceSeed'
+import { etapaDeSubgrupo } from '../lib/permisos'
 import {
   eliminarClaveCatalogo,
   escucharAuditoriaEventos,
@@ -24,12 +26,20 @@ import {
 } from '../services/auditoriaService'
 import { mensajeDeError } from '../services/authService'
 import {
+  combinarSubgruposConSierraInicial,
   escucharCatalogoSubgrupos,
   escucharSubgruposArchivados,
+  formatearNombreGrupoFormativo,
   guardarCatalogoSubgrupos,
 } from '../services/catalogosService'
 import { escucharCatalogoRebace, poblarCatalogoRebace } from '../services/radioService'
-import type { AuditoriaEvento, ClaveRebace, TablaRebace, Usuario } from '../types'
+import type {
+  AuditoriaEvento,
+  ClaveRebace,
+  EtapaFormativa,
+  TablaRebace,
+  Usuario,
+} from '../types'
 
 interface CatalogosAuditoriaTabProps {
   admin: Usuario
@@ -45,10 +55,14 @@ function formatearHora(ms?: number): string {
 export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
   const [claves, setClaves] = useState<ClaveRebace[]>([])
   const [eventos, setEventos] = useState<AuditoriaEvento[]>([])
-  const [subgruposActivos, setSubgruposActivos] = useState<string[]>([])
+  const [subgruposActivosRaw, setSubgruposActivosRaw] = useState<string[]>([])
   const [subgruposArchivados, setSubgruposArchivados] = useState<string[]>([])
-  const [etapaNuevoSubgrupo, setEtapaNuevoSubgrupo] = useState<'Alfa' | 'Omega'>('Alfa')
+  const [etapaNuevoSubgrupo, setEtapaNuevoSubgrupo] = useState<EtapaFormativa>('Alfa')
   const [nombreNuevoSubgrupo, setNombreNuevoSubgrupo] = useState('')
+  const subgruposActivos = useMemo(
+    () => combinarSubgruposConSierraInicial(subgruposActivosRaw, subgruposArchivados),
+    [subgruposActivosRaw, subgruposArchivados],
+  )
   const [tablaSel, setTablaSel] = useState<TablaRebace>('claves_personales')
   const [editandoId, setEditandoId] = useState<string | null>(null)
   const [codigo, setCodigo] = useState('')
@@ -67,7 +81,7 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
   useEffect(() => {
     const c1 = escucharCatalogoRebace(setClaves, (err) => setError(mensajeDeError(err)))
     const c2 = escucharAuditoriaEventos(setEventos, (err) => setError(mensajeDeError(err)))
-    const c3 = escucharCatalogoSubgrupos(setSubgruposActivos, (err) =>
+    const c3 = escucharCatalogoSubgrupos(setSubgruposActivosRaw, (err) =>
       setError(mensajeDeError(err)),
     )
     const c4 = escucharSubgruposArchivados(setSubgruposArchivados, () => undefined)
@@ -175,14 +189,10 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
 
   async function manejarAgregarSubgrupo(e: FormEvent) {
     e.preventDefault()
-    const limpio = nombreNuevoSubgrupo.trim()
-    if (!limpio) return
-    const etiqueta =
-      limpio.toLowerCase().startsWith(etapaNuevoSubgrupo.toLowerCase())
-        ? limpio
-        : `${etapaNuevoSubgrupo} ${limpio}`
+    const etiqueta = formatearNombreGrupoFormativo(etapaNuevoSubgrupo, nombreNuevoSubgrupo)
+    if (!etiqueta) return
     if (subgruposActivos.some((s) => s.toLowerCase() === etiqueta.toLowerCase())) {
-      setError(`El subgrupo "${etiqueta}" ya está activo en el catálogo.`)
+      setError(`El grupo "${etiqueta}" ya está activo en el catálogo.`)
       return
     }
     setOcupado(true)
@@ -197,10 +207,10 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
         admin,
         nuevosActivos,
         nuevosArchivados,
-        `Subgrupo agregado: ${etiqueta}`,
+        `Grupo agregado: ${etiqueta}`,
       )
       setNombreNuevoSubgrupo('')
-      setAviso(`Subgrupo "${etiqueta}" agregado al catálogo.`)
+      setAviso(`Grupo "${etiqueta}" agregado al catálogo.`)
     } catch (err) {
       setError(mensajeDeError(err))
     } finally {
@@ -307,18 +317,21 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
 
         <form onSubmit={manejarAgregarSubgrupo} className="flex flex-wrap items-center gap-2">
           <select
-            aria-label="Etapa del nuevo subgrupo"
+            aria-label="Etapa del nuevo grupo"
             value={etapaNuevoSubgrupo}
-            onChange={(e) => setEtapaNuevoSubgrupo(e.target.value as 'Alfa' | 'Omega')}
+            onChange={(e) => setEtapaNuevoSubgrupo(e.target.value as EtapaFormativa)}
             className="campo min-h-9 w-28 text-xs font-semibold"
           >
-            <option value="Alfa">Alfa</option>
-            <option value="Omega">Omega</option>
+            {ETAPAS_FORMATIVAS.map((et) => (
+              <option key={et} value={et}>
+                {et}
+              </option>
+            ))}
           </select>
           <input
             type="text"
             maxLength={40}
-            placeholder="Ej. 5 o Alfa 5 / Omega 3"
+            placeholder="Ej. 5 o Alfa 5 / Omega 3 / Sierra 2"
             value={nombreNuevoSubgrupo}
             onChange={(e) => setNombreNuevoSubgrupo(e.target.value)}
             className="campo min-h-9 min-w-44 flex-1 text-xs"
@@ -326,27 +339,25 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
           />
           <button type="submit" disabled={ocupado} className="btn-naranja min-h-9 px-3.5 text-xs">
             <Plus size={14} strokeWidth={2} />
-            <span>Agregar Subgrupo</span>
+            <span>Agregar Grupo</span>
           </button>
         </form>
 
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          {(['Alfa', 'Omega'] as const).map((etapaGrupo) => {
-            const listaEtapa = subgruposActivos.filter((s) =>
-              s.toLowerCase().startsWith(etapaGrupo.toLowerCase()),
-            )
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          {ETAPAS_FORMATIVAS.map((etapaGrupo) => {
+            const listaEtapa = subgruposActivos.filter((s) => etapaDeSubgrupo(s) === etapaGrupo)
             return (
               <div
                 key={etapaGrupo}
                 className="flex flex-col gap-2 rounded-lg border border-borde bg-superficie-suave p-3 dark:border-noche-borde dark:bg-noche-campo"
               >
                 <span className="text-xs font-bold text-tinta dark:text-noche-tinta">
-                  Etapa {etapaGrupo} ({listaEtapa.length})
+                  {etapaGrupo === 'SIERRA' ? 'SIERRA' : `Etapa ${etapaGrupo}`} ({listaEtapa.length})
                 </span>
                 <div className="flex flex-wrap gap-1.5">
                   {listaEtapa.length === 0 ? (
                     <span className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
-                      Sin subgrupos activos en {etapaGrupo}.
+                      Sin grupos activos en {etapaGrupo}.
                     </span>
                   ) : (
                     listaEtapa.map((sg) => (
@@ -374,16 +385,12 @@ export function CatalogosAuditoriaTab({ admin }: CatalogosAuditoriaTabProps) {
           })}
         </div>
 
-        {/* Otros subgrupos activos que no empiecen con Alfa/Omega */}
-        {subgruposActivos.some(
-          (s) => !s.toLowerCase().startsWith('alfa') && !s.toLowerCase().startsWith('omega'),
-        ) && (
+        {/* Otros grupos activos que no correspondan a Alfa/Omega/SIERRA */}
+        {subgruposActivos.some((s) => etapaDeSubgrupo(s) === null) && (
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-[11px] font-semibold text-tinta-suave">Otros:</span>
             {subgruposActivos
-              .filter(
-                (s) => !s.toLowerCase().startsWith('alfa') && !s.toLowerCase().startsWith('omega'),
-              )
+              .filter((s) => etapaDeSubgrupo(s) === null)
               .map((sg) => (
                 <span
                   key={sg}

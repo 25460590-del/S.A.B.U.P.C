@@ -853,3 +853,143 @@ test('contacto_emergencia_parentesco: alta y actualización por dueño Activo, b
     actualizado_en: serverTimestamp(),
   }));
 });
+
+// ============================================================================
+// PRUEBAS: ETAPA SIERRA, AYUDANTÍA OBLIGATORIA EN GRUPO OPERATIVO Y PROMOCIÓN EN LOTE
+// ============================================================================
+
+test('Etapa SIERRA: asignación válida con y sin ayudantía por Admin y Encargado AP', async () => {
+  await assertSucceeds(updateDoc(doc(db('admin1'), 'usuarios/brigAlfa1'), {
+    etapa: 'SIERRA',
+    grupo_operativo: 'Ninguno',
+    subgrupo: 'Sierra 1',
+    ayudantia: 'Ninguna',
+    ayudantia_slot: 'Ninguna',
+    actualizado_en: serverTimestamp(),
+  }));
+
+  await assertSucceeds(updateDoc(doc(db('encAP'), 'usuarios/pendiente1'), {
+    estatus: 'Activo',
+    etapa: 'SIERRA',
+    grupo_operativo: 'Ninguno',
+    subgrupo: 'Sierra 1',
+    ayudantia: 'Socorros',
+    ayudantia_slot: 'Socorros',
+    qr_codigo_unico: 'qr-sierra-1',
+    actualizado_en: serverTimestamp(),
+  }));
+
+  await assertSucceeds(setDoc(doc(db('admin1'), 'perfiles_operativos/brigAlfa1'), {
+    uid: 'brigAlfa1',
+    nombre_completo: 'Ana Pérez',
+    numero_cuenta: '20201234',
+    estatus: 'Activo',
+    etapa: 'SIERRA',
+    subgrupo: 'Sierra 1',
+    ayudantia: 'Ninguna',
+    grupo_operativo: 'Ninguno',
+    ayudantia_slot: 'Ninguna',
+    qr_codigo_unico: 'qr-sierra-proj',
+    clave_radio: '',
+    actualizado_en: serverTimestamp(),
+  }));
+});
+
+test('Promoción directa SIERRA -> Grupo Operativo en lote con ayudantía y evento PROMOCION_LOTE', async () => {
+  await assertSucceeds(updateDoc(doc(db('admin1'), 'usuarios/brigAlfa1'), {
+    etapa: 'SIERRA',
+    grupo_operativo: 'Ninguno',
+    subgrupo: 'Sierra 1',
+    actualizado_en: serverTimestamp(),
+  }));
+
+  const f = db('encAP');
+  const b = writeBatch(f);
+  b.update(doc(f, 'usuarios/brigAlfa1'), {
+    etapa: 'Grupo Operativo',
+    grupo_operativo: 'Ninguno',
+    subgrupo: '',
+    ayudantia: 'Socorros',
+    ayudantia_slot: 'Socorros',
+    actualizado_en: serverTimestamp(),
+  });
+  b.update(doc(f, 'usuarios/brigOmega1'), {
+    etapa: 'Grupo Operativo',
+    grupo_operativo: 'Ninguno',
+    subgrupo: '',
+    ayudantia: 'Logística',
+    ayudantia_slot: 'Logística',
+    actualizado_en: serverTimestamp(),
+  });
+  b.set(doc(collection(f, 'auditoria_eventos')), eventoValido('encAP', {
+    tipo: 'PROMOCION_LOTE',
+    objetivo_uid: 'Sierra 1',
+    objetivo_nombre: 'Sierra 1 → Grupo Operativo',
+    detalle: 'Promoción en lote (2): Sierra 1 (SIERRA) → Grupo Operativo',
+  }));
+  await assertSucceeds(b.commit());
+});
+
+test('Grupo Operativo: rechaza asignar sin ayudantía o conservando subgrupo formativo', async () => {
+  // Admin intenta promover a Grupo Operativo sin ayudantía
+  await assertFails(updateDoc(doc(db('admin1'), 'usuarios/brigOmega1'), {
+    etapa: 'Grupo Operativo',
+    grupo_operativo: 'Ninguno',
+    subgrupo: '',
+    ayudantia: 'Ninguna',
+    ayudantia_slot: 'Ninguna',
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // Encargado AP intenta promover a Grupo Operativo sin ayudantía
+  await assertFails(updateDoc(doc(db('encAP'), 'usuarios/brigAlfa1'), {
+    etapa: 'Grupo Operativo',
+    grupo_operativo: 'Ninguno',
+    subgrupo: '',
+    ayudantia: 'Ninguna',
+    ayudantia_slot: 'Ninguna',
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // Admin intenta promover a Grupo Operativo dejando subgrupo formativo lleno
+  await assertFails(updateDoc(doc(db('admin1'), 'usuarios/brigOmega1'), {
+    etapa: 'Grupo Operativo',
+    grupo_operativo: 'Ninguno',
+    subgrupo: 'Omega 1',
+    ayudantia: 'Socorros',
+    ayudantia_slot: 'Socorros',
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // Admin asigna ayudantía válida y luego intenta quitarla en Grupo Operativo
+  await assertSucceeds(updateDoc(doc(db('admin1'), 'usuarios/brigOmega1'), {
+    etapa: 'Grupo Operativo',
+    grupo_operativo: 'Ninguno',
+    subgrupo: '',
+    ayudantia: 'Tesla',
+    ayudantia_slot: 'Tesla',
+    actualizado_en: serverTimestamp(),
+  }));
+  await assertFails(updateDoc(doc(db('admin1'), 'usuarios/brigOmega1'), {
+    ayudantia: 'Ninguna',
+    ayudantia_slot: 'Ninguna',
+    actualizado_en: serverTimestamp(),
+  }));
+});
+
+test('Retrocompatibilidad Grupo Operativo sin ayudantía: lectura y Ficha de Emergencia propias permitidas', async () => {
+  // activo1 está sembrado como cuenta legada en Grupo Operativo con ayudantia: 'Ninguna'
+  await assertSucceeds(getDoc(doc(db('activo1'), 'usuarios/activo1')));
+  await assertSucceeds(updateDoc(doc(db('activo1'), 'usuarios/activo1'), {
+    alergias: 'Penicilina',
+    contacto_emergencia_nombre: 'Carlos Pérez',
+    contacto_emergencia_parentesco: 'Padre',
+    contacto_emergencia_telefono: '3129876543',
+    actualizado_en: serverTimestamp(),
+  }));
+  // Admin puede cambiar estatus sin tocar adscripción en cuenta legada
+  await assertSucceeds(updateDoc(doc(db('admin1'), 'usuarios/activo1'), {
+    estatus: 'Inactivo',
+    actualizado_en: serverTimestamp(),
+  }));
+});

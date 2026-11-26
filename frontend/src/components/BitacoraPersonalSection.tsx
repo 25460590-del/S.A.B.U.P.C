@@ -16,6 +16,7 @@ import {
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { EQUIPO_BUPC_SUGERIDO, ESTADOS_OPERATIVOS, ROLES_EN_TURNO } from '../constants/catalogos'
 import { normalizarNombrePropio } from '../lib/nombres'
+import { etiquetaAyudantia } from '../lib/permisos'
 import {
   actualizarEstadoOperativo,
   actualizarRolEnTurno,
@@ -592,12 +593,12 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
 
           {gruposDisponibles.length > 1 && (
             <select
-              aria-label="Filtrar por etapa o subgrupo"
+              aria-label="Filtrar por etapa o grupo"
               value={filtroGrupo}
               onChange={(e) => setFiltroGrupo(e.target.value)}
               className="campo min-h-8 w-auto py-0.5 text-[11px] font-semibold"
             >
-              <option value="TODOS">Etapa / Subgrupo</option>
+              <option value="TODOS">Etapa / Grupo</option>
               {gruposDisponibles.map((g) => (
                 <option key={g} value={g}>
                   {g}
@@ -616,7 +617,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
               <option value="TODAS">Ayudantía</option>
               {ayudantiasDisponibles.map((ay) => (
                 <option key={ay} value={ay}>
-                  {ay}
+                  {etiquetaAyudantia(ay)}
                 </option>
               ))}
             </select>

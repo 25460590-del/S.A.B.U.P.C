@@ -14,6 +14,7 @@ import { QRCodeCanvas } from 'qrcode.react'
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { BupcLogo } from '../components/BupcLogo'
 import { normalizarNombrePropio } from '../lib/nombres'
+import { etiquetaAyudantia } from '../lib/permisos'
 import { mensajeDeError, nombreCompleto } from '../services/authService'
 import { escucharFotoPerfil, guardarFotoPerfil } from '../services/fotosService'
 import type { FotoPerfil, Usuario } from '../types'
@@ -227,13 +228,13 @@ export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
               </div>
             </div>
 
-            {/* Badges simultáneos: Etapa/Subgrupo + Ayudantía + Estatus */}
+            {/* Badges simultáneos: Etapa/Grupo + Ayudantía + Estatus */}
             <div className="flex flex-wrap items-center justify-center gap-2">
               <span className="rounded-full bg-udec px-3 py-1 text-xs font-semibold text-white">
                 {perfil.subgrupo || perfil.etapa}
               </span>
               <span className="rounded-full border border-naranja bg-naranja-suave px-3 py-1 text-xs font-semibold text-naranja-oscuro dark:bg-noche-campo dark:text-naranja">
-                {perfil.ayudantia}
+                {etiquetaAyudantia(perfil.ayudantia)}
               </span>
               <span className="inline-flex items-center gap-1.5 rounded-full border border-activo bg-activo-suave px-3 py-1 text-xs font-bold text-activo dark:border-activo-claro dark:bg-noche-campo dark:text-activo-claro">
                 <span className="h-2 w-2 rounded-full bg-activo dark:bg-activo-claro" />

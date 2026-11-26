@@ -12,6 +12,7 @@ import { BupcLogo } from '../components/BupcLogo'
 import { CandadoDuroModal } from '../components/CandadoDuroModal'
 import { QrScannerModal } from '../components/QrScannerModal'
 import { ReportarEquipoModal } from '../components/ReportarEquipoModal'
+import { etiquetaAyudantia } from '../lib/permisos'
 import {
   escucharMisAsistencias,
   registrarAsistenciaQR,
@@ -180,7 +181,7 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
               {perfil.subgrupo || perfil.etapa}
             </span>
             <span className="rounded-full bg-naranja px-2.5 py-0.5 text-xs font-bold text-tinta">
-              {perfil.ayudantia}
+              {etiquetaAyudantia(perfil.ayudantia)}
             </span>
           </div>
           <span className="text-xs font-semibold tabular-nums text-white/90">

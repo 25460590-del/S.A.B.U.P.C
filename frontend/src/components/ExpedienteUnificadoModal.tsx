@@ -1,5 +1,6 @@
 import {
   AlertCircle,
+  AlertTriangle,
   CheckCircle2,
   ClipboardList,
   Clock,
@@ -13,13 +14,16 @@ import {
   X,
 } from 'lucide-react'
 import { useEffect, useState, type FormEvent } from 'react'
-import { AYUDANTIAS, ETAPAS_BRIGADISTA, ROLES } from '../constants/catalogos'
+import { AYUDANTIAS_ACTIVAS, ETAPAS_BRIGADISTA, ROLES } from '../constants/catalogos'
 import { normalizarNombrePropio } from '../lib/nombres'
 import {
   esAdmin,
+  esAyudantiaValidaParaEtapa,
   esEncargadoAP,
+  faltaAyudantiaOperativo,
   puedeCambiarEstatusBrigadista,
   puedeGestionarBrigadista,
+  subgruposDeEtapa,
 } from '../lib/permisos'
 import { escucharMisAsistencias } from '../services/asistenciasService'
 import {
@@ -155,19 +159,15 @@ export function ExpedienteUnificadoModal({
     }
   }, [pestana, usuario.uid, soyAdmin, soyAP, actor])
 
-  const opcionesSubgrupo = Array.from(
-    new Set([
-      ...subgruposActivos,
-      ...(usuario.subgrupo && !subgruposActivos.includes(usuario.subgrupo)
-        ? [usuario.subgrupo]
-        : []),
-    ]),
-  )
+  const esOperativo = etapa === 'Grupo Operativo'
+  const opcionesSubgrupo = subgruposDeEtapa(subgruposActivos, etapa, usuario.subgrupo)
+  const cuentaLegadaSinAyudantia = faltaAyudantiaOperativo(usuario)
+  const ayudantiaInvalidaOperativo = !esAyudantiaValidaParaEtapa(etapa, ayudantia)
 
   const opcionesGruposACargo = Array.from(
     new Set([
       ...subgruposActivos,
-      ...AYUDANTIAS.filter((a) => a !== 'Ninguna'),
+      ...AYUDANTIAS_ACTIVAS,
       ...ETAPAS_BRIGADISTA,
       ...gruposACargo,
     ]),
@@ -182,6 +182,18 @@ export function ExpedienteUnificadoModal({
     setGruposACargo((prev) =>
       prev.includes(valor) ? prev.filter((x) => x !== valor) : [...prev, valor],
     )
+  }
+
+  function manejarCambioEtapa(nueva: EtapaBrigadista) {
+    setEtapa(nueva)
+    if (nueva === 'Grupo Operativo') {
+      setSubgrupo('')
+      return
+    }
+    const opcionesNueva = subgruposDeEtapa(subgruposActivos, nueva, usuario.subgrupo)
+    if (!opcionesNueva.includes(subgrupo)) {
+      setSubgrupo(opcionesNueva[0] ?? '')
+    }
   }
 
   async function manejarVerEvidencia(eq: EquipoTurno) {
@@ -209,13 +221,17 @@ export function ExpedienteUnificadoModal({
   async function manejarGuardar(e: FormEvent) {
     e.preventDefault()
     if (!puedoEditar) return
+    if (ayudantiaInvalidaOperativo) {
+      setError('Para asignar a Grupo Operativo es obligatorio seleccionar una ayudantía.')
+      return
+    }
     setGuardando(true)
     setError(null)
     setAviso(null)
     try {
       await guardarEdicionExpediente(actor, usuario, {
         etapa,
-        subgrupo: etapa === 'Grupo Operativo' ? '' : subgrupo,
+        subgrupo: esOperativo ? '' : subgrupo,
         ayudantia,
         estatus: puedoEstatus ? estatus : undefined,
         rol_sistema: soyAdmin ? rol : undefined,
@@ -432,6 +448,19 @@ export function ExpedienteUnificadoModal({
                   )}
                 </div>
 
+                {cuentaLegadaSinAyudantia && (
+                  <div
+                    role="status"
+                    className="flex items-start gap-2 rounded-lg border border-ambar bg-ambar-suave p-2.5 text-xs font-semibold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto"
+                  >
+                    <AlertTriangle size={15} strokeWidth={2} className="mt-0.5 shrink-0" />
+                    <span>
+                      Falta asignar ayudantía: este integrante está en Grupo Operativo sin ayudantía
+                      asignada. Selecciona una ayudantía para guardar cambios de adscripción.
+                    </span>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="flex flex-col gap-1">
                     <label htmlFor="exp-etapa" className="etiqueta">
@@ -441,11 +470,7 @@ export function ExpedienteUnificadoModal({
                       id="exp-etapa"
                       value={etapa}
                       disabled={!puedoEditar || guardando}
-                      onChange={(e) => {
-                        const nueva = e.target.value as EtapaBrigadista
-                        setEtapa(nueva)
-                        if (nueva === 'Grupo Operativo') setSubgrupo('')
-                      }}
+                      onChange={(e) => manejarCambioEtapa(e.target.value as EtapaBrigadista)}
                       className="campo min-h-10 text-xs"
                     >
                       {ETAPAS_BRIGADISTA.map((et) => (
@@ -456,44 +481,64 @@ export function ExpedienteUnificadoModal({
                     </select>
                   </div>
 
-                  <div className="flex flex-col gap-1">
-                    <label htmlFor="exp-subgrupo" className="etiqueta">
-                      Subgrupo
-                    </label>
-                    <select
-                      id="exp-subgrupo"
-                      value={etapa === 'Grupo Operativo' ? '' : subgrupo}
-                      disabled={!puedoEditar || guardando || etapa === 'Grupo Operativo'}
-                      onChange={(e) => setSubgrupo(e.target.value)}
-                      className="campo min-h-10 text-xs"
-                    >
-                      <option value="">
-                        {etapa === 'Grupo Operativo' ? 'No aplica' : 'Sin subgrupo'}
-                      </option>
-                      {opcionesSubgrupo.map((sg) => (
-                        <option key={sg} value={sg}>
-                          {sg}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  {!esOperativo && (
+                    <div className="flex flex-col gap-1">
+                      <label htmlFor="exp-subgrupo" className="etiqueta">
+                        Grupo formativo
+                      </label>
+                      <select
+                        id="exp-subgrupo"
+                        value={subgrupo}
+                        disabled={!puedoEditar || guardando}
+                        onChange={(e) => setSubgrupo(e.target.value)}
+                        className="campo min-h-10 text-xs"
+                      >
+                        <option value="">Sin grupo</option>
+                        {opcionesSubgrupo.map((sg) => (
+                          <option key={sg} value={sg}>
+                            {sg}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
                   <div className="flex flex-col gap-1">
                     <label htmlFor="exp-ayudantia" className="etiqueta">
-                      Ayudantía
+                      {esOperativo ? 'Ayudantía (obligatoria)' : 'Ayudantía (opcional)'}
                     </label>
                     <select
                       id="exp-ayudantia"
                       value={ayudantia}
                       disabled={!puedoEditar || guardando}
                       onChange={(e) => setAyudantia(e.target.value as AyudantiaSlot)}
-                      className="campo min-h-10 text-xs"
+                      className={`campo min-h-10 text-xs ${
+                        ayudantiaInvalidaOperativo
+                          ? 'border-ambar dark:border-noche-ambar-texto'
+                          : ''
+                      }`}
                     >
-                      {AYUDANTIAS.map((ay) => (
-                        <option key={ay} value={ay}>
-                          {ay}
-                        </option>
-                      ))}
+                      {esOperativo ? (
+                        <>
+                          {ayudantia === 'Ninguna' && (
+                            <option value="Ninguna">Selecciona una ayudantía...</option>
+                          )}
+                          {AYUDANTIAS_ACTIVAS.map((ay) => (
+                            <option key={ay} value={ay}>
+                              {ay}
+                            </option>
+                          ))}
+                        </>
+                      ) : (
+                        <>
+                          <option value="Ninguna">Sin ayudantía</option>
+                          {AYUDANTIAS_ACTIVAS.map((ay) => (
+                            <option key={ay} value={ay}>
+                              {ay}
+                            </option>
+                          ))}
+                        </>
+                      )}
                     </select>
                   </div>
 

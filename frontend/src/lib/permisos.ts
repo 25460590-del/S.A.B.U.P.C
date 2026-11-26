@@ -1,6 +1,7 @@
 import type {
   AyudantiaSlot,
   EtapaBrigadista,
+  EtapaFormativa,
   GrupoOperativo,
   Operativo,
   Usuario,
@@ -22,6 +23,62 @@ export function grupoDesdeEtapa(etapa: EtapaBrigadista): GrupoOperativo {
   if (etapa === 'Alfa') return 'Alfa'
   if (etapa === 'Omega') return 'Omega'
   return 'Ninguno'
+}
+
+export function esEtapaFormativa(etapa: EtapaBrigadista): etapa is EtapaFormativa {
+  return etapa === 'Alfa' || etapa === 'Omega' || etapa === 'SIERRA'
+}
+
+export function prefijoGrupoDeEtapa(etapa: EtapaFormativa): string {
+  return etapa === 'SIERRA' ? 'Sierra' : etapa
+}
+
+export function etapaDeSubgrupo(nombre?: string | null): EtapaFormativa | null {
+  const limpio = (nombre ?? '').trim().toLowerCase()
+  if (limpio.startsWith('alfa')) return 'Alfa'
+  if (limpio.startsWith('omega')) return 'Omega'
+  if (limpio.startsWith('sierra')) return 'SIERRA'
+  return null
+}
+
+/**
+ * Filtra los grupos activos correspondientes a una etapa formativa.
+ * Para 'Grupo Operativo' siempre devuelve lista vacía (no aplica grupo formativo).
+ */
+export function subgruposDeEtapa(
+  subgrupos: string[],
+  etapa: EtapaBrigadista,
+  incluirActual?: string,
+): string[] {
+  if (etapa === 'Grupo Operativo') return []
+  const filtrados = subgrupos.filter((sg) => etapaDeSubgrupo(sg) === etapa)
+  const actual = (incluirActual ?? '').trim()
+  if (
+    actual &&
+    !filtrados.includes(actual) &&
+    (etapaDeSubgrupo(actual) === etapa || etapaDeSubgrupo(actual) === null)
+  ) {
+    filtrados.push(actual)
+  }
+  return filtrados
+}
+
+export function etiquetaAyudantia(ayudantia?: AyudantiaSlot | string | null): string {
+  if (!ayudantia || ayudantia === 'Ninguna') return 'Sin ayudantía'
+  return ayudantia
+}
+
+export function faltaAyudantiaOperativo(
+  usuario: Pick<Usuario, 'etapa' | 'ayudantia' | 'ayudantia_slot'>,
+): boolean {
+  return usuario.etapa === 'Grupo Operativo' && ayudantiaEfectiva(usuario) === 'Ninguna'
+}
+
+export function esAyudantiaValidaParaEtapa(
+  etapa: EtapaBrigadista,
+  ayudantia: AyudantiaSlot,
+): boolean {
+  return etapa !== 'Grupo Operativo' || ayudantia !== 'Ninguna'
 }
 
 export function ayudantiaEfectiva(
