@@ -826,3 +826,30 @@ test('fotos_perfiles: dueño Activo guarda WebP o JPEG comprimido y se rechazan 
     actualizado_en: serverTimestamp(),
   }));
 });
+
+test('contacto_emergencia_parentesco: alta y actualización por dueño Activo, bloqueado para Admin', async () => {
+  // 1. Alta nueva incluyendo parentesco
+  await assertSucceeds(setDoc(doc(db('nuevoConParentesco'), 'usuarios/nuevoConParentesco'), altaValida('nuevoConParentesco', {
+    contacto_emergencia_parentesco: 'Madre',
+  })));
+
+  // 2. Cuenta existente sin campo parentesco puede completarlo/actualizar sus 3 campos de emergencia
+  await assertSucceeds(updateDoc(doc(db('activo1'), 'usuarios/activo1'), {
+    contacto_emergencia_nombre: 'María López',
+    contacto_emergencia_parentesco: 'Madre',
+    contacto_emergencia_telefono: '3127654321',
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // 3. Longitud excesiva en parentesco se rechaza (> 60 caracteres)
+  await assertFails(updateDoc(doc(db('activo1'), 'usuarios/activo1'), {
+    contacto_emergencia_parentesco: 'P'.repeat(61),
+    actualizado_en: serverTimestamp(),
+  }));
+
+  // 4. Admin sigue sin poder modificar datos de contacto de emergencia ajenos
+  await assertFails(updateDoc(doc(db('admin1'), 'usuarios/activo1'), {
+    contacto_emergencia_parentesco: 'Padre',
+    actualizado_en: serverTimestamp(),
+  }));
+});

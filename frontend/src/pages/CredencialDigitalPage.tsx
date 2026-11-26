@@ -13,6 +13,7 @@ import {
 import { QRCodeCanvas } from 'qrcode.react'
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { BupcLogo } from '../components/BupcLogo'
+import { normalizarNombrePropio } from '../lib/nombres'
 import { mensajeDeError, nombreCompleto } from '../services/authService'
 import { escucharFotoPerfil, guardarFotoPerfil } from '../services/fotosService'
 import type { FotoPerfil, Usuario } from '../types'
@@ -269,7 +270,7 @@ export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
               </div>
             </div>
 
-            {/* Acciones: Descargar PNG (salvia) y Ver datos médicos (naranja) */}
+            {/* Acciones: Descargar QR (salvia) y Ficha de Emergencia (naranja) */}
             <div className="grid w-full grid-cols-2 gap-2.5 pt-1">
               <button type="button" onClick={descargarQrPng} className="btn-salvia px-3 text-xs">
                 <Download size={16} strokeWidth={2} />
@@ -281,18 +282,18 @@ export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
                 className="btn-naranja px-3 text-xs"
               >
                 <HeartPulse size={16} strokeWidth={2} />
-                <span>Ver datos médicos</span>
+                <span>Ficha de Emergencia</span>
               </button>
             </div>
           </div>
         </article>
       ) : (
-        /* REVERSO: Expediente Médico de Emergencia · Offline */
+        /* REVERSO: Ficha de Emergencia */
         <article className="tarjeta flex flex-col overflow-hidden border-2 border-alerta">
           <header className="flex items-center gap-2.5 bg-alerta px-4 py-4 text-white">
             <HeartPulse size={22} strokeWidth={2} className="shrink-0" />
             <h2 className="text-sm font-bold tracking-wide">
-              EXPEDIENTE MÉDICO DE EMERGENCIA · SIN CONEXIÓN
+              FICHA DE EMERGENCIA · SIN CONEXIÓN
             </h2>
           </header>
 
@@ -322,37 +323,60 @@ export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
               </p>
             </div>
 
-            {/* Padecimientos y medicamentos */}
+            {/* Condiciones y medicamentos */}
             <div className="flex flex-col gap-1 border-b border-borde pb-3 dark:border-noche-borde">
               <span className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
-                Padecimientos y medicamentos actuales
+                Condiciones y medicamentos actuales
               </span>
               <p className="text-sm text-tinta dark:text-noche-tinta">
                 {perfil.padecimientos_medicamentos || 'Ninguno'}
               </p>
             </div>
 
-            {/* Contacto de emergencia */}
+            {/* Contacto de emergencia (3 campos diferenciados) */}
             <div className="flex flex-col gap-3">
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <span className="block text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
-                    Contacto de emergencia
-                  </span>
-                  <span className="text-base font-bold text-tinta dark:text-noche-tinta">
-                    {perfil.contacto_emergencia_nombre}
-                  </span>
+              <span className="text-xs font-bold tracking-wide uppercase text-tinta-suave dark:text-noche-tinta-suave">
+                Contacto de emergencia
+              </span>
+              <dl className="grid grid-cols-1 gap-2 rounded-lg bg-superficie-suave p-3 text-sm dark:bg-noche-campo">
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                    Nombre
+                  </dt>
+                  <dd className="text-right font-bold text-tinta dark:text-noche-tinta">
+                    {normalizarNombrePropio(perfil.contacto_emergencia_nombre)}
+                  </dd>
                 </div>
-                <span className="text-sm font-bold tabular-nums text-tinta dark:text-noche-tinta">
-                  {perfil.contacto_emergencia_telefono}
-                </span>
-              </div>
+                {perfil.contacto_emergencia_parentesco && (
+                  <div className="flex items-center justify-between gap-2 border-t border-borde pt-2 dark:border-noche-borde">
+                    <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                      Parentesco
+                    </dt>
+                    <dd className="text-right font-semibold text-tinta dark:text-noche-tinta">
+                      {perfil.contacto_emergencia_parentesco}
+                    </dd>
+                  </div>
+                )}
+                <div className="flex items-center justify-between gap-2 border-t border-borde pt-2 dark:border-noche-borde">
+                  <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                    Teléfono
+                  </dt>
+                  <dd className="text-right font-bold tabular-nums text-tinta dark:text-noche-tinta">
+                    {perfil.contacto_emergencia_telefono}
+                  </dd>
+                </div>
+              </dl>
 
               <a href={`tel:${telefonoLimpio}`} className="btn-rojo w-full">
                 <Phone size={18} strokeWidth={2} />
                 <span>Llamar a Emergencia</span>
               </a>
             </div>
+
+            <p className="text-center text-[11px] leading-snug text-tinta-suave dark:text-noche-tinta-suave">
+              Información declarada voluntariamente por el integrante únicamente como referencia en
+              caso de emergencia.
+            </p>
 
             <button
               type="button"

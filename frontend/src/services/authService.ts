@@ -18,6 +18,7 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  updateDoc,
   where,
   writeBatch,
   type FirestoreError,
@@ -25,6 +26,7 @@ import {
 } from 'firebase/firestore'
 import { auth, db } from '../lib/firebase'
 import { AYUDANTIAS, ETAPAS_BRIGADISTA } from '../constants/catalogos'
+import { normalizarNombrePropio, normalizarParentesco } from '../lib/nombres'
 import {
   esAdmin,
   esEncargadoAP,
@@ -52,8 +54,12 @@ import type {
 const usuariosRef = collection(db, 'usuarios')
 const auditoriaRef = collection(db, 'auditoria_eventos')
 
-export function nombreCompleto(u: Pick<Usuario, 'nombres' | 'apellido_paterno' | 'apellido_materno'>): string {
-  return [u.nombres, u.apellido_paterno, u.apellido_materno].filter(Boolean).join(' ')
+export function nombreCompleto(
+  u: Pick<Usuario, 'nombres' | 'apellido_paterno' | 'apellido_materno'>,
+): string {
+  return normalizarNombrePropio(
+    [u.nombres, u.apellido_paterno, u.apellido_materno].filter(Boolean).join(' '),
+  )
 }
 
 // ── Sesión ───────────────────────────────────────────────────────────────────
@@ -101,7 +107,7 @@ export function recuperarContrasena(correo: string): Promise<void> {
   return sendPasswordResetEmail(auth, correo.trim())
 }
 
-// ── Registro multipaso (Personal → Académico → Médico) ──────────────────────
+// ── Registro multipaso (Personal → Académico → Ficha de Emergencia) ─────────
 
 export interface DatosRegistro {
   correo: string
@@ -111,6 +117,26 @@ export interface DatosRegistro {
   medico: DatosMedicos
 }
 
+function normalizarDatosPersonalesRegistro(p: DatosPersonales): DatosPersonales {
+  return {
+    ...p,
+    nombres: normalizarNombrePropio(p.nombres),
+    apellido_paterno: normalizarNombrePropio(p.apellido_paterno),
+    apellido_materno: normalizarNombrePropio(p.apellido_materno),
+  }
+}
+
+function normalizarFichaEmergenciaRegistro(m: DatosMedicos): DatosMedicos {
+  return {
+    ...m,
+    alergias: m.alergias.trim() || 'Ninguna',
+    padecimientos_medicamentos: m.padecimientos_medicamentos.trim() || 'Ninguno',
+    contacto_emergencia_nombre: normalizarNombrePropio(m.contacto_emergencia_nombre),
+    contacto_emergencia_parentesco: normalizarParentesco(m.contacto_emergencia_parentesco),
+    contacto_emergencia_telefono: m.contacto_emergencia_telefono.trim(),
+  }
+}
+
 /**
  * Crea la cuenta en Authentication y el expediente `usuarios/{uid}` en estado
  * Pendiente. Si Firestore rechaza el expediente, se elimina la cuenta de Auth
@@ -118,14 +144,16 @@ export interface DatosRegistro {
  */
 export async function registrarBrigadista(datos: DatosRegistro): Promise<void> {
   const { user } = await createUserWithEmailAndPassword(auth, datos.correo.trim(), datos.contrasena)
+  const personalNormalizado = normalizarDatosPersonalesRegistro(datos.personal)
+  const fichaNormalizada = normalizarFichaEmergenciaRegistro(datos.medico)
 
   try {
     await setDoc(doc(usuariosRef, user.uid), {
       uid: user.uid,
       correo: user.email,
-      ...datos.personal,
+      ...personalNormalizado,
       ...datos.academico,
-      ...datos.medico,
+      ...fichaNormalizada,
       // Valores iniciales forzados también por firestore.rules
       grupo_operativo: 'Ninguno',
       ayudantia_slot: 'Ninguna',
@@ -166,12 +194,15 @@ export async function completarRegistroGoogle(
   if (!user.email) {
     throw new Error('La cuenta de Google no proporcionó un correo electrónico válido.')
   }
+  const personalNormalizado = normalizarDatosPersonalesRegistro(datos.personal)
+  const fichaNormalizada = normalizarFichaEmergenciaRegistro(datos.medico)
+
   await setDoc(doc(usuariosRef, user.uid), {
     uid: user.uid,
     correo: user.email,
-    ...datos.personal,
+    ...personalNormalizado,
     ...datos.academico,
-    ...datos.medico,
+    ...fichaNormalizada,
     grupo_operativo: 'Ninguno',
     ayudantia_slot: 'Ninguna',
     etapa: 'Alfa',
@@ -188,6 +219,46 @@ export async function completarRegistroGoogle(
     creado_en: serverTimestamp(),
     actualizado_en: serverTimestamp(),
   })
+}
+
+export interface DatosFichaEmergenciaPropia {
+  nombres?: string
+  apellido_paterno?: string
+  apellido_materno?: string
+  alergias: string
+  padecimientos_medicamentos: string
+  contacto_emergencia_nombre: string
+  contacto_emergencia_parentesco: string
+  contacto_emergencia_telefono: string
+}
+
+/**
+ * Permite al propio integrante Activo actualizar su Ficha de Emergencia (incluyendo
+ * los 3 campos separados de contacto de emergencia) con normalización automática de nombres.
+ */
+export async function actualizarFichaEmergenciaPropia(
+  uid: string,
+  datos: DatosFichaEmergenciaPropia,
+): Promise<void> {
+  const payload: Record<string, unknown> = {
+    alergias: datos.alergias.trim() || 'Ninguna',
+    padecimientos_medicamentos: datos.padecimientos_medicamentos.trim() || 'Ninguno',
+    contacto_emergencia_nombre: normalizarNombrePropio(datos.contacto_emergencia_nombre),
+    contacto_emergencia_parentesco: normalizarParentesco(datos.contacto_emergencia_parentesco),
+    contacto_emergencia_telefono: datos.contacto_emergencia_telefono.trim(),
+    actualizado_en: serverTimestamp(),
+  }
+  if (datos.nombres !== undefined) {
+    payload.nombres = normalizarNombrePropio(datos.nombres)
+  }
+  if (datos.apellido_paterno !== undefined) {
+    payload.apellido_paterno = normalizarNombrePropio(datos.apellido_paterno)
+  }
+  if (datos.apellido_materno !== undefined) {
+    payload.apellido_materno = normalizarNombrePropio(datos.apellido_materno)
+  }
+
+  await updateDoc(doc(usuariosRef, uid), payload)
 }
 
 // ── Listeners en tiempo real ─────────────────────────────────────────────────

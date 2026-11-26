@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { EQUIPO_BUPC_SUGERIDO, ESTADOS_OPERATIVOS, ROLES_EN_TURNO } from '../constants/catalogos'
+import { normalizarNombrePropio } from '../lib/nombres'
 import {
   actualizarEstadoOperativo,
   actualizarRolEnTurno,
@@ -760,7 +761,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                         />
                       )}
                       <span className="truncate text-xs font-bold text-tinta dark:text-noche-tinta">
-                        {a.usuario_nombre}
+                        {normalizarNombrePropio(a.usuario_nombre)}
                       </span>
                     </div>
 
@@ -911,7 +912,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
 
                       <td className="px-3 py-1.5">
                         <span className="block text-xs font-bold text-tinta dark:text-noche-tinta">
-                          {a.usuario_nombre}
+                          {normalizarNombrePropio(a.usuario_nombre)}
                         </span>
                         <span className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
                           {grupo} · {a.ayudantia_slot} ·{' '}
@@ -1113,7 +1114,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
             <header className="flex items-center justify-between gap-2 border-b border-borde bg-udec px-4 py-3 text-white dark:border-noche-borde">
               <div className="min-w-0">
                 <h3 className="truncate text-sm font-bold">
-                  Material del turno · {asistenciaMaterialActiva.usuario_nombre}
+                  Material del turno · {normalizarNombrePropio(asistenciaMaterialActiva.usuario_nombre)}
                 </h3>
                 <p className="text-[11px] text-white/85 tabular-nums">
                   BUPC pendientes: {asistenciaMaterialActiva.equipos_bupc_pendientes} · Propio

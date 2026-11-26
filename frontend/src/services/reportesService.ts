@@ -4,6 +4,7 @@ import autoTable from 'jspdf-autotable'
 import * as XLSX from 'xlsx'
 import { CATEGORIAS_OPERATIVO } from '../constants/catalogos'
 import { db } from '../lib/firebase'
+import { normalizarNombrePropio } from '../lib/nombres'
 import type {
   AsistenciaPersonal,
   CategoriaOperativo,
@@ -135,11 +136,27 @@ export async function generarConstanciaHorasPdf(
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(10)
   const grupoTxt =
-    usuario.grupo_operativo === 'Ninguno' ? 'Sin asignar' : `Grupo ${usuario.grupo_operativo}`
+    usuario.subgrupo ||
+    (usuario.grupo_operativo === 'Ninguno' ? usuario.etapa : `Grupo ${usuario.grupo_operativo}`)
+  const contactoNombre = normalizarNombrePropio(usuario.contacto_emergencia_nombre)
+  const contactoParentesco = usuario.contacto_emergencia_parentesco?.trim() || ''
+  const contactoLinea = [
+    contactoNombre,
+    contactoParentesco ? `(${contactoParentesco})` : '',
+    usuario.contacto_emergencia_telefono,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+
   doc.text(`Brigadista: ${nombreCompleto(usuario)}`, 14, 50)
   doc.text(`No. de Cuenta UdeC: ${usuario.numero_cuenta}`, 14, 56)
-  doc.text(`Adscripción: ${grupoTxt} · Ayudantía: ${usuario.ayudantia_slot}`, 14, 62)
+  doc.text(`Adscripción: ${grupoTxt} · Ayudantía: ${usuario.ayudantia || usuario.ayudantia_slot}`, 14, 62)
   doc.text(`Fecha de emisión: ${formatearFechaHora(Date.now())}`, 14, 68)
+  if (contactoLinea) {
+    doc.setFontSize(8.5)
+    doc.text(`Ficha de Emergencia · Contacto: ${contactoLinea}`, 14, 74)
+    doc.setFontSize(10)
+  }
 
   doc.setFillColor(237, 245, 235)
   doc.roundedRect(148, 46, 54, 22, 2, 2, 'F')
@@ -152,7 +169,7 @@ export async function generarConstanciaHorasPdf(
 
   // Tabla 1: Desglose por categoría
   autoTable(doc, {
-    startY: 76,
+    startY: contactoLinea ? 80 : 76,
     head: [['Categoría Institucional', 'Turnos', 'Horas Acumuladas']],
     body: desglose.map((d) => [d.categoria, String(d.turnos), `${d.horas.toFixed(2)} hrs`]),
     headStyles: { fillColor: [30, 86, 49], textColor: 255, fontStyle: 'bold' },
@@ -226,7 +243,7 @@ export function exportarExpedienteExcel(
   const hojaAsistencias = XLSX.utils.json_to_sheet(
     datos.asistencias.length > 0
       ? datos.asistencias.map((a) => ({
-          Brigadista: a.usuario_nombre,
+          Brigadista: normalizarNombrePropio(a.usuario_nombre),
           Cuenta: a.usuario_cuenta,
           Grupo: a.grupo_operativo,
           Ayudantía: a.ayudantia_slot,
@@ -245,7 +262,7 @@ export function exportarExpedienteExcel(
   const hojaEquipos = XLSX.utils.json_to_sheet(
     datos.equipos.length > 0
       ? datos.equipos.map((e) => ({
-          Brigadista: e.usuario_nombre,
+          Brigadista: normalizarNombrePropio(e.usuario_nombre),
           Artículo: e.nombre_articulo,
           Folio: e.codigo_inventario,
           Origen: e.origen_material,
@@ -265,7 +282,7 @@ export function exportarExpedienteExcel(
           ORIGEN: r.origen,
           DESTINO: r.destinos.join(', '),
           Actividades: r.actividades,
-          'Registrado por': r.registrado_por,
+          'Registrado por': normalizarNombrePropio(r.registrado_por),
           Editado: r.fue_editado ? 'Sí' : 'No',
           'Respaldo Original': r.actividad_original_respaldo ?? '',
         }))
@@ -324,7 +341,7 @@ export async function exportarExpedientePdf(
     body:
       datos.asistencias.length > 0
         ? datos.asistencias.map((a) => [
-            a.usuario_nombre,
+            normalizarNombrePropio(a.usuario_nombre),
             `${a.grupo_operativo} · ${a.ayudantia_slot}`,
             a.rol_en_turno,
             formatearFechaHora(a.hora_entrada?.toMillis()),
@@ -345,7 +362,7 @@ export async function exportarExpedientePdf(
       datos.equipos.length > 0
         ? datos.equipos.map((e) => [
             `${e.nombre_articulo}${e.codigo_inventario ? ` (${e.codigo_inventario})` : ''}`,
-            e.usuario_nombre,
+            normalizarNombrePropio(e.usuario_nombre),
             e.origen_material,
             e.acta_incidencia
               ? `ACTA: ${e.acta_incidencia.motivo}`

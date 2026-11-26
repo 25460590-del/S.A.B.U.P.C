@@ -8,6 +8,7 @@ import {
   X,
 } from 'lucide-react'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { normalizarNombrePropio } from '../lib/nombres'
 import { mensajeDeError } from '../services/authService'
 import {
   escucharResguardoGlobalBupc,
@@ -269,7 +270,8 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
                         {eq.codigo_inventario ? ` · ${eq.codigo_inventario}` : ''}
                       </p>
                       <p className="truncate text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
-                        {eq.usuario_nombre} · {opNombre} · {formatearHoraCorta(eq.creado_en?.toMillis())}
+                        {normalizarNombrePropio(eq.usuario_nombre)} · {opNombre} ·{' '}
+                        {formatearHoraCorta(eq.creado_en?.toMillis())}
                       </p>
                     </div>
                     {eq.estado_reporte === 'Con_Falla' && (
@@ -365,7 +367,7 @@ export function ResguardoGlobalPanel({ encargado }: ResguardoGlobalPanelProps) {
                         )}
                       </td>
                       <td className="px-3 py-2 text-xs font-semibold text-tinta dark:text-noche-tinta">
-                        {eq.usuario_nombre}
+                        {normalizarNombrePropio(eq.usuario_nombre)}
                       </td>
                       <td className="px-3 py-2 text-xs text-tinta-suave dark:text-noche-tinta-suave">
                         {opNombre}

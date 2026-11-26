@@ -12,6 +12,7 @@ import {
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import * as XLSX from 'xlsx'
 import { GRAVEDADES_INCIDENCIA, TIPOS_INCIDENCIA_PERSONAL } from '../constants/catalogos'
+import { normalizarNombrePropio } from '../lib/nombres'
 import { esAdmin, esEncargadoAP, puedeGestionarBrigadista } from '../lib/permisos'
 import {
   escucharDirectorioSegunRol,
@@ -153,7 +154,7 @@ export function IncidenciasPersonalPanel({ actor }: IncidenciasPersonalPanelProp
         fechaMs: ms,
         fechaIso: ms ? formatearFechaHora(ms).slice(0, 10) : '',
         usuarioUid: inc.usuario_uid,
-        usuarioNombre: inc.usuario_nombre,
+        usuarioNombre: normalizarNombrePropio(inc.usuario_nombre),
         subgrupo: u?.subgrupo || u?.etapa || 'Sin subgrupo',
         etiquetaTipo: inc.tipo,
         severidad: inc.gravedad,
@@ -161,7 +162,7 @@ export function IncidenciasPersonalPanel({ actor }: IncidenciasPersonalPanelProp
           ? (mapaOperativos.get(inc.operativo_id)?.nombre ?? 'Operativo')
           : 'Administrativa',
         descripcion: inc.descripcion,
-        registradoPor: inc.creado_por_nombre,
+        registradoPor: normalizarNombrePropio(inc.creado_por_nombre),
         evidenciaId: null,
       })
     }
@@ -184,14 +185,14 @@ export function IncidenciasPersonalPanel({ actor }: IncidenciasPersonalPanelProp
         fechaMs: ms,
         fechaIso: ms ? formatearFechaHora(ms).slice(0, 10) : '',
         usuarioUid: eq.usuario_uid,
-        usuarioNombre: eq.usuario_nombre,
+        usuarioNombre: normalizarNombrePropio(eq.usuario_nombre),
         subgrupo: u?.subgrupo || u?.etapa || 'Sin subgrupo',
         etiquetaTipo: `${eq.nombre_articulo}${eq.codigo_inventario ? ` (${eq.codigo_inventario})` : ''}`,
         severidad: 'Material BUPC',
         operativoNombre:
           eq.operativo_nombre || mapaOperativos.get(eq.operativo_id)?.nombre || 'Operativo',
         descripcion: eq.acta_incidencia.motivo,
-        registradoPor: eq.acta_incidencia.registrado_por_nombre,
+        registradoPor: normalizarNombrePropio(eq.acta_incidencia.registrado_por_nombre),
         evidenciaId: eq.acta_incidencia.evidencia_id,
       })
     }

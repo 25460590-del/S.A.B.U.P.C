@@ -48,12 +48,13 @@ export interface DatosAcademicos {
   numero_cuenta: string
 }
 
-/** Paso 3 · Expediente Médico */
+/** Paso 3 · Ficha de Emergencia */
 export interface DatosMedicos {
   tipo_sangre: TipoSangre
   alergias: string
   padecimientos_medicamentos: string
   contacto_emergencia_nombre: string
+  contacto_emergencia_parentesco?: string
   contacto_emergencia_telefono: string
 }
 

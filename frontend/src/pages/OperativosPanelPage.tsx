@@ -21,6 +21,7 @@ import { QRCodeCanvas } from 'qrcode.react'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { BitacoraPersonalSection } from '../components/BitacoraPersonalSection'
 import { CATEGORIAS_OPERATIVO } from '../constants/catalogos'
+import { normalizarNombrePropio } from '../lib/nombres'
 import { esAdmin, esEncargado } from '../lib/permisos'
 import { mensajeDeError } from '../services/authService'
 import {
@@ -1135,7 +1136,7 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
                   {preCierre.deudores.map(({ asistencia, equiposPendientes }) => (
                     <div key={asistencia.id} className="p-3">
                       <p className="text-xs font-bold text-tinta dark:text-noche-tinta">
-                        {asistencia.usuario_nombre}{' '}
+                        {normalizarNombrePropio(asistencia.usuario_nombre)}{' '}
                         <span className="font-normal text-tinta-suave dark:text-noche-tinta-suave">
                           ({asistencia.equipos_bupc_pendientes} pendiente
                           {asistencia.equipos_bupc_pendientes === 1 ? '' : 's'})

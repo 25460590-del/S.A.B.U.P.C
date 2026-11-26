@@ -40,13 +40,14 @@ rules_version = '2';
 //   - tiene_foto: bool
 //   - creado_en: timestamp (inmutable)
 //   - actualizado_en: timestamp (== request.time en cada escritura)
-//   Campos opcionales v1.1 (jerarquía escalable):
+//   Campos opcionales v1.1 (jerarquía escalable y contacto de emergencia):
 //   - etapa: 'Alfa' | 'Omega' | 'Grupo Operativo'                    (PRIVILEGIADO)
 //   - subgrupo: string 0..60                                         (PRIVILEGIADO)
 //   - ayudantia: 'Capacitación' | 'Administración de Personal' |
 //                'Tesla' | 'Socorros' | 'Logística' | 'Ninguna'      (PRIVILEGIADO)
 //   - grupos_a_cargo: list (<= 30 elementos)                         (PRIVILEGIADO)
 //   - clave_radio: string 0..20 | null                               (PRIVILEGIADO)
+//   - contacto_emergencia_parentesco: string 0..60                   (editable por dueño)
 //
 // Colección: perfiles_operativos/{uid}   (proyección mínima sin PII médico)
 //   - uid: string (== ID del documento, inmutable)
@@ -437,9 +438,10 @@ service cloud.firestore {
               'qr_codigo_unico', 'tiene_foto', 'creado_en', 'actualizado_en'];
     }
 
-    // Campos opcionales v1.1 (jerarquía escalable y radio)
+    // Campos opcionales v1.1 (jerarquía escalable, radio y contacto de emergencia)
     function camposUsuarioOpcionales() {
-      return ['etapa', 'subgrupo', 'ayudantia', 'grupos_a_cargo', 'clave_radio'];
+      return ['etapa', 'subgrupo', 'ayudantia', 'grupos_a_cargo', 'clave_radio',
+              'contacto_emergencia_parentesco'];
     }
 
     // Campos que el dueño (Activo) puede modificar
@@ -448,7 +450,8 @@ service cloud.firestore {
               'sexo', 'telefono_fijo', 'celular', 'celular_con_whatsapp',
               'nivel_academico', 'escuela_carrera', 'numero_cuenta', 'tipo_sangre',
               'alergias', 'padecimientos_medicamentos', 'contacto_emergencia_nombre',
-              'contacto_emergencia_telefono', 'tiene_foto', 'actualizado_en'];
+              'contacto_emergencia_parentesco', 'contacto_emergencia_telefono',
+              'tiene_foto', 'actualizado_en'];
     }
 
     // Campos que un Administrador Activo puede modificar
@@ -503,7 +506,9 @@ service cloud.firestore {
                                  'Tesla', 'Socorros', 'Logística', 'Ninguna'])
           && (!('grupos_a_cargo' in d)
               || (d.grupos_a_cargo is list && d.grupos_a_cargo.size() <= 30))
-          && (!('clave_radio' in d) || cadenaONull(d.clave_radio, 0, 20));
+          && (!('clave_radio' in d) || cadenaONull(d.clave_radio, 0, 20))
+          && (!('contacto_emergencia_parentesco' in d)
+              || cadena(d.contacto_emergencia_parentesco, 0, 60));
     }
 
     // Valores iniciales obligatorios al registrarse (anti-escalamiento)

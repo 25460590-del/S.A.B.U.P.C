@@ -11,6 +11,11 @@ import {
   TIPOS_SANGRE,
 } from '../constants/catalogos'
 import {
+  esTelefonoValido,
+  normalizarNombrePropio,
+  normalizarParentesco,
+} from '../lib/nombres'
+import {
   completarRegistroGoogle,
   mensajeDeError,
   registrarBrigadista,
@@ -27,7 +32,7 @@ type Paso = 1 | 2 | 3
 const SUBTITULOS: Record<Paso, string> = {
   1: 'Paso 1 de 3 · Personal y Contacto',
   2: 'Paso 2 de 3 · Académico',
-  3: 'Paso 3 de 3 · Expediente Médico',
+  3: 'Paso 3 de 3 · Ficha de Emergencia',
 }
 
 export function RegistroPage({ usuarioGoogle, alVolverALogin }: RegistroPageProps) {
@@ -57,11 +62,12 @@ export function RegistroPage({ usuarioGoogle, alVolverALogin }: RegistroPageProp
   const [escuelaLibre, setEscuelaLibre] = useState('')
   const [numeroCuenta, setNumeroCuenta] = useState('')
 
-  // Paso 3: Expediente Médico
+  // Paso 3: Ficha de Emergencia
   const [tipoSangre, setTipoSangre] = useState<TipoSangre>('O+')
   const [alergias, setAlergias] = useState('')
   const [padecimientos, setPadecimientos] = useState('')
   const [contactoEmergenciaNombre, setContactoEmergenciaNombre] = useState('')
+  const [contactoEmergenciaParentesco, setContactoEmergenciaParentesco] = useState('')
   const [contactoEmergenciaTelefono, setContactoEmergenciaTelefono] = useState('')
 
   function obtenerEscuelaCarrera(): string {
@@ -103,7 +109,11 @@ export function RegistroPage({ usuarioGoogle, alVolverALogin }: RegistroPageProp
 
   function validarPaso3(): string | null {
     if (!contactoEmergenciaNombre.trim()) return 'Ingresa el nombre del contacto de emergencia.'
+    if (!contactoEmergenciaParentesco.trim()) return 'Ingresa el parentesco del contacto de emergencia.'
     if (!contactoEmergenciaTelefono.trim()) return 'Ingresa el teléfono de emergencia.'
+    if (!esTelefonoValido(contactoEmergenciaTelefono)) {
+      return 'Ingresa un teléfono de emergencia válido de al menos 10 dígitos.'
+    }
     return null
   }
 
@@ -137,9 +147,9 @@ export function RegistroPage({ usuarioGoogle, alVolverALogin }: RegistroPageProp
     try {
       const payloadComun = {
         personal: {
-          nombres: nombres.trim(),
-          apellido_paterno: apellidoPaterno.trim(),
-          apellido_materno: apellidoMaterno.trim(),
+          nombres: normalizarNombrePropio(nombres),
+          apellido_paterno: normalizarNombrePropio(apellidoPaterno),
+          apellido_materno: normalizarNombrePropio(apellidoMaterno),
           fecha_nacimiento: fechaNacimiento,
           sexo,
           telefono_fijo: telefonoFijo.trim(),
@@ -155,7 +165,8 @@ export function RegistroPage({ usuarioGoogle, alVolverALogin }: RegistroPageProp
           tipo_sangre: tipoSangre,
           alergias: alergias.trim() || 'Ninguna',
           padecimientos_medicamentos: padecimientos.trim() || 'Ninguno',
-          contacto_emergencia_nombre: contactoEmergenciaNombre.trim(),
+          contacto_emergencia_nombre: normalizarNombrePropio(contactoEmergenciaNombre),
+          contacto_emergencia_parentesco: normalizarParentesco(contactoEmergenciaParentesco),
           contacto_emergencia_telefono: contactoEmergenciaTelefono.trim(),
         },
       }
@@ -209,7 +220,7 @@ export function RegistroPage({ usuarioGoogle, alVolverALogin }: RegistroPageProp
             [
               [1, '1. Personal'],
               [2, '2. Académico'],
-              [3, '3. Médico'],
+              [3, '3. Emergencia'],
             ] as const
           ).map(([num, texto]) => {
             const activo = num <= paso
@@ -579,11 +590,11 @@ export function RegistroPage({ usuarioGoogle, alVolverALogin }: RegistroPageProp
             </article>
           )}
 
-          {/* PASO 3: Expediente Médico */}
+          {/* PASO 3: Ficha de Emergencia */}
           {paso === 3 && (
             <article className="tarjeta flex flex-col gap-4 p-4">
               <h2 className="text-lg font-semibold text-tinta dark:text-noche-tinta">
-                Expediente Médico
+                Ficha de Emergencia
               </h2>
 
               <div className="flex flex-col gap-3">
@@ -622,13 +633,13 @@ export function RegistroPage({ usuarioGoogle, alVolverALogin }: RegistroPageProp
 
                 <div className="flex flex-col gap-1">
                   <label htmlFor="reg-padecimientos" className="etiqueta">
-                    Padecimientos / Medicamentos
+                    Condiciones / medicamentos actuales
                   </label>
                   <textarea
                     id="reg-padecimientos"
                     rows={2}
                     maxLength={500}
-                    placeholder="Indica diagnósticos o medicamentos actuales (o Ninguno)"
+                    placeholder="Indica condiciones relevantes o medicamentos actuales (o Ninguno)"
                     value={padecimientos}
                     onChange={(e) => setPadecimientos(e.target.value)}
                     className="campo min-h-20 py-2.5"
@@ -638,19 +649,36 @@ export function RegistroPage({ usuarioGoogle, alVolverALogin }: RegistroPageProp
                 <div className="flex flex-col gap-3 border-t border-borde pt-3 dark:border-noche-borde">
                   <div className="flex flex-col gap-1">
                     <label htmlFor="reg-emerg-nom" className="etiqueta">
-                      Contacto de emergencia
+                      Nombre del contacto de emergencia
                     </label>
                     <input
                       id="reg-emerg-nom"
                       type="text"
                       maxLength={120}
-                      placeholder="Nombre completo y parentesco"
+                      placeholder="Nombre completo"
                       value={contactoEmergenciaNombre}
                       onChange={(e) => setContactoEmergenciaNombre(e.target.value)}
                       className="campo"
                       required
                     />
                   </div>
+
+                  <div className="flex flex-col gap-1">
+                    <label htmlFor="reg-emerg-par" className="etiqueta">
+                      Parentesco
+                    </label>
+                    <input
+                      id="reg-emerg-par"
+                      type="text"
+                      maxLength={60}
+                      placeholder="Ej. Madre, Padre, Hermano(a), Pareja"
+                      value={contactoEmergenciaParentesco}
+                      onChange={(e) => setContactoEmergenciaParentesco(e.target.value)}
+                      className="campo"
+                      required
+                    />
+                  </div>
+
                   <div className="flex flex-col gap-1">
                     <label htmlFor="reg-emerg-tel" className="etiqueta">
                       Teléfono de emergencia
@@ -668,6 +696,11 @@ export function RegistroPage({ usuarioGoogle, alVolverALogin }: RegistroPageProp
                   </div>
                 </div>
               </div>
+
+              <p className="text-[11px] leading-snug text-tinta-suave dark:text-noche-tinta-suave">
+                Información declarada voluntariamente por el integrante únicamente como referencia
+                en caso de emergencia.
+              </p>
 
               <div className="grid grid-cols-2 gap-3 pt-1">
                 <button

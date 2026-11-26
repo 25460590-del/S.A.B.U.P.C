@@ -1,9 +1,12 @@
 import {
+  AlertCircle,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
   ClipboardList,
   Database,
   FolderArchive,
+  HeartPulse,
   History,
   IdCard,
   KeyRound,
@@ -14,13 +17,14 @@ import {
   Package,
   QrCode,
   Radio,
+  Save,
   Shield,
   Sun,
   UserCheck,
   Users,
   X,
 } from 'lucide-react'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { BarraEstado } from '../components/BarraEstado'
 import { BupcLogo } from '../components/BupcLogo'
 import { CatalogosAuditoriaTab } from '../components/CatalogosAuditoriaTab'
@@ -29,6 +33,7 @@ import { IncidenciasPersonalPanel } from '../components/IncidenciasPersonalPanel
 import { MiMaterialPanel } from '../components/MiMaterialPanel'
 import { ResguardoGlobalPanel } from '../components/ResguardoGlobalPanel'
 import { useTema } from '../context/TemaContext'
+import { esTelefonoValido, normalizarNombrePropio } from '../lib/nombres'
 import {
   esAdmin,
   esEncargado,
@@ -36,7 +41,12 @@ import {
   esEncargadoTesla,
   puedeUsarRadio,
 } from '../lib/permisos'
-import { cerrarSesion, nombreCompleto } from '../services/authService'
+import {
+  actualizarFichaEmergenciaPropia,
+  cerrarSesion,
+  mensajeDeError,
+  nombreCompleto,
+} from '../services/authService'
 import { escucharFotoPerfil } from '../services/fotosService'
 import type { FotoPerfil, Usuario } from '../types'
 import { AdminConsolePage } from './AdminConsolePage'
@@ -93,6 +103,265 @@ const TITULOS_DESTINO: Record<DestinoNavegacion, string> = {
   archivo: 'Archivo Operativo Global',
   catalogos: 'Catálogos y Auditoría',
   perfil: 'Mi Perfil',
+}
+
+function FichaEmergenciaPerfilCard({ perfil }: { perfil: Usuario }) {
+  const [editando, setEditando] = useState(false)
+  const [alergias, setAlergias] = useState(perfil.alergias || '')
+  const [padecimientos, setPadecimientos] = useState(perfil.padecimientos_medicamentos || '')
+  const [contactoNombre, setContactoNombre] = useState(
+    normalizarNombrePropio(perfil.contacto_emergencia_nombre),
+  )
+  const [contactoParentesco, setContactoParentesco] = useState(
+    perfil.contacto_emergencia_parentesco ?? '',
+  )
+  const [contactoTelefono, setContactoTelefono] = useState(perfil.contacto_emergencia_telefono)
+  const [guardando, setGuardando] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [aviso, setAviso] = useState<string | null>(null)
+
+  function abrirEdicion() {
+    setAlergias(perfil.alergias || '')
+    setPadecimientos(perfil.padecimientos_medicamentos || '')
+    setContactoNombre(normalizarNombrePropio(perfil.contacto_emergencia_nombre))
+    setContactoParentesco(perfil.contacto_emergencia_parentesco ?? '')
+    setContactoTelefono(perfil.contacto_emergencia_telefono)
+    setError(null)
+    setAviso(null)
+    setEditando(true)
+  }
+
+  async function manejarGuardar(e: FormEvent) {
+    e.preventDefault()
+    setError(null)
+    setAviso(null)
+    if (!contactoNombre.trim()) {
+      setError('Ingresa el nombre del contacto de emergencia.')
+      return
+    }
+    if (!contactoParentesco.trim()) {
+      setError('Ingresa el parentesco del contacto de emergencia.')
+      return
+    }
+    if (!esTelefonoValido(contactoTelefono)) {
+      setError('Ingresa un teléfono de emergencia válido de al menos 10 dígitos.')
+      return
+    }
+
+    setGuardando(true)
+    try {
+      await actualizarFichaEmergenciaPropia(perfil.uid, {
+        alergias,
+        padecimientos_medicamentos: padecimientos,
+        contacto_emergencia_nombre: contactoNombre,
+        contacto_emergencia_parentesco: contactoParentesco,
+        contacto_emergencia_telefono: contactoTelefono,
+      })
+      setAviso('Ficha de Emergencia actualizada correctamente.')
+      setEditando(false)
+    } catch (err) {
+      setError(mensajeDeError(err))
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  return (
+    <article className="tarjeta mx-auto flex w-full max-w-md flex-col gap-3.5 p-5">
+      <div className="flex items-center justify-between gap-2 border-b border-borde pb-3 dark:border-noche-borde">
+        <div className="flex items-center gap-2">
+          <HeartPulse size={18} strokeWidth={2} className="text-alerta dark:text-noche-rojo-texto" />
+          <h3 className="text-base font-bold text-tinta dark:text-noche-tinta">
+            Ficha de Emergencia
+          </h3>
+        </div>
+        {!editando && (
+          <button
+            type="button"
+            onClick={abrirEdicion}
+            className="btn-salvia min-h-8 px-3 text-xs"
+          >
+            {perfil.contacto_emergencia_parentesco ? 'Editar' : 'Completar'}
+          </button>
+        )}
+      </div>
+
+      {error && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-2.5 text-xs font-semibold text-red-900 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+        >
+          <AlertCircle size={15} strokeWidth={2} className="mt-0.5 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {aviso && (
+        <div
+          role="status"
+          className="flex items-start gap-2 rounded-lg border border-activo bg-activo-suave p-2.5 text-xs font-semibold text-emerald-900 dark:bg-noche-campo dark:text-activo-claro"
+        >
+          <CheckCircle2 size={15} strokeWidth={2} className="mt-0.5 shrink-0" />
+          <span>{aviso}</span>
+        </div>
+      )}
+
+      {editando ? (
+        <form onSubmit={manejarGuardar} className="flex flex-col gap-3" noValidate>
+          <div className="flex flex-col gap-1">
+            <label htmlFor="perf-emerg-nom" className="etiqueta">
+              Nombre del contacto de emergencia
+            </label>
+            <input
+              id="perf-emerg-nom"
+              type="text"
+              maxLength={120}
+              placeholder="Nombre completo"
+              value={contactoNombre}
+              onChange={(e) => setContactoNombre(e.target.value)}
+              className="campo text-sm"
+              required
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label htmlFor="perf-emerg-par" className="etiqueta">
+              Parentesco
+            </label>
+            <input
+              id="perf-emerg-par"
+              type="text"
+              maxLength={60}
+              placeholder="Ej. Madre, Padre, Hermano(a), Pareja"
+              value={contactoParentesco}
+              onChange={(e) => setContactoParentesco(e.target.value)}
+              className="campo text-sm"
+              required
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label htmlFor="perf-emerg-tel" className="etiqueta">
+              Teléfono de emergencia
+            </label>
+            <input
+              id="perf-emerg-tel"
+              type="tel"
+              maxLength={20}
+              placeholder="10 dígitos"
+              value={contactoTelefono}
+              onChange={(e) => setContactoTelefono(e.target.value)}
+              className="campo text-sm tabular-nums"
+              required
+            />
+          </div>
+
+          <div className="flex flex-col gap-1 border-t border-borde pt-2.5 dark:border-noche-borde">
+            <label htmlFor="perf-alergias" className="etiqueta">
+              Alergias
+            </label>
+            <input
+              id="perf-alergias"
+              type="text"
+              maxLength={300}
+              placeholder="Ej. Penicilina, látex o Ninguna"
+              value={alergias}
+              onChange={(e) => setAlergias(e.target.value)}
+              className="campo text-sm"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label htmlFor="perf-padec" className="etiqueta">
+              Condiciones / medicamentos actuales
+            </label>
+            <textarea
+              id="perf-padec"
+              rows={2}
+              maxLength={500}
+              placeholder="Condiciones relevantes o medicamentos actuales (o Ninguno)"
+              value={padecimientos}
+              onChange={(e) => setPadecimientos(e.target.value)}
+              className="campo min-h-18 py-2 text-sm"
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-1">
+            <button
+              type="button"
+              disabled={guardando}
+              onClick={() => setEditando(false)}
+              className="btn-salvia min-h-9 px-3 text-xs"
+            >
+              Cancelar
+            </button>
+            <button type="submit" disabled={guardando} className="btn-verde min-h-9 px-4 text-xs">
+              <Save size={14} strokeWidth={2} />
+              <span>{guardando ? 'Guardando...' : 'Guardar'}</span>
+            </button>
+          </div>
+        </form>
+      ) : (
+        <dl className="flex flex-col gap-2 text-sm">
+          <div className="flex items-center justify-between gap-2">
+            <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+              Tipo de sangre
+            </dt>
+            <dd className="font-bold tabular-nums text-alerta dark:text-noche-rojo-texto">
+              {perfil.tipo_sangre}
+            </dd>
+          </div>
+          <div className="flex items-center justify-between gap-2 border-t border-borde pt-2 dark:border-noche-borde">
+            <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+              Alergias
+            </dt>
+            <dd className="text-right text-xs font-semibold text-tinta dark:text-noche-tinta">
+              {perfil.alergias || 'Ninguna'}
+            </dd>
+          </div>
+          <div className="flex items-center justify-between gap-2 border-t border-borde pt-2 dark:border-noche-borde">
+            <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+              Condiciones / medicamentos
+            </dt>
+            <dd className="text-right text-xs font-medium text-tinta dark:text-noche-tinta">
+              {perfil.padecimientos_medicamentos || 'Ninguno'}
+            </dd>
+          </div>
+          <div className="flex items-center justify-between gap-2 border-t border-borde pt-2 dark:border-noche-borde">
+            <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+              Contacto de emergencia
+            </dt>
+            <dd className="text-right text-xs font-bold text-tinta dark:text-noche-tinta">
+              {normalizarNombrePropio(perfil.contacto_emergencia_nombre)}
+            </dd>
+          </div>
+          {perfil.contacto_emergencia_parentesco && (
+            <div className="flex items-center justify-between gap-2 border-t border-borde pt-2 dark:border-noche-borde">
+              <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                Parentesco
+              </dt>
+              <dd className="text-right text-xs font-semibold text-tinta dark:text-noche-tinta">
+                {perfil.contacto_emergencia_parentesco}
+              </dd>
+            </div>
+          )}
+          <div className="flex items-center justify-between gap-2 border-t border-borde pt-2 dark:border-noche-borde">
+            <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+              Teléfono de emergencia
+            </dt>
+            <dd className="text-right text-xs font-bold tabular-nums text-tinta dark:text-noche-tinta">
+              {perfil.contacto_emergencia_telefono}
+            </dd>
+          </div>
+        </dl>
+      )}
+
+      <p className="border-t border-borde pt-2.5 text-[11px] leading-snug text-tinta-suave dark:border-noche-borde dark:text-noche-tinta-suave">
+        Información declarada voluntariamente por el integrante únicamente como referencia en caso
+        de emergencia.
+      </p>
+    </article>
+  )
 }
 
 /**
@@ -483,80 +752,84 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
           {destino === 'catalogos' && soyAdmin && <CatalogosAuditoriaTab admin={perfil} />}
 
           {destino === 'perfil' && (
-            <article className="tarjeta mx-auto flex w-full max-w-md flex-col gap-4 p-5">
-              <div className="flex items-start justify-between gap-2 border-b border-borde pb-3 dark:border-noche-borde">
-                <div>
-                  <h2 className="text-lg font-bold text-tinta dark:text-noche-tinta">
-                    {nombreCompleto(perfil)}
-                  </h2>
-                  <p className="text-xs font-medium tabular-nums text-tinta-suave dark:text-noche-tinta-suave">
-                    No. de cuenta: {perfil.numero_cuenta} · {perfil.correo}
-                  </p>
-                </div>
-                <span
-                  className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
-                    enLinea
-                      ? 'bg-activo-suave text-activo dark:bg-noche-campo dark:text-activo-claro'
-                      : 'bg-ambar-suave text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto'
-                  }`}
-                >
+            <div className="flex flex-col gap-4">
+              <article className="tarjeta mx-auto flex w-full max-w-md flex-col gap-4 p-5">
+                <div className="flex items-start justify-between gap-2 border-b border-borde pb-3 dark:border-noche-borde">
+                  <div>
+                    <h2 className="text-lg font-bold text-tinta dark:text-noche-tinta">
+                      {nombreCompleto(perfil)}
+                    </h2>
+                    <p className="text-xs font-medium tabular-nums text-tinta-suave dark:text-noche-tinta-suave">
+                      No. de cuenta: {perfil.numero_cuenta} · {perfil.correo}
+                    </p>
+                  </div>
                   <span
-                    className={`h-1.5 w-1.5 rounded-full ${enLinea ? 'bg-activo dark:bg-activo-claro' : 'bg-ambar'}`}
-                  />
-                  {enLinea ? 'En línea' : 'Sin conexión'}
-                </span>
-              </div>
+                    className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
+                      enLinea
+                        ? 'bg-activo-suave text-activo dark:bg-noche-campo dark:text-activo-claro'
+                        : 'bg-ambar-suave text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto'
+                    }`}
+                  >
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ${enLinea ? 'bg-activo dark:bg-activo-claro' : 'bg-ambar'}`}
+                    />
+                    {enLinea ? 'En línea' : 'Sin conexión'}
+                  </span>
+                </div>
 
-              <dl className="flex flex-col gap-2.5 text-sm">
-                <div className="flex items-center justify-between gap-2">
-                  <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
-                    Rol del sistema
-                  </dt>
-                  <dd className="font-semibold text-tinta dark:text-noche-tinta">
-                    {perfil.rol_sistema}
-                  </dd>
-                </div>
-                <div className="flex items-center justify-between gap-2 border-t border-borde pt-2.5 dark:border-noche-borde">
-                  <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
-                    Etapa / Subgrupo
-                  </dt>
-                  <dd className="font-semibold text-tinta dark:text-noche-tinta">
-                    {perfil.etapa}
-                    {perfil.subgrupo ? ` · ${perfil.subgrupo}` : ''}
-                  </dd>
-                </div>
-                <div className="flex items-center justify-between gap-2 border-t border-borde pt-2.5 dark:border-noche-borde">
-                  <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
-                    Ayudantía
-                  </dt>
-                  <dd className="font-semibold text-tinta dark:text-noche-tinta">
-                    {perfil.ayudantia}
-                  </dd>
-                </div>
-                <div className="flex items-center justify-between gap-2 border-t border-borde pt-2.5 dark:border-noche-borde">
-                  <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
-                    Radiocomunicación
-                  </dt>
-                  <dd className="inline-flex items-center gap-1.5 font-semibold tabular-nums text-tinta dark:text-noche-tinta">
-                    <Radio size={15} strokeWidth={2} className="text-udec dark:text-activo-claro" />
-                    <span>
-                      {puedoRadio
-                        ? `Autorizado (${perfil.clave_radio || perfil.clave_personal_radio || 'sin clave'})`
-                        : 'No autorizado'}
-                    </span>
-                  </dd>
-                </div>
-              </dl>
+                <dl className="flex flex-col gap-2.5 text-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                      Rol del sistema
+                    </dt>
+                    <dd className="font-semibold text-tinta dark:text-noche-tinta">
+                      {perfil.rol_sistema}
+                    </dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 border-t border-borde pt-2.5 dark:border-noche-borde">
+                    <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                      Etapa / Subgrupo
+                    </dt>
+                    <dd className="font-semibold text-tinta dark:text-noche-tinta">
+                      {perfil.etapa}
+                      {perfil.subgrupo ? ` · ${perfil.subgrupo}` : ''}
+                    </dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 border-t border-borde pt-2.5 dark:border-noche-borde">
+                    <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                      Ayudantía
+                    </dt>
+                    <dd className="font-semibold text-tinta dark:text-noche-tinta">
+                      {perfil.ayudantia}
+                    </dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 border-t border-borde pt-2.5 dark:border-noche-borde">
+                    <dt className="text-xs font-semibold text-tinta-suave dark:text-noche-tinta-suave">
+                      Radiocomunicación
+                    </dt>
+                    <dd className="inline-flex items-center gap-1.5 font-semibold tabular-nums text-tinta dark:text-noche-tinta">
+                      <Radio size={15} strokeWidth={2} className="text-udec dark:text-activo-claro" />
+                      <span>
+                        {puedoRadio
+                          ? `Autorizado (${perfil.clave_radio || perfil.clave_personal_radio || 'sin clave'})`
+                          : 'No autorizado'}
+                      </span>
+                    </dd>
+                  </div>
+                </dl>
 
-              <button
-                type="button"
-                onClick={() => void cerrarSesion()}
-                className="btn-salvia mt-2 w-full"
-              >
-                <LogOut size={18} strokeWidth={2} />
-                <span>Cerrar Sesión</span>
-              </button>
-            </article>
+                <button
+                  type="button"
+                  onClick={() => void cerrarSesion()}
+                  className="btn-salvia mt-2 w-full"
+                >
+                  <LogOut size={18} strokeWidth={2} />
+                  <span>Cerrar Sesión</span>
+                </button>
+              </article>
+
+              <FichaEmergenciaPerfilCard perfil={perfil} />
+            </div>
           )}
         </main>
       </div>

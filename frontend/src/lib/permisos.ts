@@ -45,12 +45,17 @@ export function normalizarUsuario(raw: Usuario): Usuario {
   const ayudantia = raw.ayudantia ?? raw.ayudantia_slot ?? 'Ninguna'
   const claveRadio = normalizarClaveRadio(raw.clave_radio || raw.clave_personal_radio)
   const subgrupo = typeof raw.subgrupo === 'string' ? raw.subgrupo : ''
+  const parentescoEmergencia =
+    typeof raw.contacto_emergencia_parentesco === 'string'
+      ? raw.contacto_emergencia_parentesco.trim()
+      : ''
   const gruposACargo = Array.isArray(raw.grupos_a_cargo)
     ? raw.grupos_a_cargo.filter((g): g is string => typeof g === 'string' && g.trim().length > 0)
     : []
 
   return {
     ...raw,
+    contacto_emergencia_parentesco: parentescoEmergencia,
     etapa,
     subgrupo,
     ayudantia,

@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useState, type FormEvent } from 'react'
 import { AYUDANTIAS, ETAPAS_BRIGADISTA, ROLES } from '../constants/catalogos'
+import { normalizarNombrePropio } from '../lib/nombres'
 import {
   esAdmin,
   esEncargadoAP,
@@ -340,7 +341,7 @@ export function ExpedienteUnificadoModal({
           {/* PESTAÑA A: PERFIL Y ADSCRIPCIÓN */}
           {pestana === 'perfil' && (
             <div className="flex flex-col gap-4">
-              {/* Datos generales de contacto y expediente */}
+              {/* Datos generales de contacto y académico */}
               <div className="grid grid-cols-1 gap-2.5 rounded-xl border border-borde bg-superficie-suave p-3.5 text-xs sm:grid-cols-2 dark:border-noche-borde dark:bg-noche-campo">
                 <div className="flex items-center gap-2 text-tinta dark:text-noche-tinta">
                   <Mail size={14} strokeWidth={2} className="shrink-0 text-udec dark:text-activo-claro" />
@@ -353,31 +354,69 @@ export function ExpedienteUnificadoModal({
                     {usuario.celular_con_whatsapp ? ' (WhatsApp)' : ''}
                   </span>
                 </div>
-                <div className="text-tinta-suave dark:text-noche-tinta-suave">
+                <div className="sm:col-span-2 text-tinta-suave dark:text-noche-tinta-suave">
                   <strong className="text-tinta dark:text-noche-tinta">Académico:</strong>{' '}
                   {usuario.nivel_academico} · {usuario.escuela_carrera}
                 </div>
-                <div className="text-tinta-suave dark:text-noche-tinta-suave">
-                  <strong className="text-tinta dark:text-noche-tinta">Sangre / Emergencia:</strong>{' '}
-                  {usuario.tipo_sangre} · {usuario.contacto_emergencia_nombre} (
-                  {usuario.contacto_emergencia_telefono})
+              </div>
+
+              {/* Bloque Ficha de Emergencia (contacto en 3 campos + aviso legal discreto) */}
+              <div className="flex flex-col gap-2.5 rounded-xl border border-borde bg-superficie-suave p-3.5 text-xs dark:border-noche-borde dark:bg-noche-campo">
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="font-bold tracking-wider uppercase text-tinta dark:text-noche-tinta">
+                    Ficha de Emergencia
+                  </h4>
+                  <span className="rounded-full bg-alerta-suave px-2.5 py-0.5 text-[11px] font-bold tabular-nums text-alerta dark:bg-noche-rojo-suave dark:text-noche-rojo-texto">
+                    Sangre: {usuario.tipo_sangre}
+                  </span>
                 </div>
-                {(usuario.alergias || usuario.padecimientos_medicamentos) && (
-                  <div className="sm:col-span-2 text-tinta-suave dark:text-noche-tinta-suave">
-                    {usuario.alergias && (
-                      <span>
-                        <strong className="text-alerta dark:text-noche-rojo-texto">Alergias:</strong>{' '}
-                        {usuario.alergias}{' '}
-                      </span>
-                    )}
-                    {usuario.padecimientos_medicamentos && (
-                      <span>
-                        <strong className="text-tinta dark:text-noche-tinta">Notas médicas:</strong>{' '}
-                        {usuario.padecimientos_medicamentos}
-                      </span>
-                    )}
+
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div className="text-tinta-suave dark:text-noche-tinta-suave">
+                    <strong className="text-tinta dark:text-noche-tinta">Alergias:</strong>{' '}
+                    {usuario.alergias || 'Ninguna'}
                   </div>
-                )}
+                  <div className="text-tinta-suave dark:text-noche-tinta-suave">
+                    <strong className="text-tinta dark:text-noche-tinta">
+                      Condiciones / medicamentos:
+                    </strong>{' '}
+                    {usuario.padecimientos_medicamentos || 'Ninguno'}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-2 border-t border-borde pt-2.5 sm:grid-cols-3 dark:border-noche-borde">
+                  <div>
+                    <span className="block text-[10px] font-semibold uppercase text-tinta-suave dark:text-noche-tinta-suave">
+                      Contacto de emergencia
+                    </span>
+                    <span className="font-bold text-tinta dark:text-noche-tinta">
+                      {normalizarNombrePropio(usuario.contacto_emergencia_nombre)}
+                    </span>
+                  </div>
+                  {usuario.contacto_emergencia_parentesco && (
+                    <div>
+                      <span className="block text-[10px] font-semibold uppercase text-tinta-suave dark:text-noche-tinta-suave">
+                        Parentesco
+                      </span>
+                      <span className="font-semibold text-tinta dark:text-noche-tinta">
+                        {usuario.contacto_emergencia_parentesco}
+                      </span>
+                    </div>
+                  )}
+                  <div>
+                    <span className="block text-[10px] font-semibold uppercase text-tinta-suave dark:text-noche-tinta-suave">
+                      Teléfono de emergencia
+                    </span>
+                    <span className="font-bold tabular-nums text-tinta dark:text-noche-tinta">
+                      {usuario.contacto_emergencia_telefono}
+                    </span>
+                  </div>
+                </div>
+
+                <p className="border-t border-borde pt-2 text-[11px] leading-snug text-tinta-suave dark:border-noche-borde dark:text-noche-tinta-suave">
+                  Información declarada voluntariamente por el integrante únicamente como referencia
+                  en caso de emergencia.
+                </p>
               </div>
 
               {/* Formulario de edición post-incorporación */}
