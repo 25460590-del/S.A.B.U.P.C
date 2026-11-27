@@ -21,6 +21,7 @@ import { CandadoDuroModal } from '../components/CandadoDuroModal'
 import { QrScannerModal } from '../components/QrScannerModal'
 import { ReportarEquipoModal } from '../components/ReportarEquipoModal'
 import { rolOperativoPorAyudantia } from '../constants/catalogos'
+import { reproducirFeedbackCampo } from '../lib/feedbackCampo'
 import { etiquetaAyudantia } from '../lib/permisos'
 import {
   escucharMisAsistencias,
@@ -88,6 +89,13 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
     qrOriginal: string
   } | null>(null)
   const [confirmandoSalidaAnticipada, setConfirmandoSalidaAnticipada] = useState(false)
+  const [confirmacionQr, setConfirmacionQr] = useState<{
+    accion: 'entrada' | 'salida'
+    horaTexto: string
+    operativoNombre: string
+    rolEnTurno: string
+    horasTotales?: number
+  } | null>(null)
   const [aviso, setAviso] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -304,17 +312,30 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
     setProcesandoQr(true)
     setError(null)
     setAviso(null)
+    setConfirmacionQr(null)
     try {
       const resultado = await registrarAsistenciaQR(perfil, codigo)
       setAbriendoEscaner(false)
 
       if (resultado.accion === 'entrada') {
-        setAviso(`Entrada confirmada en "${resultado.operativoNombre}".`)
+        reproducirFeedbackCampo('exito')
+        setConfirmacionQr({
+          accion: 'entrada',
+          horaTexto: formatearHora(Date.now()),
+          operativoNombre: resultado.operativoNombre,
+          rolEnTurno: resultado.rolEnTurno,
+        })
       } else if (resultado.accion === 'salida') {
-        setAviso(
-          `Salida registrada en "${resultado.operativoNombre}" (${resultado.horasTotales} h acumuladas).`,
-        )
+        reproducirFeedbackCampo('exito')
+        setConfirmacionQr({
+          accion: 'salida',
+          horaTexto: formatearHora(Date.now()),
+          operativoNombre: resultado.operativoNombre,
+          rolEnTurno: resultado.rolEnTurno,
+          horasTotales: resultado.horasTotales,
+        })
       } else if (resultado.accion === 'confirmar_salida_anticipada') {
+        reproducirFeedbackCampo('alerta')
         setSalidaAnticipadaPendiente({
           asistenciaId: resultado.asistenciaId,
           operativoNombre: resultado.operativoNombre,
@@ -322,9 +343,11 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
           qrOriginal: resultado.qrOriginal,
         })
       } else if (resultado.accion === 'candado_duro') {
+        reproducirFeedbackCampo('alerta')
         setCandadoPendientes(resultado.pendientes)
       }
     } catch (err) {
+      reproducirFeedbackCampo('alerta')
       setAbriendoEscaner(false)
       const tieneCodigoFirebase = Boolean((err as { code?: string })?.code)
       setError(
@@ -340,6 +363,7 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
     setConfirmandoSalidaAnticipada(true)
     setError(null)
     setAviso(null)
+    setConfirmacionQr(null)
     try {
       const resultado = await registrarAsistenciaQR(
         perfil,
@@ -349,13 +373,20 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
       )
       setSalidaAnticipadaPendiente(null)
       if (resultado.accion === 'salida') {
-        setAviso(
-          `Salida registrada en "${resultado.operativoNombre}" (${resultado.horasTotales} h acumuladas).`,
-        )
+        reproducirFeedbackCampo('exito')
+        setConfirmacionQr({
+          accion: 'salida',
+          horaTexto: formatearHora(Date.now()),
+          operativoNombre: resultado.operativoNombre,
+          rolEnTurno: resultado.rolEnTurno,
+          horasTotales: resultado.horasTotales,
+        })
       } else if (resultado.accion === 'candado_duro') {
+        reproducirFeedbackCampo('alerta')
         setCandadoPendientes(resultado.pendientes)
       }
     } catch (err) {
+      reproducirFeedbackCampo('alerta')
       setSalidaAnticipadaPendiente(null)
       const tieneCodigoFirebase = Boolean((err as { code?: string })?.code)
       setError(
@@ -404,6 +435,64 @@ export function BrigadistaDashboardPage({ perfil, enfoque }: BrigadistaDashboard
           <AlertCircle size={18} strokeWidth={2} className="mt-0.5 shrink-0" />
           <span>{error}</span>
         </div>
+      )}
+
+      {confirmacionQr && (
+        <article
+          role="status"
+          className="tarjeta flex flex-col gap-2.5 border-2 border-activo bg-activo-suave p-3.5 dark:border-activo-claro dark:bg-noche-campo"
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-start gap-2">
+              <CheckCircle2
+                size={20}
+                strokeWidth={2.2}
+                className="mt-0.5 shrink-0 text-activo dark:text-activo-claro"
+              />
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-activo-texto dark:text-activo-claro">
+                  {confirmacionQr.accion === 'entrada'
+                    ? 'Entrada confirmada por QR'
+                    : `Salida registrada (${confirmacionQr.horasTotales ?? 0} h)`}
+                </p>
+                <p className="text-xs font-semibold text-tinta dark:text-noche-tinta">
+                  {confirmacionQr.operativoNombre}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setConfirmacionQr(null)}
+              aria-label="Cerrar confirmación"
+              className="inline-flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg text-activo-texto hover:bg-black/5 dark:text-activo-claro"
+            >
+              <X size={16} strokeWidth={2} />
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="inline-flex items-center gap-1 rounded-full bg-tarjeta px-2.5 py-1 font-bold tabular-nums text-tinta dark:bg-noche-tarjeta dark:text-noche-tinta">
+              <Clock size={13} strokeWidth={2} className="text-udec dark:text-activo-claro" />
+              <span>{confirmacionQr.horaTexto}</span>
+            </span>
+            <span
+              className={`rounded-full px-2.5 py-1 font-bold ${
+                confirmacionQr.rolEnTurno === 'Sin definir'
+                  ? 'bg-ambar-suave text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto'
+                  : 'bg-salvia text-udec-oscuro dark:bg-noche-tarjeta dark:text-activo-claro'
+              }`}
+            >
+              Rol: {confirmacionQr.rolEnTurno}
+            </span>
+          </div>
+
+          {confirmacionQr.accion === 'entrada' && confirmacionQr.rolEnTurno === 'Sin definir' && (
+            <p className="rounded-lg border border-ambar bg-ambar-suave px-2.5 py-1.5 text-xs font-semibold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
+              Tu rol quedó como &ldquo;Sin definir&rdquo;. Acude con tu Encargado para asignación en
+              campo.
+            </p>
+          )}
+        </article>
       )}
 
       {aviso && (

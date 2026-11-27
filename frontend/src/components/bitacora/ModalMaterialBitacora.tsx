@@ -1,5 +1,5 @@
-import { CloudOff, PackagePlus, X } from 'lucide-react'
-import type { FormEvent } from 'react'
+import { CheckCircle2, CloudOff, LogOut, PackagePlus, X } from 'lucide-react'
+import { useState, type FormEvent } from 'react'
 import { EQUIPO_BUPC_SUGERIDO } from '../../constants/catalogos'
 import { normalizarNombrePropio } from '../../lib/nombres'
 import type { AsistenciaPersonal, EquipoTurno } from '../../types'
@@ -22,6 +22,7 @@ interface ModalMaterialBitacoraProps {
   alAsignar: (e: FormEvent) => void
   alDevolverOk: (eq: EquipoTurno) => void
   alAbrirIncidencia: (eq: EquipoTurno) => void
+  alRecibirTodosYCerrarSalida?: () => void
   alCerrar: () => void
 }
 
@@ -42,8 +43,21 @@ export function ModalMaterialBitacora({
   alAsignar,
   alDevolverOk,
   alAbrirIncidencia,
+  alRecibirTodosYCerrarSalida,
   alCerrar,
 }: ModalMaterialBitacoraProps) {
+  const [confirmandoCierreRapido, setConfirmandoCierreRapido] = useState(false)
+
+  const pendientesBupc = equiposBupc.filter(
+    (eq) => eq.origen_material === 'BUPC_Asignado' && !eq.devuelto && eq.acta_incidencia === null,
+  )
+  const puedeRecibirYCerrar =
+    !esFinalizado &&
+    asistencia.hora_salida === null &&
+    pendientesBupc.length > 0 &&
+    Boolean(alRecibirTodosYCerrarSalida)
+  const cerrandoLote = ocupadoId === `cerrar-mat-${asistencia.id}`
+
   return (
     <div
       role="dialog"
@@ -66,29 +80,77 @@ export function ModalMaterialBitacora({
             type="button"
             onClick={alCerrar}
             aria-label="Cerrar cajón de material"
-            className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/25"
+            className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/25"
           >
-            <X size={17} strokeWidth={2} />
+            <X size={18} strokeWidth={2} />
           </button>
         </header>
 
         <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
+          {puedeRecibirYCerrar && (
+            <div className="flex flex-col gap-2 rounded-xl border border-activo bg-activo-suave p-3 dark:border-activo-claro/50 dark:bg-noche-campo">
+              {confirmandoCierreRapido ? (
+                <>
+                  <p className="text-xs font-bold text-activo-texto dark:text-activo-claro">
+                    ¿Confirmas marcar como devueltos OK los {pendientesBupc.length} artículo
+                    {pendientesBupc.length === 1 ? '' : 's'} pendientes y cerrar la salida de{' '}
+                    {normalizarNombrePropio(asistencia.usuario_nombre)}?
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      disabled={cerrandoLote}
+                      onClick={() => setConfirmandoCierreRapido(false)}
+                      className="btn-salvia min-h-11 text-xs"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      disabled={cerrandoLote}
+                      onClick={() => {
+                        setConfirmandoCierreRapido(false)
+                        alRecibirTodosYCerrarSalida?.()
+                      }}
+                      className="btn-verde min-h-11 text-xs"
+                    >
+                      <CheckCircle2 size={15} strokeWidth={2} />
+                      <span>{cerrandoLote ? 'Procesando...' : 'Sí, recibir y cerrar'}</span>
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  disabled={cerrandoLote}
+                  onClick={() => setConfirmandoCierreRapido(true)}
+                  className="btn-verde min-h-11 w-full text-xs"
+                >
+                  <LogOut size={16} strokeWidth={2} />
+                  <span>
+                    Recibir pendientes OK y Cerrar Salida ({pendientesBupc.length})
+                  </span>
+                </button>
+              )}
+            </div>
+          )}
+
           {!esFinalizado && asistencia.hora_salida === null && (
             <form
               onSubmit={alAsignar}
-              className="flex flex-col gap-2.5 rounded-lg border border-borde bg-superficie-suave p-3 dark:border-noche-borde dark:bg-noche-campo"
+              className="flex flex-col gap-2.5 border-b border-borde pb-4 dark:border-noche-borde"
             >
               <span className="text-xs font-bold text-tinta dark:text-noche-tinta">
                 Entregar nuevo artículo BUPC
               </span>
 
-              <div className="flex flex-wrap gap-1">
+              <div className="flex flex-wrap gap-1.5">
                 {EQUIPO_BUPC_SUGERIDO.map((item) => (
                   <button
                     key={item}
                     type="button"
                     onClick={() => alCambiarNombre(item)}
-                    className={`cursor-pointer rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
+                    className={`min-h-9 cursor-pointer rounded-full px-3 text-[11px] font-semibold ${
                       articuloNombre === item
                         ? 'bg-udec text-white'
                         : 'border border-borde bg-tarjeta text-tinta dark:border-noche-borde dark:bg-noche-tarjeta dark:text-noche-tinta-suave'
@@ -106,7 +168,7 @@ export function ModalMaterialBitacora({
                   placeholder="Nombre del artículo"
                   value={articuloNombre}
                   onChange={(e) => alCambiarNombre(e.target.value)}
-                  className="campo min-h-9 text-xs sm:col-span-6"
+                  className="campo min-h-11 text-xs sm:col-span-6"
                   required
                 />
                 <input
@@ -115,16 +177,17 @@ export function ModalMaterialBitacora({
                   placeholder="Serie o folio (opcional)"
                   value={articuloFolio}
                   onChange={(e) => alCambiarFolio(e.target.value)}
-                  className="campo min-h-9 text-xs tabular-nums sm:col-span-4"
+                  className="campo min-h-11 text-xs tabular-nums sm:col-span-4"
                 />
                 <input
                   type="number"
+                  inputMode="numeric"
                   min={1}
                   max={99}
                   aria-label="Cantidad"
                   value={articuloCantidad}
                   onChange={(e) => alCambiarCantidad(Math.max(1, Number(e.target.value) || 1))}
-                  className="campo min-h-9 text-center text-xs font-bold tabular-nums sm:col-span-2"
+                  className="campo min-h-11 text-center text-xs font-bold tabular-nums sm:col-span-2"
                 />
               </div>
 
@@ -134,16 +197,16 @@ export function ModalMaterialBitacora({
                     type="checkbox"
                     checked={mantenerEnCadena}
                     onChange={(e) => alCambiarMantener(e.target.checked)}
-                    className="h-3.5 w-3.5 rounded accent-udec"
+                    className="h-4 w-4 rounded accent-udec"
                   />
                   <span>Mantener abierto para seguir entregando</span>
                 </label>
                 <button
                   type="submit"
                   disabled={ocupadoId === asistencia.id}
-                  className="btn-naranja min-h-9 px-3.5 text-xs"
+                  className="btn-naranja min-h-11 px-4 text-xs"
                 >
-                  <PackagePlus size={14} strokeWidth={2} />
+                  <PackagePlus size={15} strokeWidth={2} />
                   <span>{ocupadoId === asistencia.id ? 'Asignando...' : 'Entregar'}</span>
                 </button>
               </div>
@@ -166,81 +229,80 @@ export function ModalMaterialBitacora({
                 Sin artículos BUPC asignados aún.
               </p>
             ) : (
-              equiposBupc.map((eq) => {
-                const pendiente = !eq.devuelto && eq.acta_incidencia === null
-                const cant = eq.cantidad ?? 1
-                return (
-                  <div
-                    key={eq.id}
-                    className="flex flex-col gap-2 rounded-lg border border-borde bg-fondo p-2.5 dark:border-noche-borde dark:bg-noche-campo"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="text-xs font-bold text-tinta dark:text-noche-tinta">
-                          {cant > 1 ? `${cant}× ` : ''}
-                          {eq.nombre_articulo}
-                          {eq.codigo_inventario ? ` (${eq.codigo_inventario})` : ''}
-                        </p>
-                        <p className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
-                          Entregado: {formatearHoraCorta(eq.creado_en?.toMillis())}
-                          {eq.creado_por_nombre ? ` · Por ${eq.creado_por_nombre}` : ''}
-                        </p>
-                        {eq.falla_reportada && (
-                          <p className="text-[11px] font-semibold text-alerta dark:text-noche-rojo-texto">
-                            Falla: {eq.falla_reportada}
+              <div className="divide-y divide-borde rounded-lg border border-borde dark:divide-noche-borde dark:border-noche-borde">
+                {equiposBupc.map((eq) => {
+                  const pendiente = !eq.devuelto && eq.acta_incidencia === null
+                  const cant = eq.cantidad ?? 1
+                  return (
+                    <div key={eq.id} className="flex flex-col gap-2 p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-xs font-bold text-tinta dark:text-noche-tinta">
+                            {cant > 1 ? `${cant}× ` : ''}
+                            {eq.nombre_articulo}
+                            {eq.codigo_inventario ? ` (${eq.codigo_inventario})` : ''}
                           </p>
-                        )}
-                        {eq.acta_incidencia && (
-                          <p className="text-[11px] font-semibold text-ambar-texto dark:text-noche-ambar-texto">
-                            Acta: {eq.acta_incidencia.motivo}
+                          <p className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
+                            Entregado: {formatearHoraCorta(eq.creado_en?.toMillis())}
+                            {eq.creado_por_nombre ? ` · Por ${eq.creado_por_nombre}` : ''}
                           </p>
-                        )}
-                      </div>
+                          {eq.falla_reportada && (
+                            <p className="text-[11px] font-semibold text-alerta dark:text-noche-rojo-texto">
+                              Falla: {eq.falla_reportada}
+                            </p>
+                          )}
+                          {eq.acta_incidencia && (
+                            <p className="text-[11px] font-semibold text-ambar-texto dark:text-noche-ambar-texto">
+                              Acta: {eq.acta_incidencia.motivo}
+                            </p>
+                          )}
+                        </div>
 
-                      <div className="flex shrink-0 flex-col items-end gap-1">
-                        {eq.sync_status === 'pendiente' && (
-                          <span className="inline-flex items-center gap-0.5 rounded bg-ambar-suave px-1.5 py-0.5 text-[9px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
-                            <CloudOff size={9} strokeWidth={2} />
-                            <span>Pendiente de sincronizar</span>
+                        <div className="flex shrink-0 flex-col items-end gap-1">
+                          {eq.sync_status === 'pendiente' && (
+                            <span className="inline-flex items-center gap-0.5 rounded bg-ambar-suave px-1.5 py-0.5 text-[11px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
+                              <CloudOff size={11} strokeWidth={2} />
+                              <span>Pendiente de sincronizar</span>
+                            </span>
+                          )}
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                              eq.devuelto
+                                ? 'bg-activo-suave text-activo-texto dark:bg-noche-tarjeta dark:text-activo-claro'
+                                : eq.acta_incidencia
+                                  ? 'bg-ambar-suave text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto'
+                                  : 'bg-naranja-suave text-naranja-oscuro dark:bg-noche-tarjeta dark:text-naranja'
+                            }`}
+                          >
+                            {eq.devuelto ? 'Devuelto OK' : eq.acta_incidencia ? 'Con Acta' : 'Pendiente'}
                           </span>
-                        )}
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                            eq.devuelto
-                              ? 'bg-activo-suave text-activo dark:bg-noche-tarjeta dark:text-activo-claro'
-                              : eq.acta_incidencia
-                                ? 'bg-ambar-suave text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto'
-                                : 'bg-naranja-suave text-naranja-oscuro dark:bg-noche-tarjeta dark:text-naranja'
-                          }`}
-                        >
-                          {eq.devuelto ? 'Devuelto OK' : eq.acta_incidencia ? 'Con Acta' : 'Pendiente'}
-                        </span>
+                        </div>
                       </div>
-                    </div>
 
-                    {pendiente && !esFinalizado && (
-                      <div className="flex flex-wrap gap-1.5">
-                        <button
-                          type="button"
-                          disabled={ocupadoId === eq.id}
-                          onClick={() => alDevolverOk(eq)}
-                          className="cursor-pointer rounded border border-activo bg-activo-suave px-2.5 py-1 text-[11px] font-bold text-activo hover:bg-emerald-100 disabled:opacity-50 dark:border-activo-claro dark:bg-noche-tarjeta dark:text-activo-claro"
-                        >
-                          Devolver OK
-                        </button>
-                        <button
-                          type="button"
-                          disabled={ocupadoId === eq.id}
-                          onClick={() => alAbrirIncidencia(eq)}
-                          className="cursor-pointer rounded border border-alerta bg-tarjeta px-2.5 py-1 text-[11px] font-bold text-alerta hover:bg-alerta-suave disabled:opacity-50 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
-                        >
-                          Acta de Incidencia
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )
-              })
+                      {pendiente && !esFinalizado && (
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            disabled={ocupadoId === eq.id || cerrandoLote}
+                            onClick={() => alDevolverOk(eq)}
+                            className="min-h-10 cursor-pointer rounded-lg border border-activo bg-activo-suave px-3 text-xs font-bold text-activo-texto hover:bg-activo-hover disabled:opacity-50 dark:border-activo-claro dark:bg-noche-tarjeta dark:text-activo-claro"
+                          >
+                            Devolver OK
+                          </button>
+                          <button
+                            type="button"
+                            disabled={ocupadoId === eq.id || cerrandoLote}
+                            onClick={() => alAbrirIncidencia(eq)}
+                            className="min-h-10 cursor-pointer rounded-lg border border-alerta bg-tarjeta px-3 text-xs font-bold text-alerta hover:bg-alerta-suave disabled:opacity-50 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+                          >
+                            Acta de Incidencia
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
             )}
           </div>
 
@@ -260,14 +322,11 @@ export function ModalMaterialBitacora({
                 Sin material propio registrado en este turno.
               </p>
             ) : (
-              <div className="flex flex-col gap-1.5">
+              <div className="divide-y divide-borde rounded-lg border border-borde dark:divide-noche-borde dark:border-noche-borde">
                 {equiposPropios.map((eq) => {
                   const cant = eq.cantidad ?? 1
                   return (
-                    <div
-                      key={eq.id}
-                      className="flex items-start justify-between gap-2 rounded-lg border border-udec/25 bg-salvia/40 p-2.5 dark:border-activo-claro/25 dark:bg-noche-campo"
-                    >
+                    <div key={eq.id} className="flex items-start justify-between gap-2 p-3">
                       <div className="min-w-0">
                         <p className="text-xs font-bold text-tinta dark:text-noche-tinta">
                           {cant > 1 ? `${cant}× ` : ''}
@@ -285,12 +344,12 @@ export function ModalMaterialBitacora({
                       </div>
                       <div className="flex shrink-0 flex-col items-end gap-1">
                         {eq.sync_status === 'pendiente' && (
-                          <span className="inline-flex items-center gap-0.5 rounded bg-ambar-suave px-1.5 py-0.5 text-[9px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
-                            <CloudOff size={9} strokeWidth={2} />
+                          <span className="inline-flex items-center gap-0.5 rounded bg-ambar-suave px-1.5 py-0.5 text-[11px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto">
+                            <CloudOff size={11} strokeWidth={2} />
                             <span>Pendiente de sincronizar</span>
                           </span>
                         )}
-                        <span className="rounded-full bg-salvia px-2 py-0.5 text-[10px] font-bold text-udec-oscuro dark:bg-noche-tarjeta dark:text-activo-claro">
+                        <span className="rounded-full bg-salvia px-2 py-0.5 text-[11px] font-bold text-udec-oscuro dark:bg-noche-tarjeta dark:text-activo-claro">
                           Propio
                         </span>
                       </div>

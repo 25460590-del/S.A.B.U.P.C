@@ -60,16 +60,16 @@ export function ListaPorLlegar({
                   {normalizarNombrePropio(p.usuario_nombre)}
                 </span>
                 <span
-                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${
                     esFinalizado
                       ? 'bg-superficie-suave text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave'
                       : 'bg-ambar-suave text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto'
                   }`}
                 >
-                  <Clock size={10} strokeWidth={2} />
+                  <Clock size={11} strokeWidth={2} />
                   <span>{esFinalizado ? 'No asistió' : 'Por llegar'}</span>
                 </span>
-                <span className="rounded bg-superficie-suave px-1.5 py-0.5 text-[10px] font-semibold text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave">
+                <span className="rounded bg-superficie-suave px-1.5 py-0.5 text-[11px] font-semibold text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave">
                   {p.origen === 'Autoregistro' ? 'Autoregistro' : 'Manual'}
                 </span>
               </div>

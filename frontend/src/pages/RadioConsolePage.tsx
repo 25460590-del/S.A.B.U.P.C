@@ -49,6 +49,15 @@ interface RadioConsolePageProps {
 
 const PREFIJO_PAR_RADIO = 'sabupc_radio_par_v1_'
 
+const MACROS_TACTICAS_BUPC: ReadonlyArray<{ etiqueta: string; texto: string }> = [
+  { etiqueta: '7 (Enterado)', texto: '7 (Enterado)' },
+  { etiqueta: '19 en ubicación', texto: '19 en ubicación' },
+  { etiqueta: 'Sin novedad', texto: 'Sin novedad' },
+  { etiqueta: 'Solicita apoyo Socorros', texto: 'Solicita apoyo Socorros' },
+  { etiqueta: 'Relevo en punto', texto: 'Relevo en punto' },
+  { etiqueta: '10-4 / Recibido', texto: '10-4 / Recibido' },
+]
+
 interface ParRadioGuardado {
   origen: string
   destinos: string[]
@@ -613,10 +622,13 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
     }
   }
 
-  const abrirEdicionRegistro = useCallback((r: RegistroBitacoraRadio) => {
-    setRegistroEditando(r)
-    setTextoEditado(r.actividades)
-  }, [])
+  const abrirEdicionRegistro = useCallback(
+    (r: RegistroBitacoraRadio) => {
+      setRegistroEditando(r)
+      setTextoEditado(r.actividades)
+    },
+    [setRegistroEditando, setTextoEditado],
+  )
 
   async function manejarGuardarEdicion(e: FormEvent) {
     e.preventDefault()
@@ -663,6 +675,42 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
     setActividades((prev) => (prev.trim() ? `${prev.trim()} ${codigo} ` : `${codigo} `))
     setSheetClavesAbierto(false)
     window.setTimeout(() => inputActividadesRef.current?.focus(), 60)
+  }
+
+  // Autocompletado local de claves ReBaCE en memoria (0 lecturas extra en Plan Spark)
+  const sugerenciasRebace = useMemo(() => {
+    const trimmed = actividades.trimEnd()
+    if (!trimmed || claves.length === 0) return []
+    const partes = trimmed.split(/\s+/)
+    const token = (partes[partes.length - 1] ?? '').toLowerCase()
+    if (token.length < 2) return []
+    const coincidencias: ClaveRebace[] = []
+    for (const c of claves) {
+      if (
+        c.codigo.toLowerCase().startsWith(token) ||
+        c.significado.toLowerCase().includes(token)
+      ) {
+        coincidencias.push(c)
+        if (coincidencias.length >= 5) break
+      }
+    }
+    return coincidencias
+  }, [actividades, claves])
+
+  function aplicarSugerenciaRebace(clave: ClaveRebace) {
+    setActividades((prev) => {
+      const sinEspacioFinal = prev.trimEnd()
+      const partes = sinEspacioFinal.split(/\s+/)
+      partes.pop()
+      const prefijo = partes.join(' ')
+      return prefijo ? `${prefijo} ${clave.codigo} ` : `${clave.codigo} `
+    })
+    window.setTimeout(() => inputActividadesRef.current?.focus(), 40)
+  }
+
+  function insertarMacroTactica(texto: string) {
+    setActividades((prev) => (prev.trim() ? `${prev.trim()} · ${texto}` : texto))
+    window.setTimeout(() => inputActividadesRef.current?.focus(), 40)
   }
 
   return (
@@ -1055,6 +1103,44 @@ export function RadioConsolePage({ usuario }: RadioConsolePageProps) {
                     >
                       Agregar
                     </button>
+                  </div>
+                )}
+
+                {/* Tira deslizable de macros tácticas BUPC */}
+                <div
+                  aria-label="Macros tácticas rápidas"
+                  className="flex items-center gap-1.5 overflow-x-auto pb-0.5"
+                >
+                  {MACROS_TACTICAS_BUPC.map((macro) => (
+                    <button
+                      key={macro.etiqueta}
+                      type="button"
+                      onClick={() => insertarMacroTactica(macro.texto)}
+                      className="min-h-9 shrink-0 cursor-pointer rounded-full border border-borde bg-superficie-suave px-3 text-[11px] font-semibold whitespace-nowrap text-tinta hover:border-udec hover:bg-salvia hover:text-udec-oscuro lg:min-h-8 dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta dark:hover:border-activo-claro"
+                    >
+                      {macro.etiqueta}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Sugerencias locales de autocompletado ReBaCE (en memoria, 0 lecturas extra) */}
+                {sugerenciasRebace.length > 0 && (
+                  <div
+                    role="listbox"
+                    aria-label="Sugerencias de claves ReBaCE"
+                    className="flex items-center gap-1.5 overflow-x-auto"
+                  >
+                    {sugerenciasRebace.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => aplicarSugerenciaRebace(c)}
+                        className="inline-flex min-h-9 shrink-0 cursor-pointer items-center gap-1 rounded-lg border border-udec/40 bg-salvia px-2.5 text-[11px] font-semibold whitespace-nowrap text-udec-oscuro hover:bg-salvia-hover dark:border-activo-claro/40 dark:bg-noche-campo dark:text-activo-claro"
+                      >
+                        <strong className="tabular-nums">{c.codigo}</strong>
+                        <span className="max-w-36 truncate opacity-85">— {c.significado}</span>
+                      </button>
+                    ))}
                   </div>
                 )}
 

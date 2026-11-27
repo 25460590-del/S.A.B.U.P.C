@@ -400,10 +400,20 @@ export function ExpedienteUnificadoModal({
                 </div>
                 <div className="flex items-center gap-2 tabular-nums text-tinta dark:text-noche-tinta">
                   <Phone size={14} strokeWidth={2} className="shrink-0 text-udec dark:text-activo-claro" />
-                  <span>
-                    {usuario.celular}
-                    {usuario.celular_con_whatsapp ? ' (WhatsApp)' : ''}
-                  </span>
+                  {usuario.celular.replace(/\D/g, '').length >= 7 ? (
+                    <a
+                      href={`tel:${usuario.celular.trim().replace(/[^\d+]/g, '')}`}
+                      className="font-semibold text-udec underline decoration-udec/50 underline-offset-2 hover:text-udec-oscuro dark:text-activo-claro"
+                    >
+                      {usuario.celular}
+                      {usuario.celular_con_whatsapp ? ' (WhatsApp)' : ''}
+                    </a>
+                  ) : (
+                    <span>
+                      {usuario.celular}
+                      {usuario.celular_con_whatsapp ? ' (WhatsApp)' : ''}
+                    </span>
+                  )}
                 </div>
                 <div className="sm:col-span-2 text-tinta-suave dark:text-noche-tinta-suave">
                   <strong className="text-tinta dark:text-noche-tinta">Académico:</strong>{' '}
@@ -458,9 +468,19 @@ export function ExpedienteUnificadoModal({
                     <span className="block text-[11px] font-semibold uppercase text-tinta-suave dark:text-noche-tinta-suave">
                       Teléfono de emergencia
                     </span>
-                    <span className="font-bold tabular-nums text-tinta dark:text-noche-tinta">
-                      {usuario.contacto_emergencia_telefono}
-                    </span>
+                    {usuario.contacto_emergencia_telefono.replace(/\D/g, '').length >= 7 ? (
+                      <a
+                        href={`tel:${usuario.contacto_emergencia_telefono.trim().replace(/[^\d+]/g, '')}`}
+                        className="inline-flex items-center gap-1 font-bold tabular-nums text-alerta-texto underline decoration-alerta/60 underline-offset-2 dark:text-noche-rojo-texto"
+                      >
+                        <Phone size={12} strokeWidth={2} />
+                        <span>{usuario.contacto_emergencia_telefono}</span>
+                      </a>
+                    ) : (
+                      <span className="font-bold tabular-nums text-tinta dark:text-noche-tinta">
+                        {usuario.contacto_emergencia_telefono}
+                      </span>
+                    )}
                   </div>
                 </div>
 

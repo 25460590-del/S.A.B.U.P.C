@@ -596,6 +596,10 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
           : 'escaner'
 
   const [destino, setDestino] = useState<DestinoNavegacion>(destinoInicial)
+  const [credencialCaraInicial, setCredencialCaraInicial] = useState<'anverso' | 'reverso'>(
+    'anverso',
+  )
+  const [credencialClave, setCredencialClave] = useState(0)
   const [drawerAbierto, setDrawerAbierto] = useState(false)
   const [enLinea, setEnLinea] = useState(() => navigator.onLine)
   const [fotoPropia, setFotoPropia] = useState<FotoPerfil | null>(null)
@@ -694,7 +698,18 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
   }
 
   function seleccionarDestino(nuevo: DestinoNavegacion) {
+    if (nuevo === 'credencial') {
+      setCredencialCaraInicial('anverso')
+      setCredencialClave((k) => k + 1)
+    }
     setDestino(nuevo)
+    setDrawerAbierto(false)
+  }
+
+  function abrirFichaEmergenciaDirecta() {
+    setCredencialCaraInicial('reverso')
+    setCredencialClave((k) => k + 1)
+    setDestino('credencial')
     setDrawerAbierto(false)
   }
 
@@ -905,11 +920,20 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
-            {fotoPropia?.imagen_webp_base64 ? (
+            <button
+              type="button"
+              onClick={abrirFichaEmergenciaDirecta}
+              aria-label="Abrir Ficha de Emergencia"
+              title="Ficha de Emergencia (1 toque)"
+              className="inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-lg border border-white/30 bg-alerta text-white hover:bg-alerta-oscuro"
+            >
+              <HeartPulse size={20} strokeWidth={2.2} />
+            </button>
+            {fotoPropia?.imagen_webp_base64 && (
               <button
                 type="button"
                 onClick={() => seleccionarDestino('credencial')}
-                aria-label="Ver mi credencial y ficha de emergencia"
+                aria-label="Ver mi credencial QR"
                 className="inline-flex h-11 w-11 cursor-pointer items-center justify-center overflow-hidden rounded-full border border-white/40"
               >
                 <img
@@ -917,15 +941,6 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
                   alt={nombreCompleto(perfil)}
                   className="h-full w-full object-cover"
                 />
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => seleccionarDestino('credencial')}
-                aria-label="Ver mi credencial y ficha de emergencia"
-                className="inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-lg border border-white/25 bg-white/10 text-white hover:bg-white/20"
-              >
-                <IdCard size={20} strokeWidth={2} />
               </button>
             )}
             <button
@@ -946,7 +961,13 @@ export function PanelActivoPage({ perfil }: PanelActivoPageProps) {
               : 'p-4 lg:p-6'
           }`}
         >
-          {destino === 'credencial' && <CredencialDigitalPage perfil={perfil} />}
+          {destino === 'credencial' && (
+            <CredencialDigitalPage
+              key={`cred-${credencialCaraInicial}-${credencialClave}`}
+              perfil={perfil}
+              caraInicial={credencialCaraInicial}
+            />
+          )}
           {destino === 'escaner' && (
             <BrigadistaDashboardPage key="escaner" perfil={perfil} enfoque="escaner" />
           )}

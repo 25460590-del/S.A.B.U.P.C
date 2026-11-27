@@ -82,7 +82,7 @@ export function ModalPromocionLote({
           {errorModal && (
             <div
               role="alert"
-              className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-2.5 text-xs font-semibold text-red-900 dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+              className="flex items-start gap-2 rounded-lg border border-alerta bg-alerta-suave p-2.5 text-xs font-semibold text-alerta-texto dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
             >
               <AlertCircle size={15} strokeWidth={2} className="mt-0.5 shrink-0" />
               <span>{errorModal}</span>
@@ -132,7 +132,7 @@ export function ModalPromocionLote({
               </div>
 
               {seleccionadosSinAyudantia.length === 0 ? (
-                <div className="flex items-center gap-2 rounded-lg border border-activo bg-activo-suave p-3 text-xs font-semibold text-emerald-900 dark:bg-noche-campo dark:text-activo-claro">
+                <div className="flex items-center gap-2 rounded-lg border border-activo bg-activo-suave p-3 text-xs font-semibold text-activo-texto dark:bg-noche-campo dark:text-activo-claro">
                   <ShieldCheck size={16} strokeWidth={2} className="shrink-0" />
                   <span>Todos los integrantes seleccionados ya cuentan con ayudantía asignada.</span>
                 </div>

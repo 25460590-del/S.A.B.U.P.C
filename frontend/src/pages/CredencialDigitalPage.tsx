@@ -21,6 +21,7 @@ import type { FotoPerfil, Usuario } from '../types'
 
 interface CredencialDigitalPageProps {
   perfil: Usuario
+  caraInicial?: 'anverso' | 'reverso'
 }
 
 function formatearHora24(fecha: Date): string {
@@ -28,8 +29,11 @@ function formatearHora24(fecha: Date): string {
   return `${pad(fecha.getHours())}:${pad(fecha.getMinutes())}:${pad(fecha.getSeconds())}`
 }
 
-export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
-  const [cara, setCara] = useState<'anverso' | 'reverso'>('anverso')
+export function CredencialDigitalPage({
+  perfil,
+  caraInicial = 'anverso',
+}: CredencialDigitalPageProps) {
+  const [cara, setCara] = useState<'anverso' | 'reverso'>(caraInicial)
   const [foto, setFoto] = useState<FotoPerfil | null>(null)
   const [fotoLocalPreview, setFotoLocalPreview] = useState<string | null>(null)
   const [mostrandoOpcionesFoto, setMostrandoOpcionesFoto] = useState(false)
@@ -361,7 +365,16 @@ export function CredencialDigitalPage({ perfil }: CredencialDigitalPageProps) {
                     Teléfono
                   </dt>
                   <dd className="text-right font-bold tabular-nums text-tinta dark:text-noche-tinta">
-                    {perfil.contacto_emergencia_telefono}
+                    {telefonoLimpio ? (
+                      <a
+                        href={`tel:${telefonoLimpio}`}
+                        className="text-alerta-texto underline decoration-alerta/60 underline-offset-2 dark:text-noche-rojo-texto"
+                      >
+                        {perfil.contacto_emergencia_telefono}
+                      </a>
+                    ) : (
+                      perfil.contacto_emergencia_telefono
+                    )}
                   </dd>
                 </div>
               </dl>

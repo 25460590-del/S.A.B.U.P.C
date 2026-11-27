@@ -540,8 +540,13 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
         }}
         alCargarMasCerrados={() => void cargarMasCerrados(false)}
         alSeleccionarOperativo={(opId) => {
+          const opSel = operativos.find((o) => o.id === opId)
+          const abrirEnBitacora =
+            Boolean(opSel) &&
+            puedeGestionar &&
+            clasificarOperativo(opSel!, Date.now()) === 'en_curso'
           setSeleccionadoId(opId)
-          setSubVista('resumen')
+          setSubVista(abrirEnBitacora ? 'bitacora' : 'resumen')
           setConfirmandoConvocatoria(null)
           setError(null)
           setAviso(null)
@@ -581,21 +586,33 @@ export function OperativosPanelPage({ usuario }: OperativosPanelPageProps) {
             </div>
           </div>
 
-          <span
-            className={`shrink-0 rounded-full px-3 py-1 text-xs font-bold ${
-              opEsCerrado
-                ? 'bg-superficie-suave text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave'
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {!opEsCerrado && subVista !== 'qr' && (
+              <button
+                type="button"
+                onClick={() => setSubVista('qr')}
+                className="btn-salvia min-h-10 px-3 text-xs"
+              >
+                <QrCode size={15} strokeWidth={2} />
+                <span>Control QR</span>
+              </button>
+            )}
+            <span
+              className={`shrink-0 rounded-full px-3 py-1 text-xs font-bold ${
+                opEsCerrado
+                  ? 'bg-superficie-suave text-tinta-suave dark:bg-noche-campo dark:text-noche-tinta-suave'
+                  : opRecepcionAbierta
+                    ? 'bg-activo-suave text-activo-texto dark:bg-noche-campo dark:text-activo-claro'
+                    : 'bg-ambar-suave text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto'
+              }`}
+            >
+              {opEsCerrado
+                ? etiquetaCerrado
                 : opRecepcionAbierta
-                  ? 'bg-activo-suave text-activo dark:bg-noche-campo dark:text-activo-claro'
-                  : 'bg-ambar-suave text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto'
-            }`}
-          >
-            {opEsCerrado
-              ? etiquetaCerrado
-              : opRecepcionAbierta
-                ? 'Recepción abierta'
-                : 'Recepción cerrada'}
-          </span>
+                  ? 'Recepción abierta'
+                  : 'Recepción cerrada'}
+            </span>
+          </div>
         </div>
 
         {ayJefe && (

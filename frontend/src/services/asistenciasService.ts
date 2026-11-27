@@ -156,13 +156,21 @@ export function parsearQrEscaneado(texto: string): QrEscaneado | null {
 // ── Resultados estructurados ─────────────────────────────────────────────────
 
 export type ResultadoRegistroQR =
-  | { accion: 'entrada'; asistenciaId: string; operativoNombre: string; usuarioNombre: string }
+  | {
+      accion: 'entrada'
+      asistenciaId: string
+      operativoNombre: string
+      usuarioNombre: string
+      rolEnTurno: RolEnTurno
+      grupoEtiqueta: string
+    }
   | {
       accion: 'salida'
       asistenciaId: string
       operativoNombre: string
       usuarioNombre: string
       horasTotales: number
+      rolEnTurno: RolEnTurno
     }
   | {
       accion: 'confirmar_salida_anticipada'
@@ -182,6 +190,40 @@ export type ResultadoRegistroQR =
       accion: 'perfil_inactivo'
       usuario: PersonaAlertaInactivo
     }
+
+/**
+ * Lectura puntual de Ficha de Emergencia (1 `getDoc` sobre `usuarios/{uid}` sin modificar asistencias).
+ * Respeta estrictamente los permisos de `firestore.rules` (Admin / Encargado sin ayudantía / Jefe de la misma ayudantía).
+ */
+export async function obtenerFichaEmergenciaPorQr(
+  actor: Usuario,
+  uidObjetivo: string,
+): Promise<Usuario> {
+  if (!esEncargado(actor)) {
+    throw new Error('Solo personal de mando autorizado puede consultar fichas de emergencia por QR.')
+  }
+  const ref = doc(usuariosRef, uidObjetivo)
+  try {
+    const snap = estaEnLinea() ? await getDoc(ref) : await getDocFromCache(ref)
+    if (!snap.exists()) {
+      throw new Error('No se encontró el expediente del brigadista escaneado.')
+    }
+    return normalizarUsuario(snap.data() as Usuario)
+  } catch (err) {
+    const code = (err as { code?: string })?.code ?? ''
+    if (code === 'permission-denied') {
+      throw new Error(
+        'No tienes permiso para consultar la ficha médica de este brigadista. Solicita a un Administrador o al Jefe de su ayudantía que la consulte.',
+      )
+    }
+    if (!estaEnLinea()) {
+      throw new Error(
+        'Sin conexión: la ficha médica de este brigadista no está disponible en la caché local del dispositivo.',
+      )
+    }
+    throw err
+  }
+}
 
 async function obtenerEquiposBupcPendientes(
   asistenciaId: string,
@@ -630,6 +672,7 @@ export async function registrarAsistenciaQR(
         operativoNombre: operativo.nombre,
         usuarioNombre: nombreCompleto(actor),
         horasTotales: resSalida.horasTotales,
+        rolEnTurno: abierta.rol_en_turno,
       }
     }
 
@@ -665,6 +708,8 @@ export async function registrarAsistenciaQR(
         asistenciaId,
         operativoNombre: operativo.nombre,
         usuarioNombre: nombreCompleto(actor),
+        rolEnTurno: rolInicial,
+        grupoEtiqueta: actor.subgrupo || actor.etapa || 'Grupo Operativo',
       }
     } catch (err) {
       const code = (err as { code?: string })?.code ?? ''
@@ -762,6 +807,7 @@ export async function registrarAsistenciaQR(
       operativoNombre: opNormalizado.nombre,
       usuarioNombre: nombreBrig,
       horasTotales: resSalida.horasTotales,
+      rolEnTurno: abierta.rol_en_turno,
     }
   }
 
@@ -787,6 +833,8 @@ export async function registrarAsistenciaQR(
     asistenciaId,
     operativoNombre: opNormalizado.nombre,
     usuarioNombre: nombreBrig,
+    rolEnTurno: rolInicial,
+    grupoEtiqueta: brigadista.subgrupo || brigadista.etapa || 'Grupo Operativo',
   }
 }
 
@@ -838,6 +886,8 @@ export async function registrarAsistenciaManual(
     asistenciaId,
     operativoNombre: operativo.nombre,
     usuarioNombre: nombreBrig,
+    rolEnTurno: rolFinal,
+    grupoEtiqueta: brigadista.subgrupo || brigadista.etapa || 'Grupo Operativo',
   }
 }
 

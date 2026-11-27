@@ -25,6 +25,7 @@ import { db } from '../lib/firebase'
 import { comprimirImagenAWebP } from '../lib/imageCompression'
 import { ayudantiaEfectiva, ayudantiaJefatura, type AyudantiaActiva } from '../lib/permisos'
 import type { AsistenciaPersonal, EquipoTurno, EvidenciaEquipo, Usuario } from '../types'
+import { cerrarSalidaConCandado } from './asistenciasService'
 import { nombreCompleto } from './authService'
 
 const equiposRef = collection(db, 'equipos_turno')
@@ -397,6 +398,132 @@ export async function marcarEquipoDevueltoOk(
       creado_en: serverTimestamp(),
     })
   })
+}
+
+/**
+ * Flujo ágil para el Encargado desde el cajón de material:
+ * 1) Marca como Devuelto OK todos los equipos BUPC pendientes de esa asistencia (decrementando
+ *    `equipos_bupc_pendientes` hasta 0).
+ * 2) Cierra inmediatamente la salida de la asistencia liberando `operativos/{opId}/presentes/{uid}`.
+ * Respeta el Candado Duro de `firestore.rules` (en 2 operaciones atómicas secuenciales) tanto en
+ * modo online (`runTransaction`) como en modo offline (`writeBatch` FIFO en caché local).
+ */
+export async function recibirPendientesOkYCerrarSalida(
+  encargado: Usuario,
+  asistencia: AsistenciaPersonal,
+  equiposDeAsistencia: EquipoTurno[],
+): Promise<{ devueltos: number; horasTotales: number }> {
+  if (asistencia.hora_salida !== null) {
+    throw new Error('Esta asistencia ya tiene una salida registrada.')
+  }
+
+  const pendientes = equiposDeAsistencia.filter(
+    (eq) => eq.origen_material === 'BUPC_Asignado' && !eq.devuelto && eq.acta_incidencia === null,
+  )
+
+  const asistenciaDoc = doc(asistenciasRef, asistencia.id)
+  const encargadoNombre = nombreCompleto(encargado)
+
+  if (pendientes.length > 0) {
+    if (!estaEnLinea()) {
+      const lote = writeBatch(db)
+      for (const eq of pendientes) {
+        lote.update(doc(equiposRef, eq.id), {
+          devuelto: true,
+          estado_reporte: 'Devuelto',
+          devuelto_en: serverTimestamp(),
+          devuelto_por_uid: encargado.uid,
+          actualizado_en: serverTimestamp(),
+        })
+        lote.set(doc(auditoriaRef, `aud_dev_${eq.id}`.slice(0, 120)), {
+          tipo: 'DEVOLUCION_EQUIPO',
+          actor_uid: encargado.uid,
+          actor_nombre: encargadoNombre,
+          objetivo_uid: eq.usuario_uid,
+          objetivo_nombre: eq.usuario_nombre,
+          detalle: `Devolución OK (cierre rápido): ${eq.nombre_articulo}${
+            eq.codigo_inventario ? ` (${eq.codigo_inventario})` : ''
+          }`,
+          creado_en: serverTimestamp(),
+        })
+      }
+      lote.update(asistenciaDoc, {
+        equipos_bupc_pendientes: increment(-pendientes.length),
+        actualizado_en: serverTimestamp(),
+      })
+      await despacharEscrituraOffline(
+        lote.commit(),
+        `Recepción OK de ${pendientes.length} artículo${pendientes.length === 1 ? '' : 's'} (${asistencia.usuario_nombre})`,
+      )
+    } else {
+      await runTransaction(db, async (tx) => {
+        const asisSnap = await tx.get(asistenciaDoc)
+        if (!asisSnap.exists()) {
+          throw new Error('No se encontró el registro de asistencia.')
+        }
+        const asisActual = asisSnap.data() as AsistenciaPersonal
+        if (asisActual.hora_salida !== null) {
+          throw new Error('Esta asistencia ya tiene una salida registrada.')
+        }
+
+        const refsEquipos = pendientes.map((eq) => doc(equiposRef, eq.id))
+        const snapsEquipos = await Promise.all(refsEquipos.map((r) => tx.get(r)))
+        const porDevolver: EquipoTurno[] = []
+
+        for (const snap of snapsEquipos) {
+          if (!snap.exists()) continue
+          const eqActual = snap.data() as EquipoTurno
+          if (
+            eqActual.origen_material === 'BUPC_Asignado' &&
+            !eqActual.devuelto &&
+            eqActual.acta_incidencia === null
+          ) {
+            porDevolver.push(eqActual)
+          }
+        }
+
+        if (porDevolver.length === 0) return
+
+        for (const eqActual of porDevolver) {
+          tx.update(doc(equiposRef, eqActual.id), {
+            devuelto: true,
+            estado_reporte: 'Devuelto',
+            devuelto_en: serverTimestamp(),
+            devuelto_por_uid: encargado.uid,
+            actualizado_en: serverTimestamp(),
+          })
+          tx.set(doc(auditoriaRef), {
+            tipo: 'DEVOLUCION_EQUIPO',
+            actor_uid: encargado.uid,
+            actor_nombre: encargadoNombre,
+            objetivo_uid: eqActual.usuario_uid,
+            objetivo_nombre: eqActual.usuario_nombre,
+            detalle: `Devolución OK (cierre rápido): ${eqActual.nombre_articulo}${
+              eqActual.codigo_inventario ? ` (${eqActual.codigo_inventario})` : ''
+            }`,
+            creado_en: serverTimestamp(),
+          })
+        }
+
+        tx.update(asistenciaDoc, {
+          equipos_bupc_pendientes: Math.max(0, asisActual.equipos_bupc_pendientes - porDevolver.length),
+          actualizado_en: serverTimestamp(),
+        })
+      })
+    }
+  }
+
+  const resSalida = await cerrarSalidaConCandado(asistencia.id, encargado, true, {
+    ...asistencia,
+    equipos_bupc_pendientes: 0,
+  })
+  if (resSalida.bloqueado) {
+    throw new Error(
+      `Aún quedan ${resSalida.pendientes.length} artículo(s) BUPC pendientes por liberar antes de cerrar la salida.`,
+    )
+  }
+
+  return { devueltos: pendientes.length, horasTotales: resSalida.horasTotales }
 }
 
 /**

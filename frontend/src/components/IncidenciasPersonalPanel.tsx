@@ -100,6 +100,7 @@ export function IncidenciasPersonalPanel({ actor }: IncidenciasPersonalPanelProp
   // Formulario de nueva incidencia de personal
   const [mostrarFormulario, setMostrarFormulario] = useState(false)
   const [objetivoUid, setObjetivoUid] = useState('')
+  const [busquedaIntegrante, setBusquedaIntegrante] = useState('')
   const [operativoId, setOperativoId] = useState('')
   const [tipo, setTipo] = useState<TipoIncidenciaPersonal>('Observación')
   const [gravedad, setGravedad] = useState<GravedadIncidencia>('Baja')
@@ -441,24 +442,92 @@ export function IncidenciasPersonalPanel({ actor }: IncidenciasPersonalPanelProp
 
           <form onSubmit={manejarRegistrar} className="flex flex-col gap-3">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <div className="flex flex-col gap-1">
-                <label htmlFor="inc-usuario" className="etiqueta">
+              <div className="flex flex-col gap-1.5 sm:col-span-2 lg:col-span-3">
+                <label htmlFor="inc-buscar-usr" className="etiqueta">
                   Integrante
                 </label>
-                <select
-                  id="inc-usuario"
-                  value={objetivoUid}
-                  onChange={(e) => setObjetivoUid(e.target.value)}
-                  className="campo min-h-10 text-xs"
-                  required
-                >
-                  <option value="">Selecciona un integrante...</option>
-                  {personasSeleccionables.map((u) => (
-                    <option key={u.uid} value={u.uid}>
-                      {nombreCompleto(u)} ({u.subgrupo || u.etapa})
-                    </option>
-                  ))}
-                </select>
+                {(() => {
+                  const sel = personasSeleccionables.find((u) => u.uid === objetivoUid) ?? null
+                  if (sel) {
+                    return (
+                      <div className="flex items-center justify-between gap-2 rounded-lg border border-udec bg-salvia/70 px-3 py-2 dark:border-activo-claro dark:bg-noche-campo">
+                        <div className="min-w-0">
+                          <span className="block truncate text-xs font-bold text-tinta dark:text-noche-tinta">
+                            {nombreCompleto(sel)}
+                          </span>
+                          <span className="text-[11px] text-tinta-suave dark:text-noche-tinta-suave">
+                            {sel.subgrupo || sel.etapa} ·{' '}
+                            <span className="tabular-nums">{sel.numero_cuenta}</span>
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setObjetivoUid('')
+                            setBusquedaIntegrante('')
+                          }}
+                          className="btn-salvia min-h-9 shrink-0 px-2.5 text-[11px]"
+                        >
+                          Cambiar
+                        </button>
+                      </div>
+                    )
+                  }
+                  const qUsr = busquedaIntegrante.trim().toLowerCase()
+                  const coincidentes = personasSeleccionables.filter((u) => {
+                    if (!qUsr) return true
+                    return (
+                      nombreCompleto(u).toLowerCase().includes(qUsr) ||
+                      u.numero_cuenta.toLowerCase().includes(qUsr) ||
+                      (u.subgrupo || u.etapa).toLowerCase().includes(qUsr)
+                    )
+                  })
+                  return (
+                    <div className="flex flex-col gap-1.5">
+                      <div className="relative">
+                        <Search
+                          size={15}
+                          strokeWidth={2}
+                          className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-tinta-suave dark:text-noche-tinta-suave"
+                        />
+                        <input
+                          id="inc-buscar-usr"
+                          type="search"
+                          placeholder="Buscar integrante por nombre, cuenta o grupo..."
+                          value={busquedaIntegrante}
+                          onChange={(e) => setBusquedaIntegrante(e.target.value)}
+                          className="campo min-h-11 pl-9 text-xs"
+                        />
+                      </div>
+                      {coincidentes.length === 0 ? (
+                        <p className="rounded-lg border border-borde bg-superficie-suave py-3 text-center text-xs text-tinta-suave dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta-suave">
+                          Sin integrantes coincidentes.
+                        </p>
+                      ) : (
+                        <div className="flex max-h-40 flex-col divide-y divide-borde overflow-y-auto rounded-lg border border-borde dark:divide-noche-borde dark:border-noche-borde">
+                          {coincidentes.slice(0, 30).map((u) => (
+                            <button
+                              key={u.uid}
+                              type="button"
+                              onClick={() => {
+                                setObjetivoUid(u.uid)
+                                setBusquedaIntegrante('')
+                              }}
+                              className="flex min-h-11 w-full cursor-pointer items-center justify-between gap-2 px-3 py-1.5 text-left hover:bg-superficie-suave dark:hover:bg-noche-campo/70"
+                            >
+                              <span className="truncate text-xs font-bold text-tinta dark:text-noche-tinta">
+                                {nombreCompleto(u)}
+                              </span>
+                              <span className="shrink-0 text-[11px] tabular-nums text-tinta-suave dark:text-noche-tinta-suave">
+                                {u.subgrupo || u.etapa} · {u.numero_cuenta}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
               </div>
 
               <div className="flex flex-col gap-1">

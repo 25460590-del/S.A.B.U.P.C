@@ -1,8 +1,11 @@
 import {
   AlertCircle,
+  Check,
   CheckCircle2,
   ClipboardCheck,
   Clock,
+  Copy,
+  HeartPulse,
   Lock,
   Package,
   PackagePlus,
@@ -17,6 +20,7 @@ import {
   EQUIPO_BUPC_SUGERIDO,
   resolverRolInicialOperativo,
 } from '../constants/catalogos'
+import { reproducirFeedbackCampo } from '../lib/feedbackCampo'
 import { normalizarNombrePropio } from '../lib/nombres'
 import {
   ayudantiaEfectiva,
@@ -30,6 +34,7 @@ import {
   cerrarSalidaConCandado,
   guardarSignosVitales,
   nombreDePersona,
+  obtenerFichaEmergenciaPorQr,
   parsearQrEscaneado,
   registrarAsistenciaManual,
   registrarAsistenciaQR,
@@ -40,6 +45,7 @@ import {
   asignarEquipoBupcMultiple,
   levantarActaIncidencia,
   marcarEquipoDevueltoOk,
+  recibirPendientesOkYCerrarSalida,
 } from '../services/equiposService'
 import {
   actualizarRolPrerregistro,
@@ -57,7 +63,10 @@ import type {
   Usuario,
 } from '../types'
 import { AlertaInactivoModal, type PersonaAlertaInactivo } from './AlertaInactivoModal'
-import type { FiltroEstadoBitacora } from './bitacora/helpers'
+import {
+  construirParteNovedadesWhatsApp,
+  type FiltroEstadoBitacora,
+} from './bitacora/helpers'
 import { ListaPorLlegar } from './bitacora/ListaPorLlegar'
 import { ModalActaIncidenciaBitacora } from './bitacora/ModalActaIncidenciaBitacora'
 import { ModalFichaEmergencia } from './bitacora/ModalFichaEmergencia'
@@ -69,12 +78,21 @@ import { TablaAsistencias } from './bitacora/TablaAsistencias'
 import { useBitacoraDatos } from './bitacora/useBitacoraDatos'
 import { CandadoDuroModal } from './CandadoDuroModal'
 import { IndicadorAlcanceAyudantia } from './IndicadorAlcanceAyudantia'
-import { QrScannerModal } from './QrScannerModal'
+import { QrScannerModal, type TarjetaRafagaQr } from './QrScannerModal'
 
 interface BitacoraPersonalSectionProps {
   encargado: Usuario
   operativo: Operativo
 }
+
+const ROLES_TABLERO_VIVO: RolEnTurno[] = [
+  'Atención',
+  'Búsqueda y Rescate',
+  'Radios',
+  'Abastecedores',
+  'Encargados',
+  'Sin definir',
+]
 
 export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPersonalSectionProps) {
   const esFinalizado = esOperativoCerrado(operativo)
@@ -85,6 +103,8 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
   const [filtroEstado, setFiltroEstado] = useState<FiltroEstadoBitacora>('todos')
   const [filtroGrupo, setFiltroGrupo] = useState('TODOS')
   const [filtroAyudantia, setFiltroAyudantia] = useState('TODAS')
+  const [filtroRol, setFiltroRol] = useState<string>('TODOS')
+  const [filtroEnDescanso, setFiltroEnDescanso] = useState(false)
 
   const [modalPrerregistro, setModalPrerregistro] = useState(false)
   const [busquedaPrerregistro, setBusquedaPrerregistro] = useState('')
@@ -97,12 +117,21 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
 
   const [error, setError] = useState<string | null>(null)
   const [aviso, setAviso] = useState<string | null>(null)
+  const [parteCopiado, setParteCopiado] = useState(false)
   const [ocupadoId, setOcupadoId] = useState<string | null>(null)
 
-  const [modoEscaner, setModoEscaner] = useState<null | 'asistencia' | 'material'>(null)
+  const [modoEscaner, setModoEscaner] = useState<null | 'asistencia' | 'material' | 'emergencia'>(
+    null,
+  )
+  const [modoContinuoQr, setModoContinuoQr] = useState(false)
+  const [tarjetaRafaga, setTarjetaRafaga] = useState<TarjetaRafagaQr | null>(null)
+  const rafagaTimerRef = useRef<number | null>(null)
   const [procesandoQr, setProcesandoQr] = useState(false)
   const [alertaInactivo, setAlertaInactivo] = useState<PersonaAlertaInactivo | null>(null)
-  const [candadoPendientes, setCandadoPendientes] = useState<EquipoTurno[] | null>(null)
+  const [candadoBloqueo, setCandadoBloqueo] = useState<{
+    asistencia: AsistenciaPersonal
+    pendientes: EquipoTurno[]
+  } | null>(null)
   const [salidaAnticipadaPendiente, setSalidaAnticipadaPendiente] = useState<{
     asistenciaId: string
     operativoNombre: string
@@ -134,6 +163,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
   const [archivoEvidencia, setArchivoEvidencia] = useState<File | null>(null)
 
   const [fichaEmergenciaUid, setFichaEmergenciaUid] = useState<string | null>(null)
+  const [fichaEmergenciaQr, setFichaEmergenciaQr] = useState<Usuario | null>(null)
 
   const datos = useBitacoraDatos({
     encargado,
@@ -143,6 +173,8 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
     filtroEstado,
     filtroGrupo,
     filtroAyudantia,
+    filtroRol,
+    filtroEnDescanso,
     busquedaPrerregistro,
     alError: setError,
   })
@@ -150,6 +182,25 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
   useEffect(() => {
     nonceLoteRef.current = null
   }, [seleccionadosIds, rapidoArticulo, rapidoCantidad])
+
+  useEffect(() => {
+    return () => {
+      if (rafagaTimerRef.current !== null) {
+        window.clearTimeout(rafagaTimerRef.current)
+      }
+    }
+  }, [])
+
+  function mostrarTarjetaRafaga(datosTarjeta: Omit<TarjetaRafagaQr, 'id'>) {
+    if (rafagaTimerRef.current !== null) {
+      window.clearTimeout(rafagaTimerRef.current)
+    }
+    setTarjetaRafaga({ id: Date.now(), ...datosTarjeta })
+    rafagaTimerRef.current = window.setTimeout(() => {
+      setTarjetaRafaga(null)
+      rafagaTimerRef.current = null
+    }, 2500)
+  }
 
   const asistenciaMaterialActiva =
     datos.asistencias.find((a) => a.id === materialAsistenciaId) ?? null
@@ -188,15 +239,35 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
     setArticuloCantidad(1)
   }
 
+  async function manejarCopiarParte() {
+    setError(null)
+    const texto = construirParteNovedadesWhatsApp(
+      operativo,
+      datos.asistencias,
+      datos.equiposBupcEnPrestamo,
+    )
+    try {
+      await navigator.clipboard.writeText(texto)
+      setParteCopiado(true)
+      setAviso('Parte de novedades copiado al portapapeles listo para pegar en WhatsApp.')
+      window.setTimeout(() => setParteCopiado(false), 2500)
+    } catch {
+      setError('No se pudo acceder al portapapeles del navegador. Verifica los permisos.')
+    }
+  }
+
   async function manejarEscanerQr(codigo: string) {
     setProcesandoQr(true)
     setError(null)
     setAviso(null)
+    const enRafaga = modoEscaner === 'asistencia' && modoContinuoQr
+
     try {
       if (modoEscaner === 'material') {
         const parsed = parsearQrEscaneado(codigo)
         setModoEscaner(null)
         if (!parsed || parsed.tipo !== 'credencial_bupc') {
+          reproducirFeedbackCampo('alerta')
           setError('Escanea la Credencial Digital QR de un brigadista para gestionar su material.')
           return
         }
@@ -206,21 +277,44 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
         const cualquierAsis =
           abierta ?? datos.asistencias.find((a) => a.usuario_uid === parsed.uid) ?? null
         if (!cualquierAsis) {
+          reproducirFeedbackCampo('alerta')
           setError('Ese brigadista no tiene asistencia registrada en este operativo.')
           return
         }
+        reproducirFeedbackCampo('exito')
         abrirCajonMaterial(cualquierAsis.id)
         return
       }
 
+      if (modoEscaner === 'emergencia') {
+        const parsed = parsearQrEscaneado(codigo)
+        setModoEscaner(null)
+        if (!parsed || parsed.tipo !== 'credencial_bupc') {
+          reproducirFeedbackCampo('alerta')
+          setError(
+            'Escanea la Credencial Digital QR de un brigadista para consultar su Ficha de Emergencia.',
+          )
+          return
+        }
+        const ficha = await obtenerFichaEmergenciaPorQr(encargado, parsed.uid)
+        reproducirFeedbackCampo('exito')
+        setFichaEmergenciaQr(ficha)
+        return
+      }
+
       const res = await registrarAsistenciaQR(encargado, codigo, operativo)
-      setModoEscaner(null)
 
       if (res.accion === 'perfil_inactivo') {
+        reproducirFeedbackCampo('alerta')
+        setModoEscaner(null)
         setAlertaInactivo(res.usuario)
       } else if (res.accion === 'candado_duro') {
-        setCandadoPendientes(res.pendientes)
+        reproducirFeedbackCampo('alerta')
+        setModoEscaner(null)
+        setCandadoBloqueo({ asistencia: res.asistencia, pendientes: res.pendientes })
       } else if (res.accion === 'confirmar_salida_anticipada') {
+        reproducirFeedbackCampo('alerta')
+        setModoEscaner(null)
         setSalidaAnticipadaPendiente({
           asistenciaId: res.asistenciaId,
           operativoNombre: res.operativoNombre,
@@ -229,13 +323,45 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
           qrOriginal: res.qrOriginal,
         })
       } else if (res.accion === 'entrada') {
-        setAviso(`Entrada registrada por QR para ${res.usuarioNombre}.`)
+        reproducirFeedbackCampo('exito')
+        setAviso(`Entrada registrada por QR para ${res.usuarioNombre} (${res.rolEnTurno}).`)
+        if (enRafaga) {
+          mostrarTarjetaRafaga({
+            tipo: 'exito',
+            titulo: res.usuarioNombre,
+            detalle: `Entrada · Rol: ${res.rolEnTurno}`,
+            subdetalle: res.grupoEtiqueta,
+          })
+        } else {
+          setModoEscaner(null)
+        }
       } else if (res.accion === 'salida') {
+        reproducirFeedbackCampo('exito')
         setAviso(`Salida registrada por QR para ${res.usuarioNombre} (${res.horasTotales} h).`)
+        if (enRafaga) {
+          mostrarTarjetaRafaga({
+            tipo: 'exito',
+            titulo: res.usuarioNombre,
+            detalle: `Salida registrada (${res.horasTotales} h)`,
+            subdetalle: `Rol en turno: ${res.rolEnTurno}`,
+          })
+        } else {
+          setModoEscaner(null)
+        }
       }
     } catch (err) {
-      setModoEscaner(null)
-      setError(err instanceof Error ? err.message : mensajeDeError(err))
+      reproducirFeedbackCampo('alerta')
+      const msg = err instanceof Error ? err.message : mensajeDeError(err)
+      setError(msg)
+      if (enRafaga) {
+        mostrarTarjetaRafaga({
+          tipo: 'alerta',
+          titulo: 'Lectura rechazada',
+          detalle: msg,
+        })
+      } else {
+        setModoEscaner(null)
+      }
     } finally {
       setProcesandoQr(false)
     }
@@ -255,11 +381,14 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
       )
       setSalidaAnticipadaPendiente(null)
       if (res.accion === 'candado_duro') {
-        setCandadoPendientes(res.pendientes)
+        reproducirFeedbackCampo('alerta')
+        setCandadoBloqueo({ asistencia: res.asistencia, pendientes: res.pendientes })
       } else if (res.accion === 'salida') {
+        reproducirFeedbackCampo('exito')
         setAviso(`Salida registrada por QR para ${res.usuarioNombre} (${res.horasTotales} h).`)
       }
     } catch (err) {
+      reproducirFeedbackCampo('alerta')
       setSalidaAnticipadaPendiente(null)
       setError(err instanceof Error ? err.message : mensajeDeError(err))
     } finally {
@@ -283,9 +412,11 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
       setUidManual('')
       setRolManual('Sin definir')
       if (res.accion === 'perfil_inactivo') {
+        reproducirFeedbackCampo('alerta')
         setAlertaInactivo(res.usuario)
       } else if (res.accion === 'entrada') {
-        setAviso(`Entrada manual registrada para ${res.usuarioNombre}.`)
+        reproducirFeedbackCampo('exito')
+        setAviso(`Entrada manual registrada para ${res.usuarioNombre} (${res.rolEnTurno}).`)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : mensajeDeError(err))
@@ -396,6 +527,30 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
     }
   }
 
+  async function manejarRecibirTodosYCerrarSalida() {
+    if (!asistenciaMaterialActiva) return
+    setOcupadoId(`cerrar-mat-${asistenciaMaterialActiva.id}`)
+    setError(null)
+    setAviso(null)
+    try {
+      const res = await recibirPendientesOkYCerrarSalida(
+        encargado,
+        asistenciaMaterialActiva,
+        equiposBupcMaterialActivo,
+      )
+      reproducirFeedbackCampo('exito')
+      setAviso(
+        `Material recibido OK (${res.devueltos} artículo${res.devueltos === 1 ? '' : 's'}) y salida cerrada para ${asistenciaMaterialActiva.usuario_nombre} (${res.horasTotales} h).`,
+      )
+      setMaterialAsistenciaId(null)
+    } catch (err) {
+      reproducirFeedbackCampo('alerta')
+      setError(err instanceof Error ? err.message : mensajeDeError(err))
+    } finally {
+      setOcupadoId(null)
+    }
+  }
+
   async function manejarLevantarIncidencia(e: FormEvent) {
     e.preventDefault()
     if (!incidenciaObjetivo) return
@@ -478,9 +633,11 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
       const rolInicial = resolverRolInicialOperativo(ayudantiaEfectiva(integrante), p)
       const res = await registrarAsistenciaManual(encargado, operativo, integrante, rolInicial)
       if (res.accion === 'perfil_inactivo') {
+        reproducirFeedbackCampo('alerta')
         setAlertaInactivo(res.usuario)
       } else if (res.accion === 'entrada') {
-        setAviso(`Asistencia confirmada para ${res.usuarioNombre}.`)
+        reproducirFeedbackCampo('exito')
+        setAviso(`Asistencia confirmada para ${res.usuarioNombre} (${res.rolEnTurno}).`)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : mensajeDeError(err))
@@ -496,8 +653,10 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
     try {
       const res = await cerrarSalidaConCandado(a.id, encargado, true, a)
       if (res.bloqueado) {
-        setCandadoPendientes(res.pendientes)
+        reproducirFeedbackCampo('alerta')
+        setCandadoBloqueo({ asistencia: res.asistencia, pendientes: res.pendientes })
       } else {
+        reproducirFeedbackCampo('exito')
         setAviso(`Salida cerrada para ${a.usuario_nombre} (${res.horasTotales} h).`)
       }
     } catch (err) {
@@ -507,9 +666,9 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
     }
   }
 
-  const integranteFichaEmergencia = fichaEmergenciaUid
-    ? (datos.mapaUsuarios.get(fichaEmergenciaUid) ?? null)
-    : null
+  const integranteFichaEmergencia =
+    fichaEmergenciaQr ??
+    (fichaEmergenciaUid ? (datos.mapaUsuarios.get(fichaEmergenciaUid) ?? null) : null)
 
   return (
     <section
@@ -532,7 +691,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
         </div>
       )}
 
-      {/* Barra fija superior de acciones, búsqueda y filtros */}
+      {/* Barra fija superior de acciones, búsqueda, filtros y tablero vivo */}
       <div className="sticky top-0 z-10 flex flex-col gap-2.5 border-b border-borde bg-tarjeta p-3 dark:border-noche-borde dark:bg-noche-tarjeta">
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-44 flex-1">
@@ -546,76 +705,105 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
               placeholder="Buscar nombre, cuenta o clave de radio..."
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
-              className="campo min-h-9 pl-9 text-xs"
+              className="campo min-h-10 pl-9 text-xs"
             />
           </div>
 
-          {!esFinalizado && (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => setModoEscaner('asistencia')}
-                className="btn-verde min-h-9 px-2.5 text-xs"
-              >
-                <QrCode size={14} strokeWidth={2} />
-                <span>{recepcionAbierta ? 'QR Entrada/Salida' : 'QR Salida'}</span>
-              </button>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {!esFinalizado && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTarjetaRafaga(null)
+                    setModoEscaner('asistencia')
+                  }}
+                  className="btn-verde min-h-10 px-3 text-xs"
+                >
+                  <QrCode size={14} strokeWidth={2} />
+                  <span>{recepcionAbierta ? 'QR Entrada/Salida' : 'QR Salida'}</span>
+                </button>
 
-              <button
-                type="button"
-                onClick={() => setModoEscaner('material')}
-                className="btn-salvia min-h-9 px-2.5 text-xs"
-              >
-                <Package size={14} strokeWidth={2} />
-                <span>QR → Material</span>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setModoEscaner('material')}
+                  className="btn-salvia min-h-10 px-2.5 text-xs"
+                >
+                  <Package size={14} strokeWidth={2} />
+                  <span>QR → Material</span>
+                </button>
 
-              <button
-                type="button"
-                onClick={() => setModoRapidoAbierto((v) => !v)}
-                className={`btn min-h-9 px-2.5 text-xs ${
-                  modoRapidoAbierto
-                    ? 'bg-udec text-white'
-                    : 'border border-borde-fuerte bg-salvia text-udec-oscuro dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta'
-                }`}
-              >
-                <Zap size={14} strokeWidth={2} />
-                <span>Entrega rápida</span>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setModoEscaner('emergencia')}
+                  title="Escanear credencial para abrir Ficha de Emergencia sin registrar asistencia"
+                  className="btn min-h-10 border border-alerta/50 bg-alerta-suave px-2.5 text-xs text-alerta-texto hover:border-alerta dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+                >
+                  <HeartPulse size={14} strokeWidth={2} />
+                  <span>QR → Emergencia</span>
+                </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setBusquedaPrerregistro('')
-                  setModalPrerregistro(true)
-                }}
-                title="Agregar o gestionar asistentes prerregistrados antes del operativo"
-                className="btn-salvia min-h-9 px-2.5 text-xs"
-              >
-                <ClipboardCheck size={14} strokeWidth={2} />
-                <span>Prerregistrar</span>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setModoRapidoAbierto((v) => !v)}
+                  className={`btn min-h-10 px-2.5 text-xs ${
+                    modoRapidoAbierto
+                      ? 'bg-udec text-white'
+                      : 'border border-borde-fuerte bg-salvia text-udec-oscuro dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta'
+                  }`}
+                >
+                  <Zap size={14} strokeWidth={2} />
+                  <span>Entrega rápida</span>
+                </button>
 
-              <button
-                type="button"
-                disabled={!recepcionAbierta}
-                title={
-                  recepcionAbierta
-                    ? 'Registrar entrada manualmente'
-                    : 'Recepción cerrada: reábrela para registrar nuevas entradas'
-                }
-                onClick={() => {
-                  setUidManual('')
-                  setRolManual('Sin definir')
-                  setModalManual(true)
-                }}
-                className="btn-naranja min-h-9 px-2.5 text-xs"
-              >
-                <UserPlus size={14} strokeWidth={2} />
-                <span>Manual</span>
-              </button>
-            </div>
-          )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBusquedaPrerregistro('')
+                    setModalPrerregistro(true)
+                  }}
+                  title="Agregar o gestionar asistentes prerregistrados antes del operativo"
+                  className="btn-salvia min-h-10 px-2.5 text-xs"
+                >
+                  <ClipboardCheck size={14} strokeWidth={2} />
+                  <span>Prerregistrar</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!recepcionAbierta}
+                  title={
+                    recepcionAbierta
+                      ? 'Registrar entrada manualmente'
+                      : 'Recepción cerrada: reábrela para registrar nuevas entradas'
+                  }
+                  onClick={() => {
+                    setUidManual('')
+                    setRolManual('Sin definir')
+                    setModalManual(true)
+                  }}
+                  className="btn-naranja min-h-10 px-3 text-xs"
+                >
+                  <UserPlus size={14} strokeWidth={2} />
+                  <span>Manual</span>
+                </button>
+              </>
+            )}
+
+            <button
+              type="button"
+              onClick={() => void manejarCopiarParte()}
+              title="Copiar parte de novedades estructurado para WhatsApp"
+              className="btn-salvia min-h-10 px-2.5 text-xs"
+            >
+              {parteCopiado ? (
+                <Check size={14} strokeWidth={2.2} className="text-activo dark:text-activo-claro" />
+              ) : (
+                <Copy size={14} strokeWidth={2} />
+              )}
+              <span>{parteCopiado ? 'Parte copiado' : 'Copiar parte'}</span>
+            </button>
+          </div>
         </div>
 
         {(datos.prerregistros.length > 0 || operativo.convocatoria_abierta) && (
@@ -648,6 +836,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
           </div>
         )}
 
+        {/* Filtros de estatus de turno */}
         <div className="flex flex-wrap items-center gap-1.5">
           {(
             [
@@ -668,7 +857,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                 key={chip.id}
                 type="button"
                 onClick={() => setFiltroEstado(chip.id)}
-                className={`inline-flex min-h-8 cursor-pointer items-center gap-1 rounded-full px-2.5 text-[11px] font-semibold transition-colors ${
+                className={`inline-flex min-h-9 cursor-pointer items-center gap-1 rounded-full px-2.5 text-[11px] font-semibold transition-colors ${
                   activo
                     ? 'bg-udec text-white'
                     : 'bg-salvia text-udec-oscuro hover:bg-salvia-hover dark:bg-noche-campo dark:text-noche-tinta-suave'
@@ -685,7 +874,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
               aria-label="Filtrar por etapa o grupo"
               value={filtroGrupo}
               onChange={(e) => setFiltroGrupo(e.target.value)}
-              className="campo min-h-8 w-auto py-0.5 text-[11px] font-semibold"
+              className="campo min-h-9 w-auto py-0.5 text-[11px] font-semibold"
             >
               <option value="TODOS">Etapa / Grupo</option>
               {datos.gruposDisponibles.map((g) => (
@@ -701,7 +890,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
               aria-label="Filtrar por ayudantía"
               value={filtroAyudantia}
               onChange={(e) => setFiltroAyudantia(e.target.value)}
-              className="campo min-h-8 w-auto py-0.5 text-[11px] font-semibold"
+              className="campo min-h-9 w-auto py-0.5 text-[11px] font-semibold"
             >
               <option value="TODAS">Ayudantía</option>
               {datos.ayudantiasDisponibles.map((ay) => (
@@ -712,6 +901,69 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
             </select>
           )}
         </div>
+
+        {/* Tablero vivo de Fuerza de Tarea (100% en memoria sobre asistencias abiertas, 0 lecturas extra) */}
+        {datos.conteos.enTurno > 0 && filtroEstado !== 'por_llegar' && (
+          <div className="flex items-center gap-1.5 overflow-x-auto border-t border-borde pt-2 dark:border-noche-borde">
+            <span className="shrink-0 text-[11px] font-bold uppercase tracking-wide text-tinta-suave dark:text-noche-tinta-suave">
+              Fuerza:
+            </span>
+            {ROLES_TABLERO_VIVO.map((rol) => {
+              const cuenta = datos.conteosFuerzaTarea.porRol[rol] ?? 0
+              const activo = filtroRol === rol
+              const esSinDefinirConGente = rol === 'Sin definir' && cuenta > 0
+              return (
+                <button
+                  key={rol}
+                  type="button"
+                  onClick={() => {
+                    setFiltroEstado('en_turno')
+                    setFiltroRol((prev) => (prev === rol ? 'TODOS' : rol))
+                  }}
+                  className={`inline-flex min-h-8 shrink-0 cursor-pointer items-center gap-1 rounded-full px-2.5 text-[11px] font-bold whitespace-nowrap transition-colors ${
+                    activo
+                      ? 'bg-udec text-white'
+                      : esSinDefinirConGente
+                        ? 'border border-ambar bg-ambar-suave text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto'
+                        : 'border border-borde bg-superficie-suave text-tinta dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta'
+                  }`}
+                >
+                  <span>{rol}</span>
+                  <span className="tabular-nums opacity-85">({cuenta})</span>
+                </button>
+              )
+            })}
+
+            <button
+              type="button"
+              onClick={() => {
+                setFiltroEstado('en_turno')
+                setFiltroEnDescanso((v) => !v)
+              }}
+              className={`inline-flex min-h-8 shrink-0 cursor-pointer items-center gap-1 rounded-full px-2.5 text-[11px] font-bold whitespace-nowrap transition-colors ${
+                filtroEnDescanso
+                  ? 'bg-udec text-white'
+                  : 'border border-borde bg-superficie-suave text-tinta-suave dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta-suave'
+              }`}
+            >
+              <span>En descanso</span>
+              <span className="tabular-nums">({datos.conteosFuerzaTarea.enDescanso})</span>
+            </button>
+
+            {(filtroRol !== 'TODOS' || filtroEnDescanso) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setFiltroRol('TODOS')
+                  setFiltroEnDescanso(false)
+                }}
+                className="shrink-0 cursor-pointer px-1.5 text-[11px] font-bold text-udec underline dark:text-activo-claro"
+              >
+                Limpiar
+              </button>
+            )}
+          </div>
+        )}
 
         {!esFinalizado && modoRapidoAbierto && (
           <form
@@ -738,7 +990,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                   key={item}
                   type="button"
                   onClick={() => setRapidoArticulo(item)}
-                  className={`cursor-pointer rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
+                  className={`min-h-8 cursor-pointer rounded-full px-2.5 text-[11px] font-semibold ${
                     rapidoArticulo === item
                       ? 'bg-udec text-white'
                       : 'border border-borde bg-tarjeta text-tinta dark:border-noche-borde dark:bg-noche-tarjeta dark:text-noche-tinta-suave'
@@ -756,22 +1008,23 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                 value={rapidoArticulo}
                 onChange={(e) => setRapidoArticulo(e.target.value)}
                 placeholder="Artículo a entregar"
-                className="campo min-h-9 flex-1 text-xs"
+                className="campo min-h-10 flex-1 text-xs"
                 required
               />
               <input
                 type="number"
+                inputMode="numeric"
                 min={1}
                 max={99}
                 aria-label="Cantidad"
                 value={rapidoCantidad}
                 onChange={(e) => setRapidoCantidad(Math.max(1, Number(e.target.value) || 1))}
-                className="campo min-h-9 w-16 text-center text-xs font-bold tabular-nums"
+                className="campo min-h-10 w-16 text-center text-xs font-bold tabular-nums"
               />
               <button
                 type="submit"
                 disabled={ocupadoId === 'rapido' || asistenciasSeleccionadasAbiertas.length === 0}
-                className="btn-naranja min-h-9 px-3 text-xs"
+                className="btn-verde min-h-10 px-3 text-xs"
               >
                 <PackagePlus size={14} strokeWidth={2} />
                 <span>
@@ -842,7 +1095,10 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
           alCambiarEstado={(id, est: EstadoOperativo) =>
             void actualizarEstadoOperativo(id, est).catch((err) => setError(mensajeDeError(err)))
           }
-          alAbrirFichaEmergencia={setFichaEmergenciaUid}
+          alAbrirFichaEmergencia={(uid) => {
+            setFichaEmergenciaQr(null)
+            setFichaEmergenciaUid(uid)
+          }}
           alAbrirMaterial={abrirCajonMaterial}
           alAbrirVitales={abrirModalVitales}
           alCerrarSalidaManual={(a) => void manejarCerrarSalidaManual(a)}
@@ -854,19 +1110,30 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
           titulo={
             modoEscaner === 'material'
               ? 'Escanear Credencial → Material'
-              : recepcionAbierta
-                ? 'Escanear Credencial QR'
-                : 'Escanear Credencial (Solo Salidas)'
+              : modoEscaner === 'emergencia'
+                ? 'Escanear QR → Ficha Emergencia'
+                : recepcionAbierta
+                  ? 'Escanear Credencial QR'
+                  : 'Escanear Credencial (Solo Salidas)'
           }
           subtitulo={`Operativo: ${operativo.nombre}`}
           instruccion={
             modoEscaner === 'material'
               ? 'Encuadra la credencial del brigadista para abrir su resguardo de material'
-              : 'Encuadra la Credencial Digital QR del Brigadista'
+              : modoEscaner === 'emergencia'
+                ? 'Solo lectura médica · no modifica asistencias'
+                : 'Encuadra la Credencial Digital QR del Brigadista'
           }
+          permitirModoContinuo={modoEscaner === 'asistencia'}
+          modoContinuo={modoContinuoQr}
+          alCambiarModoContinuo={setModoContinuoQr}
+          tarjetaRafaga={modoEscaner === 'asistencia' ? tarjetaRafaga : null}
           procesando={procesandoQr}
           alDetectar={(codigo) => void manejarEscanerQr(codigo)}
-          alCerrar={() => setModoEscaner(null)}
+          alCerrar={() => {
+            setTarjetaRafaga(null)
+            setModoEscaner(null)
+          }}
         />
       )}
 
@@ -874,10 +1141,17 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
         <AlertaInactivoModal usuario={alertaInactivo} alCerrar={() => setAlertaInactivo(null)} />
       )}
 
-      {candadoPendientes && (
+      {candadoBloqueo && (
         <CandadoDuroModal
-          pendientes={candadoPendientes}
-          alEntendido={() => setCandadoPendientes(null)}
+          modo="encargado"
+          usuarioNombre={candadoBloqueo.asistencia.usuario_nombre}
+          pendientes={candadoBloqueo.pendientes}
+          alAbrirResguardo={() => {
+            const idDestino = candadoBloqueo.asistencia.id
+            setCandadoBloqueo(null)
+            abrirCajonMaterial(idDestino)
+          }}
+          alEntendido={() => setCandadoBloqueo(null)}
         />
       )}
 
@@ -916,7 +1190,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                 type="button"
                 disabled={confirmandoSalidaAnticipada}
                 onClick={() => setSalidaAnticipadaPendiente(null)}
-                className="btn-salvia text-xs"
+                className="btn-salvia min-h-11 text-xs"
               >
                 Cancelar
               </button>
@@ -924,7 +1198,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
                 type="button"
                 disabled={confirmandoSalidaAnticipada}
                 onClick={() => void manejarConfirmarSalidaAnticipada()}
-                className="btn-naranja text-xs"
+                className="btn-naranja min-h-11 text-xs"
               >
                 {confirmandoSalidaAnticipada ? 'Cerrando salida...' : 'Sí, confirmar salida'}
               </button>
@@ -936,7 +1210,10 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
       {integranteFichaEmergencia && (
         <ModalFichaEmergencia
           integrante={integranteFichaEmergencia}
-          alCerrar={() => setFichaEmergenciaUid(null)}
+          alCerrar={() => {
+            setFichaEmergenciaUid(null)
+            setFichaEmergenciaQr(null)
+          }}
         />
       )}
 
@@ -962,6 +1239,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
             setMotivoIncidencia('')
             setArchivoEvidencia(null)
           }}
+          alRecibirTodosYCerrarSalida={() => void manejarRecibirTodosYCerrarSalida()}
           alCerrar={() => setMaterialAsistenciaId(null)}
         />
       )}
@@ -987,6 +1265,7 @@ export function BitacoraPersonalSection({ encargado, operativo }: BitacoraPerson
         <ModalRegistroManual
           operativoNombre={operativo.nombre}
           perfilesActivos={datos.perfilesActivos}
+          uidsConAsisAbierta={datos.uidsConAsisAbierta}
           mapaPrerregistros={datos.mapaPrerregistros}
           uidManual={uidManual}
           rolManual={rolManual}

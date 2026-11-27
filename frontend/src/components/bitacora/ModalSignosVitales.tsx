@@ -43,7 +43,7 @@ export function ModalSignosVitales({
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
     >
       <article className="tarjeta flex w-full max-w-md flex-col gap-4 p-5">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <div>
             <h3 className="text-base font-bold text-tinta dark:text-noche-tinta">
               Captura de Signos Vitales
@@ -56,7 +56,7 @@ export function ModalSignosVitales({
             type="button"
             onClick={alCerrar}
             aria-label="Cerrar"
-            className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-tinta-suave"
+            className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-lg text-tinta-suave hover:bg-superficie-suave dark:hover:bg-noche-campo"
           >
             <X size={18} strokeWidth={2} />
           </button>
@@ -71,6 +71,7 @@ export function ModalSignosVitales({
               <input
                 id="vit-spo2"
                 type="text"
+                inputMode="numeric"
                 placeholder="98"
                 value={spo2}
                 onChange={(e) => alCambiarSpo2(e.target.value)}
@@ -84,6 +85,7 @@ export function ModalSignosVitales({
               <input
                 id="vit-fc"
                 type="text"
+                inputMode="numeric"
                 placeholder="76"
                 value={fc}
                 onChange={(e) => alCambiarFc(e.target.value)}
@@ -97,6 +99,7 @@ export function ModalSignosVitales({
               <input
                 id="vit-fr"
                 type="text"
+                inputMode="numeric"
                 placeholder="16"
                 value={fr}
                 onChange={(e) => alCambiarFr(e.target.value)}
@@ -110,6 +113,7 @@ export function ModalSignosVitales({
               <input
                 id="vit-ta"
                 type="text"
+                inputMode="tel"
                 placeholder="120/80"
                 value={ta}
                 onChange={(e) => alCambiarTa(e.target.value)}
@@ -123,6 +127,7 @@ export function ModalSignosVitales({
               <input
                 id="vit-temp"
                 type="text"
+                inputMode="decimal"
                 placeholder="36.6"
                 value={temp}
                 onChange={(e) => alCambiarTemp(e.target.value)}
@@ -132,10 +137,10 @@ export function ModalSignosVitales({
           </div>
 
           <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={alCerrar} className="btn-salvia">
+            <button type="button" onClick={alCerrar} className="btn-salvia min-h-11">
               Cancelar
             </button>
-            <button type="submit" disabled={ocupado} className="btn-verde">
+            <button type="submit" disabled={ocupado} className="btn-verde min-h-11">
               {ocupado ? 'Guardando...' : 'Guardar Signos'}
             </button>
           </div>

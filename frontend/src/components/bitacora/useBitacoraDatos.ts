@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { ROLES_EN_TURNO } from '../../constants/catalogos'
 import type { AyudantiaActiva } from '../../lib/permisos'
 import {
   escucharAsistenciasDeOperativo,
@@ -25,6 +26,8 @@ interface UseBitacoraDatosParams {
   filtroEstado: FiltroEstadoBitacora
   filtroGrupo: string
   filtroAyudantia: string
+  filtroRol: string
+  filtroEnDescanso: boolean
   busquedaPrerregistro: string
   alError: (msg: string) => void
 }
@@ -37,6 +40,8 @@ export function useBitacoraDatos({
   filtroEstado,
   filtroGrupo,
   filtroAyudantia,
+  filtroRol,
+  filtroEnDescanso,
   busquedaPrerregistro,
   alError,
 }: UseBitacoraDatosParams) {
@@ -107,9 +112,23 @@ export function useBitacoraDatos({
     [asistencias],
   )
 
+  const uidsConAsisAbierta = useMemo(
+    () => new Set(asistencias.filter((a) => a.hora_salida === null).map((a) => a.usuario_uid)),
+    [asistencias],
+  )
+
   const equiposVisibles = useMemo(
     () => (ayJefe ? equipos.filter((eq) => idsAsistenciasVisibles.has(eq.asistencia_id)) : equipos),
     [equipos, ayJefe, idsAsistenciasVisibles],
+  )
+
+  const equiposBupcEnPrestamo = useMemo(
+    () =>
+      equiposVisibles.filter(
+        (eq) =>
+          eq.origen_material === 'BUPC_Asignado' && !eq.devuelto && eq.acta_incidencia === null,
+      ).length,
+    [equiposVisibles],
   )
 
   const { uidsPrerregistrados, pendientesDeLlegar, confirmadosCount } = useMemo(() => {
@@ -175,12 +194,32 @@ export function useBitacoraDatos({
     }
   }, [asistencias, pendientesDeLlegar.length])
 
+  // Tablero vivo de Fuerza de Tarea (100% en memoria sobre asistencias abiertas, 0 lecturas extra)
+  const conteosFuerzaTarea = useMemo(() => {
+    const porRol: Record<string, number> = {}
+    for (const rol of ROLES_EN_TURNO) porRol[rol] = 0
+    let enDescanso = 0
+    for (const a of asistencias) {
+      if (a.hora_salida !== null) continue
+      porRol[a.rol_en_turno] = (porRol[a.rol_en_turno] ?? 0) + 1
+      if (a.estado_operativo === 'En descanso') enDescanso++
+    }
+    return { porRol, enDescanso }
+  }, [asistencias])
+
   const filtradas = useMemo(() => {
     const q = busqueda.trim().toLowerCase()
     return asistencias.filter((a) => {
       if (filtroEstado === 'en_turno' && a.hora_salida !== null) return false
       if (filtroEstado === 'con_adeudo' && a.equipos_bupc_pendientes <= 0) return false
       if (filtroEstado === 'salidos' && a.hora_salida === null) return false
+
+      if (filtroRol !== 'TODOS') {
+        if (a.hora_salida !== null || a.rol_en_turno !== filtroRol) return false
+      }
+      if (filtroEnDescanso) {
+        if (a.hora_salida !== null || a.estado_operativo !== 'En descanso') return false
+      }
 
       const grupo = etiquetaGrupoAsistencia(a, mapaPerfiles)
       if (filtroGrupo !== 'TODOS' && grupo !== filtroGrupo) return false
@@ -203,7 +242,17 @@ export function useBitacoraDatos({
         claveRadio.includes(q)
       )
     })
-  }, [asistencias, filtroEstado, filtroGrupo, filtroAyudantia, busqueda, mapaPerfiles, mapaUsuarios])
+  }, [
+    asistencias,
+    filtroEstado,
+    filtroRol,
+    filtroEnDescanso,
+    filtroGrupo,
+    filtroAyudantia,
+    busqueda,
+    mapaPerfiles,
+    mapaUsuarios,
+  ])
 
   const pendientesFiltrados = useMemo(() => {
     const q = busqueda.trim().toLowerCase()
@@ -248,13 +297,16 @@ export function useBitacoraDatos({
     mapaPerfiles,
     mapaPrerregistros,
     uidsPrerregistrados,
+    uidsConAsisAbierta,
     pendientesDeLlegar,
     confirmadosCount,
     equiposBupcPorAsistencia,
     equiposPropiosPorAsistencia,
+    equiposBupcEnPrestamo,
     gruposDisponibles,
     ayudantiasDisponibles,
     conteos,
+    conteosFuerzaTarea,
     filtradas,
     pendientesFiltrados,
     perfilesActivos,

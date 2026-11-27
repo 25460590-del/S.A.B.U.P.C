@@ -1,5 +1,15 @@
-import { Activity, CloudOff, HeartPulse, LogOut, MoreVertical, Package, X } from 'lucide-react'
-import { useState } from 'react'
+import {
+  Activity,
+  AlertTriangle,
+  Clock,
+  CloudOff,
+  HeartPulse,
+  LogOut,
+  MoreVertical,
+  Package,
+  X,
+} from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { ESTADOS_OPERATIVOS, opcionesRolEnTurno } from '../../constants/catalogos'
 import { normalizarNombrePropio } from '../../lib/nombres'
 import { etiquetaAyudantia } from '../../lib/permisos'
@@ -14,7 +24,9 @@ import type {
 import {
   etiquetaGrupoAsistencia,
   etiquetaMetodoEntrada,
+  evaluarAlertaSignosVitales,
   formatearHoraCorta,
+  superaCuatroHorasEnServicio,
 } from './helpers'
 
 interface TablaAsistenciasProps {
@@ -37,6 +49,8 @@ interface TablaAsistenciasProps {
   alAbrirVitales: (a: AsistenciaPersonal) => void
   alCerrarSalidaManual: (a: AsistenciaPersonal) => void
 }
+
+const ESTADOS_EN_TURNO_MOVIL: EstadoOperativo[] = ['En servicio', 'En descanso', 'Reserva']
 
 export function TablaAsistencias({
   asistenciasTotales,
@@ -61,6 +75,12 @@ export function TablaAsistencias({
   // Bottom sheet móvil de acciones táctiles (>= 44px) + confirmación 2 toques para Salida Manual
   const [accionesMovilId, setAccionesMovilId] = useState<string | null>(null)
   const [confirmandoSalidaId, setConfirmandoSalidaId] = useState<string | null>(null)
+  const [ahoraMs, setAhoraMs] = useState(() => Date.now())
+
+  useEffect(() => {
+    const id = window.setInterval(() => setAhoraMs(Date.now()), 60_000)
+    return () => window.clearInterval(id)
+  }, [])
 
   const asistenciaSheet = accionesMovilId
     ? (filtradas.find((a) => a.id === accionesMovilId) ?? null)
@@ -82,7 +102,7 @@ export function TablaAsistencias({
         <p className="text-xs text-tinta-suave dark:text-noche-tinta-suave">
           {asistenciasTotales === 0
             ? 'Escanea una credencial QR o usa el registro manual para iniciar el pase de lista.'
-            : 'Ajusta el buscador o los chips de estatus.'}
+            : 'Ajusta el buscador o los chips de estatus y fuerza de tarea.'}
         </p>
       </div>
     )
@@ -98,6 +118,8 @@ export function TablaAsistencias({
           const marcado = seleccionadosIds.includes(a.id)
           const propios = equiposPropiosPorAsistencia.get(a.id) ?? []
           const estabaPrerregistrado = uidsPrerregistrados.has(a.usuario_uid)
+          const alertaRelevo = superaCuatroHorasEnServicio(a, ahoraMs)
+          const alertaSv = evaluarAlertaSignosVitales(a.signos_vitales)
 
           return (
             <div key={a.id} className="flex items-center justify-between gap-2.5 px-3 py-2.5">
@@ -146,7 +168,27 @@ export function TablaAsistencias({
                       </span>
                     ) : (
                       <span className="rounded-full bg-activo-suave px-2 py-0.5 text-[11px] font-bold text-activo-texto dark:bg-noche-campo dark:text-activo-claro">
-                        En turno
+                        {a.estado_operativo === 'En servicio' ? 'En turno' : a.estado_operativo}
+                      </span>
+                    )}
+
+                    {alertaRelevo && (
+                      <span
+                        title="Más de 4 horas continuas en servicio — sugerir relevo e hidratación"
+                        className="inline-flex items-center gap-1 rounded-full bg-ambar-suave px-2 py-0.5 text-[11px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto"
+                      >
+                        <Clock size={11} strokeWidth={2} />
+                        <span>Relevo (+4 h)</span>
+                      </span>
+                    )}
+
+                    {alertaSv.fueraDeRango && (
+                      <span
+                        title={`Signos vitales fuera de rango: ${alertaSv.motivos.join(', ')}`}
+                        className="inline-flex items-center gap-1 rounded-full bg-alerta-suave px-2 py-0.5 text-[11px] font-bold text-alerta-texto dark:bg-noche-rojo-suave dark:text-noche-rojo-texto"
+                      >
+                        <AlertTriangle size={11} strokeWidth={2} />
+                        <span>SV alerta</span>
                       </span>
                     )}
 
@@ -176,12 +218,13 @@ export function TablaAsistencias({
         })}
       </div>
 
-      {/* Bottom sheet móvil de acciones (>= 44-48px) con confirmación de 2 toques para Salida Manual */}
+      {/* Bottom sheet móvil de acciones (>= 44-48px) con selector de estado operativo y confirmación 2 toques */}
       {asistenciaSheet && (() => {
         const a = asistenciaSheet
         const cerrada = a.hora_salida !== null
         const propios = equiposPropiosPorAsistencia.get(a.id) ?? []
         const confirmandoSalida = confirmandoSalidaId === a.id
+        const alertaSv = evaluarAlertaSignosVitales(a.signos_vitales)
 
         return (
           <div
@@ -216,7 +259,7 @@ export function TablaAsistencias({
               </div>
 
               {!cerrada && !esFinalizado && (
-                <div className="grid grid-cols-1 gap-2.5">
+                <div className="flex flex-col gap-3">
                   <div className="flex flex-col gap-1">
                     <label htmlFor="sheet-rol" className="etiqueta">
                       Rol en turno
@@ -235,22 +278,27 @@ export function TablaAsistencias({
                     </select>
                   </div>
 
-                  <div className="flex flex-col gap-1">
-                    <label htmlFor="sheet-estado" className="etiqueta">
-                      Estado operativo
-                    </label>
-                    <select
-                      id="sheet-estado"
-                      value={a.estado_operativo}
-                      onChange={(e) => alCambiarEstado(a.id, e.target.value as EstadoOperativo)}
-                      className="campo min-h-11 text-sm font-semibold"
-                    >
-                      {ESTADOS_OPERATIVOS.map((est) => (
-                        <option key={est} value={est}>
-                          {est}
-                        </option>
-                      ))}
-                    </select>
+                  <div className="flex flex-col gap-1.5">
+                    <span className="etiqueta">Estado operativo</span>
+                    <div className="grid grid-cols-3 gap-1.5" role="group" aria-label="Estado operativo">
+                      {ESTADOS_EN_TURNO_MOVIL.map((est) => {
+                        const activo = a.estado_operativo === est
+                        return (
+                          <button
+                            key={est}
+                            type="button"
+                            onClick={() => alCambiarEstado(a.id, est)}
+                            className={`min-h-11 cursor-pointer rounded-lg px-2 text-xs font-bold transition-colors ${
+                              activo
+                                ? 'bg-udec text-white'
+                                : 'border border-borde bg-superficie-suave text-tinta dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta'
+                            }`}
+                          >
+                            {est}
+                          </button>
+                        )
+                      })}
+                    </div>
                   </div>
                 </div>
               )}
@@ -280,11 +328,20 @@ export function TablaAsistencias({
                       cerrarSheetMovil()
                       alAbrirVitales(a)
                     }}
-                    className="btn min-h-12 w-full justify-start border border-borde-fuerte bg-tarjeta px-4 text-sm text-tinta hover:bg-superficie-suave dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta"
+                    className={`btn min-h-12 w-full justify-start px-4 text-sm ${
+                      alertaSv.fueraDeRango
+                        ? 'border border-alerta bg-alerta-suave text-alerta-texto dark:bg-noche-rojo-suave dark:text-noche-rojo-texto'
+                        : 'border border-borde-fuerte bg-tarjeta text-tinta hover:bg-superficie-suave dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta'
+                    }`}
                   >
                     <Activity size={18} strokeWidth={2} />
                     <span>
-                      Signos vitales{a.signos_vitales?.spo2 ? ` (SpO2 ${a.signos_vitales.spo2}%)` : ''}
+                      Signos vitales
+                      {alertaSv.fueraDeRango
+                        ? ` · Alerta (${alertaSv.motivos.join(', ')})`
+                        : a.signos_vitales?.spo2
+                          ? ` (SpO2 ${a.signos_vitales.spo2}%)`
+                          : ''}
                     </span>
                   </button>
                 )}
@@ -401,6 +458,8 @@ export function TablaAsistencias({
               const marcado = seleccionadosIds.includes(a.id)
               const propios = equiposPropiosPorAsistencia.get(a.id) ?? []
               const estabaPrerregistrado = uidsPrerregistrados.has(a.usuario_uid)
+              const alertaRelevo = superaCuatroHorasEnServicio(a, ahoraMs)
+              const alertaSv = evaluarAlertaSignosVitales(a.signos_vitales)
 
               return (
                 <tr
@@ -435,6 +494,15 @@ export function TablaAsistencias({
                       {estabaPrerregistrado && (
                         <span className="rounded bg-salvia px-1.5 py-0.5 text-[11px] font-bold text-udec-oscuro dark:bg-noche-campo dark:text-activo-claro">
                           Confirmado
+                        </span>
+                      )}
+                      {alertaRelevo && (
+                        <span
+                          title="Más de 4 horas continuas en servicio — sugerir relevo e hidratación"
+                          className="inline-flex items-center gap-0.5 rounded bg-ambar-suave px-1.5 py-0.5 text-[11px] font-bold text-ambar-texto dark:bg-noche-ambar dark:text-noche-ambar-texto"
+                        >
+                          <Clock size={11} strokeWidth={2} />
+                          <span>Relevo +4 h</span>
                         </span>
                       )}
                     </div>
@@ -559,10 +627,22 @@ export function TablaAsistencias({
                         <button
                           type="button"
                           onClick={() => alAbrirVitales(a)}
-                          title="Signos vitales"
-                          className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-lg border border-borde bg-fondo px-2 text-[11px] font-semibold text-tinta hover:border-udec dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta"
+                          title={
+                            alertaSv.fueraDeRango
+                              ? `Signos vitales fuera de rango: ${alertaSv.motivos.join(', ')}`
+                              : 'Signos vitales'
+                          }
+                          className={`inline-flex h-8 cursor-pointer items-center gap-1 rounded-lg border px-2 text-[11px] font-semibold ${
+                            alertaSv.fueraDeRango
+                              ? 'border-alerta bg-alerta-suave text-alerta-texto dark:bg-noche-rojo-suave dark:text-noche-rojo-texto'
+                              : 'border-borde bg-fondo text-tinta hover:border-udec dark:border-noche-borde dark:bg-noche-campo dark:text-noche-tinta'
+                          }`}
                         >
-                          <Activity size={13} strokeWidth={2} />
+                          {alertaSv.fueraDeRango ? (
+                            <AlertTriangle size={13} strokeWidth={2} />
+                          ) : (
+                            <Activity size={13} strokeWidth={2} />
+                          )}
                           <span className="tabular-nums">
                             {a.signos_vitales?.spo2 ? `${a.signos_vitales.spo2}%` : 'SV'}
                           </span>
